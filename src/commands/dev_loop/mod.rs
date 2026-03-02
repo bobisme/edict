@@ -72,11 +72,24 @@ pub fn run(
     let worker_timeout = config.agents.worker.as_ref().map_or(900, |w| w.timeout);
 
     let spawn_env = config.resolved_env();
-    let worker_memory_limit = config
-        .agents
-        .worker
-        .as_ref()
-        .and_then(|w| w.memory_limit.clone());
+    let worker_memory_limit = {
+        let configured = config
+            .agents
+            .worker
+            .as_ref()
+            .and_then(|w| w.memory_limit.clone());
+        if configured.is_some() && !is_systemd_dbus_available() {
+            eprintln!(
+                "Warning: worker memory limit configured but systemd D-Bus is not available \
+                 (DBUS_SESSION_BUS_ADDRESS / XDG_RUNTIME_DIR not set) — skipping --memory-limit. \
+                 To fix: add XDG_RUNTIME_DIR and DBUS_SESSION_BUS_ADDRESS to your project's \
+                 [env] config so they are forwarded to spawned agents."
+            );
+            None
+        } else {
+            configured
+        }
+    };
 
     let ctx = LoopContext {
         agent: agent.clone(),
@@ -805,6 +818,24 @@ fn cleanup(agent: &str, project: &str) -> anyhow::Result<()> {
 
     eprintln!("Cleanup complete for {agent}.");
     Ok(())
+}
+
+/// Check whether the systemd user session D-Bus is available.
+///
+/// `--memory-limit` passes resource limits via systemd transient scopes, which requires
+/// D-Bus. When botty-spawned agents don't inherit the session D-Bus address (e.g. because
+/// `$DBUS_SESSION_BUS_ADDRESS` / `$XDG_RUNTIME_DIR` were not forwarded), the spawn fails
+/// immediately with a "Failed to connect to user scope bus" error.
+fn is_systemd_dbus_available() -> bool {
+    if std::env::var("DBUS_SESSION_BUS_ADDRESS").is_ok() {
+        return true;
+    }
+    if let Ok(xdg) = std::env::var("XDG_RUNTIME_DIR") {
+        if std::path::Path::new(&xdg).join("bus").exists() {
+            return true;
+        }
+    }
+    false
 }
 
 /// Kill child workers spawned by this dev-loop (hierarchical name pattern: AGENT/suffix).
