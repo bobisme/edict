@@ -578,7 +578,10 @@ For each dispatched bone where the worker is NOT in botty list but the bone is s
 
 For each completed bone with a workspace, ALWAYS try protocol merge first:
 
-  botbox protocol merge <workspace> --agent {agent}
+  botbox protocol merge <workspace> --message "feat: <bone-title>" --agent {agent}
+
+Get the bone title from: maw exec default -- bn show <id>
+Use the appropriate conventional commit prefix: feat: for features, fix: for bugs, chore: for maintenance.
 
 This checks bone status, review gate, and conflicts in one step. Read the output:
   - Ready → proceed with Merge Protocol below, then follow the post-merge steps from the output

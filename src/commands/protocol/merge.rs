@@ -27,6 +27,7 @@ struct MergeCheckResult {
 /// Execute the merge protocol command.
 pub fn execute(
     workspace: &str,
+    message: Option<&str>,
     force: bool,
     execute: bool,
     agent: &str,
@@ -230,7 +231,7 @@ pub fn execute(
                     guidance
                         .diagnostic("Workspace is stale — run `maw ws sync` first.".to_string());
                 }
-                add_conflict_recovery_guidance(&mut guidance, workspace);
+                add_conflict_recovery_guidance(&mut guidance, workspace, message);
                 print_guidance(&guidance, format)?;
                 return Ok(());
             }
@@ -256,6 +257,7 @@ pub fn execute(
         &mut guidance,
         workspace,
         project,
+        message,
         bone_id.as_deref(),
         review_id.as_deref(),
         config.push_main,
@@ -263,7 +265,7 @@ pub fn execute(
 
     // Execute if --execute flag is set
     if execute {
-        return execute_and_render(&guidance, workspace, format);
+        return execute_and_render(&guidance, workspace, message, format);
     }
 
     if force {
@@ -302,15 +304,22 @@ fn build_merge_steps(
     guidance: &mut ProtocolGuidance,
     workspace: &str,
     project: &str,
+    message: Option<&str>,
     bone_id: Option<&str>,
     review_id: Option<&str>,
     push_main: bool,
 ) {
     let mut steps = Vec::new();
 
-    // 1. Merge workspace — use a conventional commit message if bone_id is known
-    let merge_msg = bone_id.map(|id| format!("feat: work from {}", id));
-    steps.push(shell::ws_merge_cmd(workspace, merge_msg.as_deref()));
+    // 1. Merge workspace — prefer explicit --message, fall back to bone_id placeholder
+    let fallback_msg;
+    let commit_msg: Option<&str> = if message.is_some() {
+        message
+    } else {
+        fallback_msg = bone_id.map(|id| format!("feat: work from {}", id));
+        fallback_msg.as_deref()
+    };
+    steps.push(shell::ws_merge_cmd(workspace, commit_msg));
 
     // 2. Mark review as merged (if review exists)
     if let Some(rid) = review_id {
@@ -326,7 +335,7 @@ fn build_merge_steps(
     }
 
     // 4. Announce merge
-    let merge_msg = if let Some(bid) = bone_id {
+    let announce_msg = if let Some(bid) = bone_id {
         format!("Merged workspace {} ({})", workspace, bid)
     } else {
         format!("Merged workspace {}", workspace)
@@ -334,18 +343,23 @@ fn build_merge_steps(
     steps.push(shell::bus_send_cmd(
         "agent",
         project,
-        &merge_msg,
+        &announce_msg,
         "task-done",
     ));
 
     guidance.steps(steps);
 
     // Add conflict recovery guidance
-    add_conflict_recovery_guidance(guidance, workspace);
+    add_conflict_recovery_guidance(guidance, workspace, commit_msg);
 }
 
 /// Append comprehensive maw/git conflict recovery guidance as diagnostics.
-fn add_conflict_recovery_guidance(guidance: &mut ProtocolGuidance, workspace: &str) {
+fn add_conflict_recovery_guidance(
+    guidance: &mut ProtocolGuidance,
+    workspace: &str,
+    merge_msg: Option<&str>,
+) {
+    let retry_cmd = shell::ws_merge_cmd(workspace, merge_msg);
     guidance.diagnostic(format!(
         "Conflict recovery — workspace is preserved (not destroyed). Steps:\n\
          \n\
@@ -366,7 +380,7 @@ fn add_conflict_recovery_guidance(guidance: &mut ProtocolGuidance, workspace: &s
          \n\
          4. After resolving:\n\
          \n\
-         maw ws merge {} --destroy              # retry merge\n\
+         {}              # retry merge\n\
          \n\
          5. To UNDO the merge entirely (recover pre-merge state):\n\
          \n\
@@ -382,7 +396,7 @@ fn add_conflict_recovery_guidance(guidance: &mut ProtocolGuidance, workspace: &s
         workspace,
         workspace,
         workspace,
-        workspace,
+        retry_cmd,
         workspace,
         workspace,
     ));
@@ -455,6 +469,7 @@ fn find_review_for_workspace(
 fn execute_and_render(
     guidance: &ProtocolGuidance,
     workspace: &str,
+    merge_msg: Option<&str>,
     format: OutputFormat,
 ) -> anyhow::Result<()> {
     use super::executor;
@@ -476,7 +491,7 @@ fn execute_and_render(
             "Merge completed with CONFLICTS. Workspace {} is preserved (not destroyed).",
             workspace
         ));
-        add_conflict_recovery_guidance(&mut conflict_guidance, workspace);
+        add_conflict_recovery_guidance(&mut conflict_guidance, workspace, merge_msg);
 
         let output = render::render(&conflict_guidance, format)
             .map_err(|e| anyhow::anyhow!("render error: {}", e))?;
@@ -515,6 +530,7 @@ mod tests {
             &mut guidance,
             "frost-castle",
             "myproject",
+            Some("feat: add login flow"),
             Some("bd-abc"),
             Some("cr-123"),
             true,
@@ -528,12 +544,12 @@ mod tests {
                 .iter()
                 .any(|s| s.contains("maw ws merge frost-castle --destroy"))
         );
-        // Should include --message with bone id
+        // Should include explicit --message (not fallback bone id)
         assert!(
             guidance
                 .steps
                 .iter()
-                .any(|s| s.contains("--message") && s.contains("bd-abc"))
+                .any(|s| s.contains("--message") && s.contains("feat: add login flow"))
         );
         assert!(
             guidance
@@ -580,6 +596,7 @@ mod tests {
             &mut guidance,
             "frost-castle",
             "myproject",
+            None,
             None,
             None,
             false, // push_main = false
@@ -636,6 +653,7 @@ mod tests {
             &mut guidance,
             "frost-castle",
             "myproject",
+            None,
             Some("bd-abc"),
             None,
             false,

@@ -136,6 +136,10 @@ pub enum ProtocolCommand {
     Merge {
         /// Workspace name to merge
         workspace: String,
+        /// Commit message for the merge (e.g. "feat: add login flow"). Use conventional commit
+        /// prefix: feat:, fix:, chore:, etc. Falls back to auto-detected message from bone if omitted.
+        #[arg(long)]
+        message: Option<String>,
         /// Merge even if bone is not closed or review is not approved
         #[arg(long)]
         force: bool,
@@ -231,6 +235,7 @@ impl ProtocolCommand {
             }
             ProtocolCommand::Merge {
                 workspace,
+                message,
                 force,
                 execute,
                 args,
@@ -250,7 +255,14 @@ impl ProtocolCommand {
                 let format = args.resolve_format();
 
                 merge::execute(
-                    workspace, *force, *execute, &agent, &project, &config, format,
+                    workspace,
+                    message.as_deref(),
+                    *force,
+                    *execute,
+                    &agent,
+                    &project,
+                    &config,
+                    format,
                 )
             }
             ProtocolCommand::Resume { args } => {
