@@ -1,7 +1,14 @@
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
 use anyhow::{Context, anyhow};
+use regex::Regex;
 use serde::Deserialize;
+
+fn ansi_escape_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"\x1b\[[0-9;]*[A-Za-z]").unwrap())
+}
 
 use crate::config::Config;
 use crate::subprocess::Tool;
@@ -645,14 +652,9 @@ impl Responder {
         description: &str,
         labels: Option<&str>,
     ) -> anyhow::Result<String> {
-        // Sanitize title: collapse control characters and whitespace runs to single spaces
-        let sanitized: String = title
-            .chars()
-            .map(|c| if c.is_control() || c == '\n' || c == '\r' { ' ' } else { c })
-            .collect::<String>()
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ");
+        // Sanitize title: strip ANSI escape sequences, then collapse whitespace
+        let stripped = ansi_escape_re().replace_all(title, "");
+        let sanitized = stripped.split_whitespace().collect::<Vec<_>>().join(" ");
         let title_arg = format!("--title={sanitized}");
         let desc_arg = format!("--description={description}");
         let mut args = vec!["create", &title_arg, &desc_arg, "--kind=task"];
