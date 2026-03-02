@@ -645,7 +645,15 @@ impl Responder {
         description: &str,
         labels: Option<&str>,
     ) -> anyhow::Result<String> {
-        let title_arg = format!("--title={title}");
+        // Sanitize title: collapse control characters and whitespace runs to single spaces
+        let sanitized: String = title
+            .chars()
+            .map(|c| if c.is_control() || c == '\n' || c == '\r' { ' ' } else { c })
+            .collect::<String>()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        let title_arg = format!("--title={sanitized}");
         let desc_arg = format!("--description={description}");
         let mut args = vec!["create", &title_arg, &desc_arg, "--kind=task"];
         let labels_arg;
