@@ -211,14 +211,25 @@ fn spawn_claude(
         })
 }
 
+fn home_dir() -> std::path::PathBuf {
+    std::env::var("HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("/root"))
+}
+
 /// Spawn Pi agent with JSON mode output.
 ///
 /// Pi is a multi-provider agent harness supporting Anthropic, OpenAI, Google, etc.
 /// Model format: "provider/model-id" (e.g. "openai/gpt-4o", "google/gemini-2.5-pro")
 /// or just "model-id" with --provider flag.
 fn spawn_pi(prompt: &str, model: Option<&str>) -> anyhow::Result<Child> {
+    // Disable all auto-discovered extensions (e.g. lsp-pi which spawns rust-analyzer)
+    // then explicitly re-enable only the botbox hooks extension.
+    let botbox_ext = home_dir().join(".pi/agent/extensions/botbox-hooks.ts");
+    let botbox_ext_str;
     let mut args = vec![
         "--print",
+        "--no-extensions",
         "--no-skills",
         "--no-prompt-templates",
         "--no-themes",
@@ -226,6 +237,11 @@ fn spawn_pi(prompt: &str, model: Option<&str>) -> anyhow::Result<Child> {
         "json",
         "--no-session",
     ];
+    if botbox_ext.exists() {
+        botbox_ext_str = botbox_ext.to_string_lossy().into_owned();
+        args.push("--extension");
+        args.push(&botbox_ext_str);
+    }
 
     // Model can be "provider/model" or "provider/model:thinking" — Pi handles the :suffix natively
     let model_arg;
