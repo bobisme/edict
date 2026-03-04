@@ -5,6 +5,9 @@
 //! review is approved (if enabled). Outputs merge steps with conflict
 //! recovery guidance.
 
+use std::io::IsTerminal;
+
+use anyhow::Context;
 use serde::Deserialize;
 
 use super::context::ProtocolContext;
@@ -13,6 +16,67 @@ use super::review_gate::{self, ReviewGateStatus};
 use super::shell;
 use crate::commands::doctor::OutputFormat;
 use crate::config::Config;
+
+/// Resolve the commit message: use the provided value, open an editor on TTY, or fail.
+///
+/// - If `provided` is `Some`, returns it as-is.
+/// - If stdin is not a TTY, returns an error asking for `--message`.
+/// - If stdin is a TTY, opens `$EDITOR` → `$VISUAL` → `vi` with a template, reads the result.
+pub fn resolve_message(provided: Option<&str>) -> anyhow::Result<String> {
+    if let Some(msg) = provided {
+        return Ok(msg.to_string());
+    }
+
+    if !std::io::stdin().is_terminal() {
+        anyhow::bail!(
+            "--message is required in non-interactive mode.\n\
+             Example: botbox protocol merge <workspace> --message \"feat: description\""
+        );
+    }
+
+    // TTY: open editor with a template
+    let editor = std::env::var("EDITOR")
+        .or_else(|_| std::env::var("VISUAL"))
+        .unwrap_or_else(|_| "vi".to_string());
+
+    let tmp_path =
+        std::env::temp_dir().join(format!("botbox-merge-msg-{}.txt", std::process::id()));
+    std::fs::write(
+        &tmp_path,
+        "# Enter commit message for merge (lines starting with '#' are ignored).\n\
+         # Use conventional commit prefix: feat:, fix:, chore:, docs:, etc.\n\
+         # Example: feat: add user authentication\n\n",
+    )
+    .context("failed to create temporary message file")?;
+
+    let status = std::process::Command::new(&editor)
+        .arg(&tmp_path)
+        .status()
+        .with_context(|| format!("failed to open editor '{}'", editor))?;
+
+    if !status.success() {
+        let _ = std::fs::remove_file(&tmp_path);
+        anyhow::bail!("editor '{}' exited with non-zero status — aborting", editor);
+    }
+
+    let content = std::fs::read_to_string(&tmp_path)
+        .context("failed to read message from editor")?;
+    let _ = std::fs::remove_file(&tmp_path);
+
+    let msg: String = content
+        .lines()
+        .filter(|l| !l.starts_with('#'))
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string();
+
+    if msg.is_empty() {
+        anyhow::bail!("commit message is empty — aborting merge");
+    }
+
+    Ok(msg)
+}
 
 /// Parsed output from `maw ws merge <ws> --check --format json`.
 #[derive(Debug, Clone, Deserialize)]
@@ -27,7 +91,7 @@ struct MergeCheckResult {
 /// Execute the merge protocol command.
 pub fn execute(
     workspace: &str,
-    message: Option<&str>,
+    message: &str,
     force: bool,
     execute: bool,
     agent: &str,
@@ -304,22 +368,15 @@ fn build_merge_steps(
     guidance: &mut ProtocolGuidance,
     workspace: &str,
     project: &str,
-    message: Option<&str>,
+    message: &str,
     bone_id: Option<&str>,
     review_id: Option<&str>,
     push_main: bool,
 ) {
     let mut steps = Vec::new();
 
-    // 1. Merge workspace — prefer explicit --message, fall back to bone_id placeholder
-    let fallback_msg;
-    let commit_msg: Option<&str> = if message.is_some() {
-        message
-    } else {
-        fallback_msg = bone_id.map(|id| format!("feat: work from {}", id));
-        fallback_msg.as_deref()
-    };
-    steps.push(shell::ws_merge_cmd(workspace, commit_msg));
+    // 1. Merge workspace with the required commit message
+    steps.push(shell::ws_merge_cmd(workspace, Some(message)));
 
     // 2. Mark review as merged (if review exists)
     if let Some(rid) = review_id {
@@ -350,16 +407,16 @@ fn build_merge_steps(
     guidance.steps(steps);
 
     // Add conflict recovery guidance
-    add_conflict_recovery_guidance(guidance, workspace, commit_msg);
+    add_conflict_recovery_guidance(guidance, workspace, message);
 }
 
 /// Append comprehensive maw/git conflict recovery guidance as diagnostics.
 fn add_conflict_recovery_guidance(
     guidance: &mut ProtocolGuidance,
     workspace: &str,
-    merge_msg: Option<&str>,
+    merge_msg: &str,
 ) {
-    let retry_cmd = shell::ws_merge_cmd(workspace, merge_msg);
+    let retry_cmd = shell::ws_merge_cmd(workspace, Some(merge_msg));
     guidance.diagnostic(format!(
         "Conflict recovery — workspace is preserved (not destroyed). Steps:\n\
          \n\
@@ -469,7 +526,7 @@ fn find_review_for_workspace(
 fn execute_and_render(
     guidance: &ProtocolGuidance,
     workspace: &str,
-    merge_msg: Option<&str>,
+    merge_msg: &str,
     format: OutputFormat,
 ) -> anyhow::Result<()> {
     use super::executor;
@@ -530,7 +587,7 @@ mod tests {
             &mut guidance,
             "frost-castle",
             "myproject",
-            Some("feat: add login flow"),
+            "feat: add login flow",
             Some("bd-abc"),
             Some("cr-123"),
             true,
@@ -544,7 +601,7 @@ mod tests {
                 .iter()
                 .any(|s| s.contains("maw ws merge frost-castle --destroy"))
         );
-        // Should include explicit --message (not fallback bone id)
+        // Should include the required --message
         assert!(
             guidance
                 .steps
@@ -596,7 +653,7 @@ mod tests {
             &mut guidance,
             "frost-castle",
             "myproject",
-            None,
+            "chore: update deps",
             None,
             None,
             false, // push_main = false
@@ -653,7 +710,7 @@ mod tests {
             &mut guidance,
             "frost-castle",
             "myproject",
-            None,
+            "feat: announce test",
             Some("bd-abc"),
             None,
             false,
