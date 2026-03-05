@@ -151,40 +151,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "botbox"
-version = "0.19.0"
-dependencies = [
- "anyhow",
- "assert_cmd",
- "chrono",
- "clap",
- "ctrlc",
- "dialoguer",
- "dirs",
- "minijinja",
- "opentelemetry",
- "opentelemetry-appender-tracing",
- "opentelemetry-otlp",
- "opentelemetry_sdk",
- "predicates",
- "rand",
- "regex",
- "schemars",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "termimad",
- "thiserror 2.0.18",
- "toml",
- "toml_edit",
- "tracing",
- "tracing-opentelemetry",
- "tracing-subscriber",
- "ureq",
-]
-
-[[package]]
 name = "bstr"
 version = "1.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -582,6 +548,40 @@ name = "dyn-clone"
 version = "1.0.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
+
+[[package]]
+name = "edict"
+version = "0.19.0"
+dependencies = [
+ "anyhow",
+ "assert_cmd",
+ "chrono",
+ "clap",
+ "ctrlc",
+ "dialoguer",
+ "dirs",
+ "minijinja",
+ "opentelemetry",
+ "opentelemetry-appender-tracing",
+ "opentelemetry-otlp",
+ "opentelemetry_sdk",
+ "predicates",
+ "rand",
+ "regex",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "termimad",
+ "thiserror 2.0.18",
+ "toml",
+ "toml_edit",
+ "tracing",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
+ "ureq",
+]
 
 [[package]]
 name = "either"
