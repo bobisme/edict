@@ -438,7 +438,7 @@ impl Config {
     /// Parse config from a TOML string.
     pub fn parse_toml(toml_str: &str) -> anyhow::Result<Self> {
         toml::from_str(toml_str)
-            .map_err(|e| ExitError::Config(format!("invalid .botbox.toml: {e}")).into())
+            .map_err(|e| ExitError::Config(format!("invalid .edict.toml: {e}")).into())
     }
 
     /// Parse config from a JSON string (for backwards compatibility).
@@ -458,9 +458,9 @@ impl Config {
 
         // Add header comment with taplo schema reference for editor autocomplete
         doc.decor_mut().set_prefix(
-            "#:schema https://raw.githubusercontent.com/bobisme/botbox/main/schemas/botbox.schema.json\n\
-             # Botbox project configuration\n\
-             # Schema: https://github.com/bobisme/botbox/blob/main/schemas/botbox.schema.json\n\n",
+            "#:schema https://raw.githubusercontent.com/bobisme/edict/main/schemas/edict.schema.json\n\
+             # Edict project configuration\n\
+             # Schema: https://github.com/bobisme/edict/blob/main/schemas/edict.schema.json\n\n",
         );
 
         // Add comments before section headers using item decor
@@ -950,7 +950,7 @@ name = "test"
         let result = Config::parse_toml("not valid toml [[[");
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(err.to_string().contains("invalid .botbox.toml"));
+        assert!(err.to_string().contains("invalid .edict.toml"));
     }
 
     #[test]
@@ -1148,8 +1148,8 @@ bones = true
         )
         .unwrap();
         let output = config.to_toml().unwrap();
-        assert!(output.contains("#:schema https://raw.githubusercontent.com/bobisme/botbox"));
-        assert!(output.contains("# Botbox project configuration"));
+        assert!(output.contains("#:schema https://raw.githubusercontent.com/bobisme/edict"));
+        assert!(output.contains("# Edict project configuration"));
         assert!(output.contains("# Companion tools to enable"));
     }
 
@@ -1186,19 +1186,19 @@ name = "test"
     #[test]
     fn expand_env_value_dollar_var() {
         // Set a test var then expand it
-        unsafe { std::env::set_var("BOTBOX_TEST_VAR", "/test/path"); }
-        assert_eq!(expand_env_value("$BOTBOX_TEST_VAR/sub"), "/test/path/sub");
-        assert_eq!(expand_env_value("${BOTBOX_TEST_VAR}/sub"), "/test/path/sub");
-        unsafe { std::env::remove_var("BOTBOX_TEST_VAR"); }
+        unsafe { std::env::set_var("EDICT_TEST_VAR", "/test/path"); }
+        assert_eq!(expand_env_value("$EDICT_TEST_VAR/sub"), "/test/path/sub");
+        assert_eq!(expand_env_value("${EDICT_TEST_VAR}/sub"), "/test/path/sub");
+        unsafe { std::env::remove_var("EDICT_TEST_VAR"); }
     }
 
     #[test]
     fn expand_env_value_unset_var_preserved() {
         // Unset vars should be left as-is
-        let result = expand_env_value("$BOTBOX_NONEXISTENT_VAR_12345");
-        assert_eq!(result, "$BOTBOX_NONEXISTENT_VAR_12345");
-        let result = expand_env_value("${BOTBOX_NONEXISTENT_VAR_12345}");
-        assert_eq!(result, "${BOTBOX_NONEXISTENT_VAR_12345}");
+        let result = expand_env_value("$EDICT_NONEXISTENT_VAR_12345");
+        assert_eq!(result, "$EDICT_NONEXISTENT_VAR_12345");
+        let result = expand_env_value("${EDICT_NONEXISTENT_VAR_12345}");
+        assert_eq!(result, "${EDICT_NONEXISTENT_VAR_12345}");
     }
 
     #[test]
@@ -1209,18 +1209,18 @@ name = "test"
 
     #[test]
     fn resolved_env_expands_values() {
-        unsafe { std::env::set_var("BOTBOX_TEST_HOME", "/home/test"); }
+        unsafe { std::env::set_var("EDICT_TEST_HOME", "/home/test"); }
         let config = Config::parse_toml(r#"
 version = "1.0.0"
 [project]
 name = "test"
 [env]
-SCCACHE_DIR = "$BOTBOX_TEST_HOME/.cache/sccache"
+SCCACHE_DIR = "$EDICT_TEST_HOME/.cache/sccache"
 PLAIN = "no-vars"
 "#).unwrap();
         let resolved = config.resolved_env();
         assert_eq!(resolved["SCCACHE_DIR"], "/home/test/.cache/sccache");
         assert_eq!(resolved["PLAIN"], "no-vars");
-        unsafe { std::env::remove_var("BOTBOX_TEST_HOME"); }
+        unsafe { std::env::remove_var("EDICT_TEST_HOME"); }
     }
 }

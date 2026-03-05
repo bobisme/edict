@@ -137,12 +137,12 @@ impl Tool {
         let tool_name = &self.program;
         let success_str = if success { "true" } else { "false" };
         crate::telemetry::metrics::time_record(
-            "botbox.subprocess.duration_seconds",
+            "edict.subprocess.duration_seconds",
             start,
             &[("tool", tool_name), ("success", success_str)],
         );
         crate::telemetry::metrics::counter(
-            "botbox.subprocess.calls_total",
+            "edict.subprocess.calls_total",
             1,
             &[("tool", tool_name), ("success", success_str)],
         );

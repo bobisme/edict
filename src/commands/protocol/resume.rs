@@ -97,7 +97,7 @@ fn assess_bone(ctx: &ProtocolContext, bone_id: &str, config: &Config) -> BoneRes
 fn render_fresh(_agent: &str, format: OutputFormat) -> anyhow::Result<()> {
     let mut guidance = ProtocolGuidance::new("resume");
     guidance.status = ProtocolStatus::Fresh;
-    guidance.set_freshness(300, Some("botbox protocol resume".to_string()));
+    guidance.set_freshness(300, Some("edict protocol resume".to_string()));
 
     guidance.step("maw exec default -- bn next".to_string());
 
@@ -121,7 +121,7 @@ fn render_resume(
 ) -> anyhow::Result<()> {
     let mut guidance = ProtocolGuidance::new("resume");
     guidance.status = ProtocolStatus::Resumable;
-    guidance.set_freshness(300, Some("botbox protocol resume".to_string()));
+    guidance.set_freshness(300, Some("edict protocol resume".to_string()));
 
     // If single bone, set it as the primary bone context
     if assessments.len() == 1 {
@@ -222,7 +222,7 @@ fn build_bone_guidance(
             ));
             guidance.step(shell::crit_show_cmd(ws_name, &review.review_id));
             guidance.step(format!(
-                "botbox protocol finish {} --project {}",
+                "edict protocol finish {} --project {}",
                 bead_id, project
             ));
         }

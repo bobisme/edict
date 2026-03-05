@@ -281,7 +281,7 @@ mod tests {
         assert!(result.contains("Reviewer roles: security"));
         assert!(result.contains(MANAGED_START));
         assert!(result.contains(MANAGED_END));
-        assert!(result.contains("## Botbox Workflow"));
+        assert!(result.contains("## Edict Workflow"));
     }
 
     #[test]
@@ -335,7 +335,7 @@ More custom content.
         assert!(result.contains(MANAGED_START));
         assert!(result.contains(MANAGED_END));
         assert!(!result.contains("Old managed content"));
-        assert!(result.contains("## Botbox Workflow"));
+        assert!(result.contains("## Edict Workflow"));
     }
 
     #[test]

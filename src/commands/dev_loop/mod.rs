@@ -196,7 +196,7 @@ pub fn run(
     for i in 1..=max_loops {
         eprintln!("\n--- Dev loop {i}/{max_loops} ---");
         crate::telemetry::metrics::counter(
-            "botbox.dev_loop.iterations_total",
+            "edict.dev_loop.iterations_total",
             1,
             &[("agent", &agent), ("project", &project)],
         );
@@ -337,7 +337,7 @@ pub fn run(
             }
         }
         crate::telemetry::metrics::time_record(
-            "botbox.dev_loop.agent_run_duration_seconds",
+            "edict.dev_loop.agent_run_duration_seconds",
             agent_start,
             &[("agent", &agent), ("project", &project)],
         );
@@ -400,7 +400,7 @@ fn resolve_project_root(explicit: Option<&Path>) -> anyhow::Result<PathBuf> {
     std::env::current_dir().context("getting current directory")
 }
 
-/// Load config from .botbox.toml/.botbox.json (checking both project root and ws/default/).
+/// Load config from .edict.toml/.botbox.toml (checking both project root and ws/default/).
 /// Returns (config, config_dir) where config_dir is the directory containing the config file.
 fn load_config(project_root: &Path) -> anyhow::Result<(Config, PathBuf)> {
     let (config_path, config_dir) = crate::config::find_config_in_project(project_root)?;
@@ -678,7 +678,7 @@ fn discover_sibling_leads(agent: &str) -> anyhow::Result<Vec<SiblingLead>> {
     Ok(siblings)
 }
 
-/// Run agent via `botbox run agent` (Pi by default).
+/// Run agent via `edict run agent` (Pi by default).
 fn run_agent_subprocess(prompt: &str, model: &str, timeout_secs: u64) -> anyhow::Result<String> {
     let mut args = vec!["run", "agent", prompt];
 
@@ -696,13 +696,13 @@ fn run_agent_subprocess(prompt: &str, model: &str, timeout_secs: u64) -> anyhow:
     use std::io::{BufRead, BufReader};
     use std::process::{Command, Stdio};
 
-    let mut child = Command::new("botbox")
+    let mut child = Command::new("edict")
         .args(&args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .spawn()
-        .context("spawning botbox run agent")?;
+        .context("spawning edict run agent")?;
 
     let stdout = child.stdout.take().context("capturing stdout")?;
     let reader = BufReader::new(stdout);
@@ -715,12 +715,12 @@ fn run_agent_subprocess(prompt: &str, model: &str, timeout_secs: u64) -> anyhow:
         output.push('\n');
     }
 
-    let status = child.wait().context("waiting for botbox run agent")?;
+    let status = child.wait().context("waiting for edict run agent")?;
     if status.success() {
         Ok(output)
     } else {
         let code = status.code().unwrap_or(-1);
-        anyhow::bail!("botbox run agent exited with code {code}")
+        anyhow::bail!("edict run agent exited with code {code}")
     }
 }
 

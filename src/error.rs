@@ -1,6 +1,6 @@
 use std::process::ExitCode;
 
-/// Errors that cause botbox to exit with a specific code.
+/// Errors that cause edict to exit with a specific code.
 #[derive(Debug, thiserror::Error)]
 pub enum ExitError {
     #[error("config error: {0}")]

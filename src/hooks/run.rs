@@ -10,8 +10,8 @@ use crate::subprocess::run_command;
 struct HookContext {
     /// If in a maw repo, the path containing .manifold
     maw_root: Option<std::path::PathBuf>,
-    /// If in a botbox project, the loaded config
-    botbox_config: Option<Config>,
+    /// If in an edict project, the loaded config
+    edict_config: Option<Config>,
     /// Agent name from $AGENT or $BOTBUS_AGENT
     agent: Option<String>,
 }
@@ -27,18 +27,18 @@ impl HookContext {
 
         let maw_root = find_ancestor_with(&cwd, ".manifold");
 
-        let botbox_config = find_botbox_config(&cwd)
+        let edict_config = find_edict_config(&cwd)
             .and_then(|p| Config::load(&p).ok());
 
         Self {
             maw_root,
-            botbox_config,
+            edict_config,
             agent,
         }
     }
 
     fn channel(&self) -> Option<String> {
-        self.botbox_config.as_ref().map(|c| c.channel())
+        self.edict_config.as_ref().map(|c| c.channel())
     }
 }
 
@@ -56,9 +56,9 @@ pub fn run_session_start() -> Result<()> {
         );
     }
 
-    // 2. Agent identity + project channel (if botbox project and agent set)
+    // 2. Agent identity + project channel (if edict project and agent set)
     if let Some(ref agent) = ctx.agent {
-        if let Some(ref config) = ctx.botbox_config {
+        if let Some(ref config) = ctx.edict_config {
             println!("Agent ID for use with botbus/crit/bn: {agent}");
             println!("Project channel: {}", config.channel());
         }
@@ -166,7 +166,7 @@ fn refresh_claim_if_needed(agent: &str) {
 fn check_bus_inbox(ctx: &HookContext, agent: &str, _hook_input: Option<&str>) -> Result<()> {
     let channel = match ctx.channel() {
         Some(ch) => ch,
-        None => return Ok(()), // No botbox project, skip inbox check
+        None => return Ok(()), // No edict project, skip inbox check
     };
 
     let agent_flag = format!("--agent={agent}");
@@ -252,7 +252,7 @@ fn find_ancestor_with(start: &Path, marker: &str) -> Option<std::path::PathBuf> 
 
 /// Walk up from `start` looking for an edict/botbox config file.
 /// Returns the config file path if found.
-fn find_botbox_config(start: &Path) -> Option<std::path::PathBuf> {
+fn find_edict_config(start: &Path) -> Option<std::path::PathBuf> {
     // Current name first, then legacy names in order of recency
     const CONFIG_NAMES: &[&str] = &[".edict.toml", ".botbox.toml", ".botbox.json"];
     let mut dir = start.to_path_buf();
@@ -366,28 +366,28 @@ mod tests {
     }
 
     #[test]
-    fn find_botbox_config_edict_toml_preferred() {
+    fn find_edict_config_edict_toml_preferred() {
         let tmp = tempfile::tempdir().unwrap();
         fs::write(tmp.path().join(".edict.toml"), "").unwrap();
         fs::write(tmp.path().join(".botbox.toml"), "").unwrap();
-        let result = find_botbox_config(tmp.path());
+        let result = find_edict_config(tmp.path());
         assert_eq!(result, Some(tmp.path().join(".edict.toml")));
     }
 
     #[test]
-    fn find_botbox_config_legacy_toml_accepted() {
+    fn find_edict_config_legacy_toml_accepted() {
         let tmp = tempfile::tempdir().unwrap();
         fs::write(tmp.path().join(".botbox.toml"), "").unwrap();
-        let result = find_botbox_config(tmp.path());
+        let result = find_edict_config(tmp.path());
         assert_eq!(result, Some(tmp.path().join(".botbox.toml")));
     }
 
     #[test]
-    fn find_botbox_config_ws_default() {
+    fn find_edict_config_ws_default() {
         let tmp = tempfile::tempdir().unwrap();
         fs::create_dir_all(tmp.path().join("ws/default")).unwrap();
         fs::write(tmp.path().join("ws/default/.edict.toml"), "").unwrap();
-        let result = find_botbox_config(tmp.path());
+        let result = find_edict_config(tmp.path());
         assert_eq!(
             result,
             Some(tmp.path().join("ws/default/.edict.toml"))
@@ -395,9 +395,9 @@ mod tests {
     }
 
     #[test]
-    fn find_botbox_config_not_found() {
+    fn find_edict_config_not_found() {
         let tmp = tempfile::tempdir().unwrap();
-        let result = find_botbox_config(tmp.path());
+        let result = find_edict_config(tmp.path());
         assert!(result.is_none());
     }
 

@@ -30,7 +30,7 @@ pub fn resolve_message(provided: Option<&str>) -> anyhow::Result<String> {
     if !std::io::stdin().is_terminal() {
         anyhow::bail!(
             "--message is required in non-interactive mode.\n\
-             Example: botbox protocol merge <workspace> --message \"feat: description\""
+             Example: edict protocol merge <workspace> --message \"feat: description\""
         );
     }
 
@@ -40,7 +40,7 @@ pub fn resolve_message(provided: Option<&str>) -> anyhow::Result<String> {
         .unwrap_or_else(|_| "vi".to_string());
 
     let tmp_path =
-        std::env::temp_dir().join(format!("botbox-merge-msg-{}.txt", std::process::id()));
+        std::env::temp_dir().join(format!("edict-merge-msg-{}.txt", std::process::id()));
     std::fs::write(
         &tmp_path,
         "# Enter commit message for merge (lines starting with '#' are ignored).\n\
@@ -124,7 +124,7 @@ pub fn execute(
 
     let mut guidance = ProtocolGuidance::new("merge");
     guidance.workspace = Some(workspace.to_string());
-    guidance.set_freshness(120, Some(format!("botbox protocol merge {}", workspace)));
+    guidance.set_freshness(120, Some(format!("edict protocol merge {}", workspace)));
 
     // Check workspace exists
     let ws_exists = ctx.workspaces().iter().any(|ws| ws.name == workspace);

@@ -86,12 +86,12 @@ Active leads:
         String::new()
     };
 
-    let botbox_mission_env = std::env::var("BOTBOX_MISSION").ok();
+    let edict_mission_env = std::env::var("EDICT_MISSION").ok();
 
     let mission_triage = if missions_enabled {
-        let mission_focus = botbox_mission_env
+        let mission_focus = edict_mission_env
             .as_deref()
-            .map(|m| format!("BOTBOX_MISSION=\"{m}\" — prioritize this mission's children."))
+            .map(|m| format!("EDICT_MISSION=\"{m}\" — prioritize this mission's children."))
             .unwrap_or_default();
         format!(
             r#"
@@ -119,7 +119,7 @@ For each active mission:
     };
 
     let mission_level4_signals = if missions_enabled {
-        "\n**Level 4 signals:** Task mentions multiple components, description reads like a spec/PRD, human explicitly requested coordinated work (BOTBOX_MISSION env), or bones share a common feature/goal."
+        "\n**Level 4 signals:** Task mentions multiple components, description reads like a spec/PRD, human explicitly requested coordinated work (EDICT_MISSION env), or bones share a common feature/goal."
     } else {
         ""
     };
@@ -131,9 +131,9 @@ For each active mission:
     };
 
     let mission_section_5c = if missions_enabled {
-        let mission_env_note = botbox_mission_env
+        let mission_env_note = edict_mission_env
             .as_deref()
-            .map(|m| format!("\nBOTBOX_MISSION is set to \"{m}\" — focus on this mission.\n"))
+            .map(|m| format!("\nEDICT_MISSION is set to \"{m}\" — focus on this mission.\n"))
             .unwrap_or_default();
 
         format!(
@@ -172,17 +172,17 @@ For independent children (unblocked), dispatch workers (max {max_workers} concur
   bus claims stake --agent {agent} "workspace://{project}/$WS" -m "<child-id>"
 - Add mission labels and sibling context env vars:
     --label "mission:<mission-id>" \
-    --env "BOTBOX_MISSION=<mission-id>" \
-    --env "BOTBOX_MISSION_OUTCOME=<outcome from mission bone description>" \
-    --env "BOTBOX_SIBLINGS=<sibling-id> (<title>) [owner:<owner>, status:<status>]\n..." \
-    --env "BOTBOX_FILE_HINTS=<sibling-id>: likely edits <files>\n..." \
+    --env "EDICT_MISSION=<mission-id>" \
+    --env "EDICT_MISSION_OUTCOME=<outcome from mission bone description>" \
+    --env "EDICT_SIBLINGS=<sibling-id> (<title>) [owner:<owner>, status:<status>]\n..." \
+    --env "EDICT_FILE_HINTS=<sibling-id>: likely edits <files>\n..." \
 
 Build the sibling context BEFORE dispatching:
 1. List all children: maw exec default -- bn list -l "mission:<mission-id>" --json
 2. For each child: extract id, title, owner, status
-3. Format BOTBOX_SIBLINGS as one line per child: "<id> (<title>) [owner:<owner>, status:<status>]"
+3. Format EDICT_SIBLINGS as one line per child: "<id> (<title>) [owner:<owner>, status:<status>]"
 4. Estimate file ownership hints from bone titles/descriptions (advisory, not enforced)
-5. Extract the Outcome line from the mission bone description for BOTBOX_MISSION_OUTCOME
+5. Extract the Outcome line from the mission bone description for EDICT_MISSION_OUTCOME
 
 - Include mission context in each worker's bone comment:
   maw exec default -- bn bone comment add <child-id> \
@@ -236,7 +236,7 @@ When all children are closed:
     };
 
     let mission_rules = if missions_enabled {
-        let mission_focus = botbox_mission_env
+        let mission_focus = edict_mission_env
             .as_deref()
             .map(|m| format!(" Focus on mission: {m}"))
             .unwrap_or_default();
@@ -247,8 +247,8 @@ When all children are closed:
         String::new()
     };
 
-    // Worker dispatch command (built into botbox binary)
-    let worker_cmd = "botbox run worker-loop";
+    // Worker dispatch command (built into edict binary)
+    let worker_cmd = "edict run worker-loop";
     let project_dir = &ctx.project_dir;
     let worker_timeout = ctx.worker_timeout;
 
@@ -271,7 +271,7 @@ When all children are closed:
     format!(
         r#"You are lead dev agent "{agent}" for project "{project}".
 
-IMPORTANT: Use --agent {agent} on ALL bus and crit commands. bn resolves agent identity from $AGENT/$BOTBUS_AGENT env automatically. Set BOTBOX_PROJECT={project}. {review_instructions}.
+IMPORTANT: Use --agent {agent} on ALL bus and crit commands. bn resolves agent identity from $AGENT/$BOTBUS_AGENT env automatically. Set EDICT_PROJECT={project}. {review_instructions}.
 
 CRITICAL - HUMAN MESSAGE PRIORITY: If you see a system reminder with "STOP:" showing unread bus messages, these are from humans or other agents trying to reach you. IMMEDIATELY check inbox and respond before continuing your current task. Human questions, clarifications, and redirects take priority over heads-down work.
 
@@ -330,7 +330,7 @@ After handling all unfinished bones, proceed to step 2 (RESUME CHECK).
 
 ## 2. RESUME CHECK (check for active claims)
 
-Try protocol command: botbox protocol resume --agent {agent}
+Try protocol command: edict protocol resume --agent {agent}
 Read the output carefully. If status is Resumable or HasResources, follow the suggested commands.
 If it fails (exit 1 = command unavailable), fall back to manual resume check:
   Check CURRENT STATUS above for ACTIVE CLAIMS. If none listed, skip to step 3.
@@ -344,7 +344,7 @@ If it fails (exit 1 = command unavailable), fall back to manual resume check:
 
 ## 2.5. ORPHAN CLEANUP (detect and release stale claims)
 
-Try protocol command: botbox protocol cleanup --agent {agent}
+Try protocol command: edict protocol cleanup --agent {agent}
 Read the output carefully. If status is HasResources, run the suggested cleanup commands.
 If it fails (exit 1 = command unavailable), fall back to manual cleanup:
   Check for orphaned claims from completed or failed work:
@@ -417,7 +417,7 @@ Assess bone count:
 
 ## 5a. SEQUENTIAL (1 bone — do it yourself)
 
-START: Try protocol command: botbox protocol start <bone-id> --agent {agent}
+START: Try protocol command: edict protocol start <bone-id> --agent {agent}
 Read the output carefully. If status is Ready, run the suggested commands.
 If it fails (exit 1 = command unavailable), fall back to manual start:
   1. maw exec default -- bn do <id>
@@ -443,7 +443,7 @@ RISK:LOW (evals, docs, tests, config) — Self-review and merge directly:
   Proceed directly to merge/finish below.
 
 RISK:MEDIUM — Standard review (if REVIEW is true):
-  Try protocol command: botbox protocol review <bone-id> --agent {agent}
+  Try protocol command: edict protocol review <bone-id> --agent {agent}
   Read the output carefully. If status is Ready, run the suggested commands.
   If it fails (exit 1 = command unavailable), fall back to manual review:
     CHECK for existing review: maw exec default -- bn comments <id> | grep "Review created:"
@@ -505,10 +505,10 @@ For each dispatched bone, spawn a worker via botty with hierarchical naming:
     --label worker --label "bone:<id>" \
     --env-inherit BOTBUS_CHANNEL,BOTBUS_DATA_DIR,OTEL_EXPORTER_OTLP_ENDPOINT,TRACEPARENT \
     --env "AGENT={agent}/<worker-suffix>" \
-    --env "BOTBOX_BONE=<id>" \
-    --env "BOTBOX_WORKSPACE=$WS" \
+    --env "EDICT_BONE=<id>" \
+    --env "EDICT_WORKSPACE=$WS" \
     --env "BOTBUS_CHANNEL={project}" \
-    --env "BOTBOX_PROJECT={project}" \
+    --env "EDICT_PROJECT={project}" \
 {spawn_env_flags}
 {worker_memory_limit_flag}    --timeout <model-timeout> \
     --cwd {project_dir}/ws/$WS \
@@ -517,7 +517,7 @@ For each dispatched bone, spawn a worker via botty with hierarchical naming:
 Set --timeout to {worker_timeout} (from config agents.worker.timeout).
 
 The hierarchical name ({agent}/<suffix>) lets you find all your workers via `botty list`.
-The BOTBOX_BONE and BOTBOX_WORKSPACE env vars tell the worker-loop to skip triage and go straight to the assigned work.
+The EDICT_BONE and EDICT_WORKSPACE env vars tell the worker-loop to skip triage and go straight to the assigned work.
 
 COLLISION GUARD: NEVER dispatch a worker for a bone you are currently working on or have already started fixing yourself this iteration. If you took over a failed worker's bone, do NOT also dispatch a new worker for it.
 
@@ -580,7 +580,7 @@ For each dispatched bone where the worker is NOT in botty list but the bone is s
 
 For each completed bone with a workspace, ALWAYS try protocol merge first:
 
-  botbox protocol merge <workspace> --message "feat: <bone-title>" --agent {agent}
+  edict protocol merge <workspace> --message "feat: <bone-title>" --agent {agent}
 
 Get the bone title from: maw exec default -- bn show <id>
 Use the appropriate conventional commit prefix: feat: for features, fix: for bugs, chore: for maintenance.
@@ -672,7 +672,7 @@ Every merge into default MUST follow this protocol to prevent concurrent merge c
 
 ### Manual fallback (only if protocol merge is unavailable):
 
-  Try protocol command: botbox protocol finish <bone-id> --agent {agent}
+  Try protocol command: edict protocol finish <bone-id> --agent {agent}
   It will tell you the review status and exact commands to run.
   If it fails (exit 1 = command unavailable), fall back to the manual paths below.
 
@@ -707,7 +707,7 @@ After finishing all ready work:
 ## 7.5. END-OF-ITERATION CLEANUP
 
 Run cleanup to release orphaned resources before signaling completion:
-  botbox protocol cleanup --agent {agent}
+  edict protocol cleanup --agent {agent}
 If it fails (exit 1 = command unavailable), skip — the startup cleanup (step 2.5) will catch it next iteration.
 
 ## 8. RELEASE CHECK (before signaling COMPLETE)
@@ -773,24 +773,24 @@ mod tests {
 
         // All 5 protocol commands must be referenced in the dev-loop prompt
         assert!(
-            prompt.contains("botbox protocol resume"),
-            "dev-loop prompt must reference 'botbox protocol resume'"
+            prompt.contains("edict protocol resume"),
+            "dev-loop prompt must reference 'edict protocol resume'"
         );
         assert!(
-            prompt.contains("botbox protocol start"),
-            "dev-loop prompt must reference 'botbox protocol start'"
+            prompt.contains("edict protocol start"),
+            "dev-loop prompt must reference 'edict protocol start'"
         );
         assert!(
-            prompt.contains("botbox protocol review"),
-            "dev-loop prompt must reference 'botbox protocol review'"
+            prompt.contains("edict protocol review"),
+            "dev-loop prompt must reference 'edict protocol review'"
         );
         assert!(
-            prompt.contains("botbox protocol finish"),
-            "dev-loop prompt must reference 'botbox protocol finish'"
+            prompt.contains("edict protocol finish"),
+            "dev-loop prompt must reference 'edict protocol finish'"
         );
         assert!(
-            prompt.contains("botbox protocol cleanup"),
-            "dev-loop prompt must reference 'botbox protocol cleanup'"
+            prompt.contains("edict protocol cleanup"),
+            "dev-loop prompt must reference 'edict protocol cleanup'"
         );
     }
 

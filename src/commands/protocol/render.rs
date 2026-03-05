@@ -33,7 +33,7 @@ pub struct ProtocolGuidance {
     pub snapshot_at: String,
     /// Validity duration in seconds (how long this guidance is fresh)
     pub valid_for_sec: u32,
-    /// Command to re-fetch fresh guidance if stale (e.g., "botbox protocol start")
+    /// Command to re-fetch fresh guidance if stale (e.g., "edict protocol start")
     pub revalidate_cmd: Option<String>,
     /// Bone context (if applicable)
     pub bone: Option<BoneRef>,
@@ -171,7 +171,7 @@ pub fn validate_guidance(guidance: &ProtocolGuidance) -> Result<(), ValidationEr
 /// Workspace: brave-tiger
 ///
 /// Steps:
-/// 1. bus send --agent $AGENT botbox 'Working...' -L task-claim
+/// 1. bus send --agent $AGENT edict 'Working...' -L task-claim
 /// 2. maw ws create --random
 ///
 /// Advice: Create workspace and stake claims before starting implementation.
@@ -574,10 +574,10 @@ mod tests {
         g.workspace = Some("brave-tiger".to_string());
         g.steps(vec![
             "maw exec default -- bn do bd-3t1d".to_string(),
-            "bus claims stake --agent crimson-storm 'bone://botbox/bd-3t1d' -m 'bd-3t1d'"
+            "bus claims stake --agent crimson-storm 'bone://edict/bd-3t1d' -m 'bd-3t1d'"
                 .to_string(),
             "maw ws create --random".to_string(),
-            "bus claims stake --agent crimson-storm 'workspace://botbox/brave-tiger' -m 'bd-3t1d'"
+            "bus claims stake --agent crimson-storm 'workspace://edict/brave-tiger' -m 'bd-3t1d'"
                 .to_string(),
         ]);
         g.advise("Workspace created. Implement render.rs with ProtocolGuidance, ProtocolStatus, and rendering functions.".to_string());
@@ -621,15 +621,15 @@ mod tests {
         });
         g.status = ProtocolStatus::NeedsReview;
         g.steps(vec![
-            "maw exec brave-tiger -- crit reviews request cr-123 --reviewers botbox-security --agent crimson-storm".to_string(),
-            "bus send --agent crimson-storm botbox 'Review requested: cr-123 @botbox-security' -L review-request".to_string(),
+            "maw exec brave-tiger -- crit reviews request cr-123 --reviewers edict-security --agent crimson-storm".to_string(),
+            "bus send --agent crimson-storm edict 'Review requested: cr-123 @edict-security' -L review-request".to_string(),
         ]);
-        g.advise("Review is open. Awaiting approval from botbox-security.".to_string());
+        g.advise("Review is open. Awaiting approval from edict-security.".to_string());
 
         let text = render_text(&g);
         assert!(text.contains("Status: Needs Review"));
         assert!(text.contains("cr-123"));
-        assert!(text.contains("botbox-security"));
+        assert!(text.contains("edict-security"));
     }
 
     #[test]
@@ -704,25 +704,25 @@ mod tests {
     #[test]
     fn guidance_set_freshness() {
         let mut g = ProtocolGuidance::new("start");
-        g.set_freshness(600, Some("botbox protocol start".to_string()));
+        g.set_freshness(600, Some("edict protocol start".to_string()));
         assert_eq!(g.valid_for_sec, 600);
-        assert_eq!(g.revalidate_cmd, Some("botbox protocol start".to_string()));
+        assert_eq!(g.revalidate_cmd, Some("edict protocol start".to_string()));
     }
 
     #[test]
     fn render_text_includes_freshness() {
         let mut g = ProtocolGuidance::new("start");
-        g.set_freshness(300, Some("botbox protocol start".to_string()));
+        g.set_freshness(300, Some("edict protocol start".to_string()));
         let text = render_text(&g);
         assert!(text.contains("Snapshot:"));
         assert!(text.contains("valid for 300s"));
-        assert!(text.contains("Revalidate: botbox protocol start"));
+        assert!(text.contains("Revalidate: edict protocol start"));
     }
 
     #[test]
     fn render_json_includes_freshness() {
         let mut g = ProtocolGuidance::new("start");
-        g.set_freshness(600, Some("botbox protocol start".to_string()));
+        g.set_freshness(600, Some("edict protocol start".to_string()));
         let json = render_json(&g).unwrap();
         assert!(json.contains("valid_for_sec"));
         assert!(json.contains("600"));
@@ -733,7 +733,7 @@ mod tests {
     fn guidance_stale_window_logic() {
         // This test demonstrates how clients should detect stale guidance.
         let mut g = ProtocolGuidance::new("start");
-        g.set_freshness(1, Some("botbox protocol start".to_string())); // 1 second fresh
+        g.set_freshness(1, Some("edict protocol start".to_string())); // 1 second fresh
 
         let guidance_json = render_json(&g).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&guidance_json).unwrap();
@@ -829,8 +829,8 @@ mod tests {
             review_id: "cr-123".to_string(),
             status: "open".to_string(),
         });
-        g.set_freshness(600, Some("botbox protocol review".to_string()));
-        g.step("maw exec worker-1 -- crit reviews request cr-123 --reviewers botbox-security --agent crimson-storm".to_string());
+        g.set_freshness(600, Some("edict protocol review".to_string()));
+        g.step("maw exec worker-1 -- crit reviews request cr-123 --reviewers edict-security --agent crimson-storm".to_string());
         g.diagnostic("awaiting review approval".to_string());
         g.advise("Review is pending.".to_string());
 
@@ -855,7 +855,7 @@ mod tests {
             title: "protocol: renderer".to_string(),
         });
         g.workspace = Some("work-1".to_string());
-        g.set_freshness(300, Some("botbox protocol start".to_string()));
+        g.set_freshness(300, Some("edict protocol start".to_string()));
         g.step("maw ws create work-1".to_string());
         g.advise("Start implementation".to_string());
 

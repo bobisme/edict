@@ -224,9 +224,9 @@ fn home_dir() -> std::path::PathBuf {
 /// or just "model-id" with --provider flag.
 fn spawn_pi(prompt: &str, model: Option<&str>) -> anyhow::Result<Child> {
     // Disable all auto-discovered extensions (e.g. lsp-pi which spawns rust-analyzer)
-    // then explicitly re-enable only the botbox hooks extension.
-    let botbox_ext = home_dir().join(".pi/agent/extensions/botbox-hooks.ts");
-    let botbox_ext_str;
+    // then explicitly re-enable only the edict hooks extension.
+    let edict_ext = home_dir().join(".pi/agent/extensions/edict-hooks.ts");
+    let edict_ext_str;
     let mut args = vec![
         "--print",
         "--no-extensions",
@@ -237,10 +237,10 @@ fn spawn_pi(prompt: &str, model: Option<&str>) -> anyhow::Result<Child> {
         "json",
         "--no-session",
     ];
-    if botbox_ext.exists() {
-        botbox_ext_str = botbox_ext.to_string_lossy().into_owned();
+    if edict_ext.exists() {
+        edict_ext_str = edict_ext.to_string_lossy().into_owned();
         args.push("--extension");
-        args.push(&botbox_ext_str);
+        args.push(&edict_ext_str);
     }
 
     // Model can be "provider/model" or "provider/model:thinking" — Pi handles the :suffix natively

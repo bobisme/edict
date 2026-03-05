@@ -119,10 +119,10 @@ fn get_cache_dir() -> Result<PathBuf> {
         anyhow::bail!("invalid project directory: path traversal detected");
     }
 
-    let cache_path = base.join("botbox").join("projects").join(&slug);
+    let cache_path = base.join("edict").join("projects").join(&slug);
 
     // Verify the result is within the expected cache directory
-    if !cache_path.starts_with(base.join("botbox").join("projects")) {
+    if !cache_path.starts_with(base.join("edict").join("projects")) {
         anyhow::bail!("cache directory escaped expected boundaries");
     }
 
@@ -262,9 +262,9 @@ fn build_prompt(
     let prompt_name = get_reviewer_prompt_name(role.as_deref());
 
     // Find prompts directory (handle maw v2 bare repo layout)
-    let mut prompts_dir = PathBuf::from(".agents/botbox/prompts");
+    let mut prompts_dir = PathBuf::from(".agents/edict/prompts");
     if !prompts_dir.exists() {
-        prompts_dir = PathBuf::from("ws/default/.agents/botbox/prompts");
+        prompts_dir = PathBuf::from("ws/default/.agents/edict/prompts");
     }
 
     // Determine target workspace from first work item
@@ -575,7 +575,7 @@ pub fn run_reviewer_loop(
     for i in 1..=max_loops {
         eprintln!("\n--- Review loop {}/{} ---", i, max_loops);
         crate::telemetry::metrics::counter(
-            "botbox.reviewer.iterations_total",
+            "edict.reviewer.iterations_total",
             1,
             &[("agent", &agent)],
         );
@@ -631,7 +631,7 @@ pub fn run_reviewer_loop(
             false,
         );
         crate::telemetry::metrics::time_record(
-            "botbox.reviewer.agent_run_duration_seconds",
+            "edict.reviewer.agent_run_duration_seconds",
             reviewer_start,
             &[("agent", &agent)],
         );

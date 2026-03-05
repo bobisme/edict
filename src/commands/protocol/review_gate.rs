@@ -166,10 +166,10 @@ mod tests {
     #[test]
     fn test_approved_all_reviewers_lgtm() {
         let review = make_review(vec![
-            make_vote("botbox-security", "lgtm", "2026-02-16T10:00:00Z"),
-            make_vote("botbox-perf", "lgtm", "2026-02-16T10:05:00Z"),
+            make_vote("edict-security", "lgtm", "2026-02-16T10:00:00Z"),
+            make_vote("edict-perf", "lgtm", "2026-02-16T10:05:00Z"),
         ]);
-        let required = vec!["botbox-security".to_string(), "botbox-perf".to_string()];
+        let required = vec!["edict-security".to_string(), "edict-perf".to_string()];
 
         let decision = evaluate_review_gate(&review, &required);
 
@@ -183,45 +183,45 @@ mod tests {
     #[test]
     fn test_blocked_one_reviewer_blocks() {
         let review = make_review(vec![
-            make_vote("botbox-security", "lgtm", "2026-02-16T10:00:00Z"),
-            make_vote("botbox-perf", "block", "2026-02-16T10:05:00Z"),
+            make_vote("edict-security", "lgtm", "2026-02-16T10:00:00Z"),
+            make_vote("edict-perf", "block", "2026-02-16T10:05:00Z"),
         ]);
-        let required = vec!["botbox-security".to_string(), "botbox-perf".to_string()];
+        let required = vec!["edict-security".to_string(), "edict-perf".to_string()];
 
         let decision = evaluate_review_gate(&review, &required);
 
         assert_eq!(decision.status, ReviewGateStatus::Blocked);
         assert!(decision.missing_approvals.is_empty());
-        // botbox-perf only has a block vote (no prior LGTM), so it should NOT be in newer_block_after_lgtm
+        // edict-perf only has a block vote (no prior LGTM), so it should NOT be in newer_block_after_lgtm
         assert!(decision.newer_block_after_lgtm.is_empty());
-        assert_eq!(decision.blocked_by, vec!["botbox-perf"]);
+        assert_eq!(decision.blocked_by, vec!["edict-perf"]);
     }
 
     #[test]
     fn test_needs_review_missing_approvals() {
         let review = make_review(vec![make_vote(
-            "botbox-security",
+            "edict-security",
             "lgtm",
             "2026-02-16T10:00:00Z",
         )]);
-        let required = vec!["botbox-security".to_string(), "botbox-perf".to_string()];
+        let required = vec!["edict-security".to_string(), "edict-perf".to_string()];
 
         let decision = evaluate_review_gate(&review, &required);
 
         assert_eq!(decision.status, ReviewGateStatus::NeedsReview);
-        assert_eq!(decision.missing_approvals, vec!["botbox-perf"]);
+        assert_eq!(decision.missing_approvals, vec!["edict-perf"]);
         assert_eq!(decision.approved_by.len(), 1);
     }
 
     #[test]
     fn test_needs_review_no_votes() {
         let review = make_review(vec![]);
-        let required = vec!["botbox-security".to_string()];
+        let required = vec!["edict-security".to_string()];
 
         let decision = evaluate_review_gate(&review, &required);
 
         assert_eq!(decision.status, ReviewGateStatus::NeedsReview);
-        assert_eq!(decision.missing_approvals, vec!["botbox-security"]);
+        assert_eq!(decision.missing_approvals, vec!["edict-security"]);
     }
 
     #[test]
@@ -241,46 +241,46 @@ mod tests {
     #[test]
     fn test_blocked_then_lgtm_latest_is_lgtm() {
         let review = make_review(vec![
-            make_vote("botbox-security", "block", "2026-02-16T10:00:00Z"),
-            make_vote("botbox-security", "lgtm", "2026-02-16T10:05:00Z"),
+            make_vote("edict-security", "block", "2026-02-16T10:00:00Z"),
+            make_vote("edict-security", "lgtm", "2026-02-16T10:05:00Z"),
         ]);
-        let required = vec!["botbox-security".to_string()];
+        let required = vec!["edict-security".to_string()];
 
         let decision = evaluate_review_gate(&review, &required);
 
         // Latest vote is lgtm, so should be approved
         assert_eq!(decision.status, ReviewGateStatus::Approved);
-        assert_eq!(decision.approved_by, vec!["botbox-security"]);
+        assert_eq!(decision.approved_by, vec!["edict-security"]);
         assert!(decision.newer_block_after_lgtm.is_empty());
     }
 
     #[test]
     fn test_lgtm_then_block_latest_is_block() {
         let review = make_review(vec![
-            make_vote("botbox-security", "lgtm", "2026-02-16T10:00:00Z"),
-            make_vote("botbox-security", "block", "2026-02-16T10:05:00Z"),
+            make_vote("edict-security", "lgtm", "2026-02-16T10:00:00Z"),
+            make_vote("edict-security", "block", "2026-02-16T10:05:00Z"),
         ]);
-        let required = vec!["botbox-security".to_string()];
+        let required = vec!["edict-security".to_string()];
 
         let decision = evaluate_review_gate(&review, &required);
 
         // Latest vote is block, so should be blocked
         assert_eq!(decision.status, ReviewGateStatus::Blocked);
-        assert_eq!(decision.blocked_by, vec!["botbox-security"]);
-        assert_eq!(decision.newer_block_after_lgtm, vec!["botbox-security"]);
+        assert_eq!(decision.blocked_by, vec!["edict-security"]);
+        assert_eq!(decision.newer_block_after_lgtm, vec!["edict-security"]);
     }
 
     #[test]
     fn test_multiple_reviewers_mixed() {
         let review = make_review(vec![
-            make_vote("botbox-security", "lgtm", "2026-02-16T10:00:00Z"),
-            make_vote("botbox-perf", "lgtm", "2026-02-16T10:05:00Z"),
-            make_vote("botbox-other", "block", "2026-02-16T10:10:00Z"),
+            make_vote("edict-security", "lgtm", "2026-02-16T10:00:00Z"),
+            make_vote("edict-perf", "lgtm", "2026-02-16T10:05:00Z"),
+            make_vote("edict-other", "block", "2026-02-16T10:10:00Z"),
         ]);
         let required = vec![
-            "botbox-security".to_string(),
-            "botbox-perf".to_string(),
-            "botbox-other".to_string(),
+            "edict-security".to_string(),
+            "edict-perf".to_string(),
+            "edict-other".to_string(),
         ];
 
         let decision = evaluate_review_gate(&review, &required);
@@ -293,16 +293,16 @@ mod tests {
     #[test]
     fn test_reviewer_not_in_required_list_ignored() {
         let review = make_review(vec![
-            make_vote("botbox-security", "lgtm", "2026-02-16T10:00:00Z"),
+            make_vote("edict-security", "lgtm", "2026-02-16T10:00:00Z"),
             make_vote("random-reviewer", "block", "2026-02-16T10:05:00Z"),
         ]);
-        let required = vec!["botbox-security".to_string()];
+        let required = vec!["edict-security".to_string()];
 
         let decision = evaluate_review_gate(&review, &required);
 
         // random-reviewer's block should be ignored
         assert_eq!(decision.status, ReviewGateStatus::Approved);
-        assert_eq!(decision.approved_by, vec!["botbox-security"]);
+        assert_eq!(decision.approved_by, vec!["edict-security"]);
         assert_eq!(decision.blocked_by.len(), 0);
     }
 }

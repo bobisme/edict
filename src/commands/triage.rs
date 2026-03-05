@@ -1,6 +1,6 @@
 /// Triage is now handled by `bn triage` directly.
 /// This module is kept as a thin wrapper for backwards compatibility
-/// with `botbox run triage`.
+/// with `edict run triage`.
 use crate::subprocess::Tool;
 
 /// Run triage: delegates to `bn triage` in the default workspace

@@ -29,7 +29,7 @@ pub struct StatusArgs {
     /// Project name for scoping (defaults to project.name in config)
     #[arg(long)]
     pub project: Option<String>,
-    /// Agent name for filtering (defaults to BOTBOX_AGENT or defaultAgent in config)
+    /// Agent name for filtering (defaults to EDICT_AGENT or defaultAgent in config)
     #[arg(long)]
     pub agent: Option<String>,
     /// Output format
@@ -111,14 +111,14 @@ impl StatusArgs {
         let project = self
             .project
             .clone()
-            .or_else(|| std::env::var("BOTBOX_PROJECT").ok())
+            .or_else(|| std::env::var("EDICT_PROJECT").ok())
             .or_else(|| config.as_ref().map(|c| c.project.name.clone()))
-            .unwrap_or_else(|| "botbox".to_string());
+            .unwrap_or_else(|| "edict".to_string());
 
         let agent = self
             .agent
             .clone()
-            .or_else(|| std::env::var("BOTBOX_AGENT").ok())
+            .or_else(|| std::env::var("EDICT_AGENT").ok())
             .or_else(|| config.as_ref().map(|c| c.default_agent()))
             .unwrap_or_else(|| format!("{project}-dev"));
 
@@ -289,7 +289,7 @@ impl StatusArgs {
                             "Orphaned claim: bone {} is closed but claim still active → cleanup required",
                             bone_id
                         ),
-                        command: Some(format!("botbox protocol cleanup {}", bone_id)),
+                        command: Some(format!("edict protocol cleanup {}", bone_id)),
                     });
                 }
             }
@@ -318,7 +318,7 @@ impl StatusArgs {
                                         "Review {} approved (LGTM) → ready to finish bone {}",
                                         review_detail.review_id, bone_id
                                     ),
-                                    command: Some(format!("botbox protocol finish {}", bone_id)),
+                                    command: Some(format!("edict protocol finish {}", bone_id)),
                                 });
                             }
                         }
@@ -464,7 +464,7 @@ impl StatusArgs {
     }
 
     fn print_text(&self, report: &StatusReport) {
-        println!("botbox-status");
+        println!("edict-status");
         println!("ready-bones  count={}", report.ready_bones.count);
         for bone in report.ready_bones.items.iter().take(5) {
             println!("ready-bone  id={}  title={}", bone.id, bone.title);

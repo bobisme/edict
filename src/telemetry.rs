@@ -62,7 +62,7 @@ pub fn init() -> TelemetryGuard {
         Some(_) => init_otlp(),
         #[cfg(not(feature = "otel"))]
         Some(_) => {
-            eprintln!("warning: OTEL_EXPORTER_OTLP_ENDPOINT set but botbox built without 'otel' feature");
+            eprintln!("warning: OTEL_EXPORTER_OTLP_ENDPOINT set but edict built without 'otel' feature");
             init_noop()
         }
     }
@@ -263,7 +263,7 @@ pub mod metrics {
 
     /// Increment a counter by `value`.
     pub fn counter(name: &'static str, value: u64, attrs: &[(&'static str, &str)]) {
-        let meter = opentelemetry::global::meter("botbox");
+        let meter = opentelemetry::global::meter("edict");
         let kv: Vec<KeyValue> = attrs
             .iter()
             .map(|(k, v)| KeyValue::new(*k, v.to_string()))
@@ -273,7 +273,7 @@ pub mod metrics {
 
     /// Record a histogram observation.
     pub fn histogram(name: &'static str, value: f64, attrs: &[(&'static str, &str)]) {
-        let meter = opentelemetry::global::meter("botbox");
+        let meter = opentelemetry::global::meter("edict");
         let kv: Vec<KeyValue> = attrs
             .iter()
             .map(|(k, v)| KeyValue::new(*k, v.to_string()))

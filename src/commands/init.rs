@@ -134,12 +134,12 @@ impl InitArgs {
         // Detect maw v2 bare repo
         let ws_default = project_dir.join("ws/default");
         if config::find_config(&ws_default).is_some()
-            || (ws_default.exists() && !project_dir.join(".agents/botbox").exists())
+            || (ws_default.exists() && !project_dir.join(".agents/edict").exists())
         {
             return self.handle_bare_repo(&project_dir);
         }
 
-        let agents_dir = project_dir.join(".agents/botbox");
+        let agents_dir = project_dir.join(".agents/edict");
         let agents_md_path = project_dir.join("AGENTS.md");
         let is_reinit = agents_dir.exists();
 
@@ -154,15 +154,15 @@ impl InitArgs {
         let interactive = !self.no_interactive && std::io::stdin().is_terminal();
         let choices = self.gather_choices(interactive, &detected)?;
 
-        // Create .agents/botbox/
+        // Create .agents/edict/
         fs::create_dir_all(&agents_dir)?;
-        println!("Created .agents/botbox/");
+        println!("Created .agents/edict/");
 
         // Run sync to copy workflow docs, prompts, design docs, hooks
         // We create config first so sync can read it
         let config = build_config(&choices);
 
-        // Write .botbox.toml
+        // Write .edict.toml
         let config_path = project_dir.join(config::CONFIG_TOML);
         if !config_path.exists() || self.force {
             let toml_str = config.to_toml()?;
@@ -192,7 +192,7 @@ impl InitArgs {
         // Generate AGENTS.md
         if agents_md_path.exists() && !self.force {
             tracing::warn!(
-                "AGENTS.md already exists. Use --force to overwrite, or run `botbox sync` to update."
+                "AGENTS.md already exists. Use --force to overwrite, or run `edict sync` to update."
             );
         } else {
             let content = render_agents_md(&config)?;
@@ -228,13 +228,13 @@ impl InitArgs {
             if !critignore_path.exists() {
                 fs::write(
                     &critignore_path,
-                    "# Ignore botbox-managed files (prompts, scripts, hooks, journals)\n\
-                     .agents/botbox/\n\
+                    "# Ignore edict-managed files (prompts, scripts, hooks, journals)\n\
+                     .agents/edict/\n\
                      \n\
                      # Ignore tool config and data files\n\
                      .crit/\n\
                      .maw.toml\n\
-                     .botbox.toml\n\
+                     .edict.toml\n\
                      .botbox.json\n\
                      .claude/\n\
                      opencode.json\n",
@@ -334,7 +334,7 @@ impl InitArgs {
         let interactive = !self.no_interactive && std::io::stdin().is_terminal();
         let choices = self.gather_choices(interactive, &detected)?;
 
-        let mut args: Vec<String> = vec!["exec", "default", "--", "botbox", "init"]
+        let mut args: Vec<String> = vec!["exec", "default", "--", "edict", "init"]
             .into_iter()
             .map(Into::into)
             .collect();
@@ -833,7 +833,7 @@ fn sync_design_docs(agents_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-// sync_hooks removed — hooks are now installed globally via `botbox hooks install`
+// sync_hooks removed — hooks are now installed globally via `edict hooks install`
 
 // --- Hook registration ---
 
@@ -1090,7 +1090,7 @@ fn fetch_gitignore(languages: &[String]) -> Result<String> {
 // --- Auto-commit ---
 
 fn auto_commit(project_dir: &Path, config: &Config) -> Result<()> {
-    let message = format!("chore: initialize botbox v{}", config.version);
+    let message = format!("chore: initialize edict v{}", config.version);
 
     // Try git first, fall back to jj for legacy projects
     if project_dir.join(".git").exists()

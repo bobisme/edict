@@ -20,7 +20,7 @@ use commands::sync::SyncArgs;
 
 #[derive(Debug, Parser)]
 #[command(
-    name = "botbox",
+    name = "edict",
     version,
     about = "Setup and sync tool for multi-agent workflows"
 )]
@@ -38,7 +38,7 @@ enum Commands {
     },
     /// Sync docs, scripts, hooks, and config to a project
     Sync(SyncArgs),
-    /// Initialize a new botbox project
+    /// Initialize a new edict project
     Init(InitArgs),
     /// Validate project config and companion tools
     Doctor(DoctorArgs),
@@ -56,7 +56,7 @@ enum Commands {
     },
     /// Run triage (bone scoring and recommendations)
     Triage,
-    /// Print the JSON Schema for .botbox.toml
+    /// Print the JSON Schema for .edict.toml
     Schema,
 }
 

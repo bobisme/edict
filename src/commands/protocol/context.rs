@@ -332,9 +332,9 @@ mod tests {
     // Mock responses for testing without subprocess calls.
     // Bus creates separate claims per stake call (no memo in JSON output).
     const CLAIMS_JSON: &str = r#"{"claims": [
-        {"agent": "crimson-storm", "patterns": ["bone://botbox/bd-3cqv"], "active": true},
-        {"agent": "crimson-storm", "patterns": ["workspace://botbox/frost-forest"], "active": true},
-        {"agent": "green-vertex", "patterns": ["bone://botbox/bd-3t1d"], "active": true}
+        {"agent": "crimson-storm", "patterns": ["bone://edict/bd-3cqv"], "active": true},
+        {"agent": "crimson-storm", "patterns": ["workspace://edict/frost-forest"], "active": true},
+        {"agent": "green-vertex", "patterns": ["bone://edict/bd-3t1d"], "active": true}
     ]}"#;
 
     const WORKSPACES_JSON: &str = r#"{"workspaces": [
@@ -348,7 +348,7 @@ mod tests {
         let workspaces_resp = adapters::parse_workspaces(WORKSPACES_JSON).unwrap();
 
         let ctx = ProtocolContext {
-            project: "botbox".to_string(),
+            project: "edict".to_string(),
             agent: "crimson-storm".to_string(),
             claims: claims_resp.claims,
             workspaces: workspaces_resp.workspaces,
@@ -365,7 +365,7 @@ mod tests {
         let workspaces_resp = adapters::parse_workspaces(WORKSPACES_JSON).unwrap();
 
         let ctx = ProtocolContext {
-            project: "botbox".to_string(),
+            project: "edict".to_string(),
             agent: "crimson-storm".to_string(),
             claims: claims_resp.claims,
             workspaces: workspaces_resp.workspaces,
@@ -382,7 +382,7 @@ mod tests {
         let workspaces_resp = adapters::parse_workspaces(WORKSPACES_JSON).unwrap();
 
         let ctx = ProtocolContext {
-            project: "botbox".to_string(),
+            project: "edict".to_string(),
             agent: "crimson-storm".to_string(),
             claims: claims_resp.claims,
             workspaces: workspaces_resp.workspaces,
@@ -400,7 +400,7 @@ mod tests {
         let workspaces_resp = adapters::parse_workspaces(WORKSPACES_JSON).unwrap();
 
         let ctx = ProtocolContext {
-            project: "botbox".to_string(),
+            project: "edict".to_string(),
             agent: "crimson-storm".to_string(),
             claims: claims_resp.claims,
             workspaces: workspaces_resp.workspaces,
@@ -459,7 +459,7 @@ mod tests {
 
         // Using green-vertex context
         let ctx = ProtocolContext {
-            project: "botbox".to_string(),
+            project: "edict".to_string(),
             agent: "green-vertex".to_string(),
             claims: claims_resp.claims,
             workspaces: workspaces_resp.workspaces,
@@ -477,7 +477,7 @@ mod tests {
         let workspaces_resp = adapters::parse_workspaces(WORKSPACES_JSON).unwrap();
 
         let ctx = ProtocolContext {
-            project: "botbox".to_string(),
+            project: "edict".to_string(),
             agent: "crimson-storm".to_string(),
             claims: claims_resp.claims,
             workspaces: workspaces_resp.workspaces,

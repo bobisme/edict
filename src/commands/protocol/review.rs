@@ -30,7 +30,7 @@ pub fn execute(
     let ctx = ProtocolContext::collect(project, agent)?;
 
     let mut guidance = ProtocolGuidance::new("review");
-    guidance.set_freshness(300, Some(format!("botbox protocol review {bone_id}")));
+    guidance.set_freshness(300, Some(format!("edict protocol review {bone_id}")));
 
     // Fetch bone info
     let bone_info = match ctx.bone_status(bone_id) {
@@ -210,7 +210,7 @@ fn handle_existing_review(
             // LGTM — advise to proceed to finish (nothing to execute)
             guidance.status = ProtocolStatus::Ready;
             guidance.advise(format!(
-                "Review {} approved by {}. Proceed to finish: botbox protocol finish {}",
+                "Review {} approved by {}. Proceed to finish: edict protocol finish {}",
                 review_id,
                 decision.approved_by.join(", "),
                 bone_id,
@@ -330,7 +330,7 @@ fn handle_existing_review(
 /// Resolve reviewer names from --reviewers flag or config.
 ///
 /// Reviewers in config are stored as role names (e.g., "security").
-/// These are mapped to `<project>-<role>` (e.g., "botbox-security").
+/// These are mapped to `<project>-<role>` (e.g., "edict-security").
 /// The --reviewers flag overrides with literal reviewer names.
 /// All reviewer names are validated against identifier rules.
 fn resolve_reviewers(
@@ -378,11 +378,11 @@ mod tests {
         Config {
             version: "1.0.0".into(),
             project: crate::config::ProjectConfig {
-                name: "botbox".into(),
+                name: "edict".into(),
                 project_type: vec![],
                 languages: vec![],
-                default_agent: Some("botbox-dev".into()),
-                channel: Some("botbox".into()),
+                default_agent: Some("edict-dev".into()),
+                channel: Some("edict".into()),
                 install_command: None,
                 check_command: None,
                 critical_approvers: None,
@@ -402,14 +402,14 @@ mod tests {
     #[test]
     fn resolve_reviewers_from_config() {
         let config = make_config(vec!["security", "perf"]);
-        let names = resolve_reviewers(None, &config, "botbox").unwrap();
-        assert_eq!(names, vec!["botbox-security", "botbox-perf"]);
+        let names = resolve_reviewers(None, &config, "edict").unwrap();
+        assert_eq!(names, vec!["edict-security", "edict-perf"]);
     }
 
     #[test]
     fn resolve_reviewers_override() {
         let config = make_config(vec!["security"]);
-        let names = resolve_reviewers(Some("custom-reviewer,another"), &config, "botbox").unwrap();
+        let names = resolve_reviewers(Some("custom-reviewer,another"), &config, "edict").unwrap();
         assert_eq!(names, vec!["custom-reviewer", "another"]);
     }
 
@@ -423,7 +423,7 @@ mod tests {
     #[test]
     fn resolve_reviewers_empty_config() {
         let config = make_config(vec![]);
-        let names = resolve_reviewers(None, &config, "botbox").unwrap();
+        let names = resolve_reviewers(None, &config, "edict").unwrap();
         assert!(names.is_empty());
     }
 

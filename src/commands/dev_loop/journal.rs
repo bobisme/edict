@@ -5,7 +5,7 @@ use crate::subprocess::Tool;
 
 /// Journal for recording dev-loop iteration history.
 ///
-/// Stored at `~/.cache/botbox/projects/<slug>/dev-loop.txt` (XDG-compliant).
+/// Stored at `~/.cache/edict/projects/<slug>/dev-loop.txt` (XDG-compliant).
 pub struct Journal {
     path: PathBuf,
 }
@@ -87,7 +87,7 @@ impl Journal {
     }
 }
 
-/// Get the XDG-compliant cache directory for botbox.
+/// Get the XDG-compliant cache directory for edict.
 fn get_cache_dir(project_root: &Path) -> PathBuf {
     let base = if let Ok(xdg) = std::env::var("XDG_CACHE_HOME") {
         PathBuf::from(xdg)
@@ -107,7 +107,7 @@ fn get_cache_dir(project_root: &Path) -> PathBuf {
         .trim_start_matches('-')
         .to_string();
 
-    base.join("botbox").join("projects").join(slug)
+    base.join("edict").join("projects").join(slug)
 }
 
 /// Get the home directory.

@@ -648,7 +648,7 @@ impl SyncArgs {
             .chars()
             .filter(|c| !c.is_control())
             .collect();
-        let message = format!("chore: botbox sync (updated {})", files_str);
+        let message = format!("chore: edict sync (updated {})", files_str);
 
         match vcs {
             Vcs::Jj => {

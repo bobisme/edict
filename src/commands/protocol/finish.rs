@@ -53,7 +53,7 @@ pub fn execute(
         id: bone_id.to_string(),
         title: bone_info.title.clone(),
     });
-    guidance.set_freshness(120, Some(format!("botbox protocol finish {}", bone_id)));
+    guidance.set_freshness(120, Some(format!("edict protocol finish {}", bone_id)));
 
     // Check bone is already closed
     if bone_info.state == "done" {

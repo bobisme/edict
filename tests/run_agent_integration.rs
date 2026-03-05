@@ -5,7 +5,7 @@ use std::os::unix::fs::PermissionsExt;
 
 #[test]
 fn run_agent_requires_prompt() {
-    let mut cmd = Command::cargo_bin("botbox").unwrap();
+    let mut cmd = Command::cargo_bin("edict").unwrap();
     cmd.arg("run").arg("agent");
     cmd.assert().failure().stderr(predicate::str::contains(
         "required arguments were not provided",
@@ -14,7 +14,7 @@ fn run_agent_requires_prompt() {
 
 #[test]
 fn run_agent_rejects_unknown_runner() {
-    let mut cmd = Command::cargo_bin("botbox").unwrap();
+    let mut cmd = Command::cargo_bin("edict").unwrap();
     cmd.arg("run")
         .arg("agent")
         .arg("test prompt")
@@ -29,7 +29,7 @@ fn run_agent_rejects_unknown_runner() {
 fn run_agent_handles_claude_not_found() {
     // This test assumes 'claude' is not in PATH
     // If claude IS installed, this test will fail, which is acceptable
-    let mut cmd = Command::cargo_bin("botbox").unwrap();
+    let mut cmd = Command::cargo_bin("edict").unwrap();
     cmd.arg("run")
         .arg("agent")
         .arg("say hello")
@@ -48,7 +48,7 @@ fn run_agent_handles_claude_not_found() {
 #[test]
 fn run_agent_defaults_to_pi_runner() {
     // Verify default runner is "pi" (even if pi binary isn't installed)
-    let mut cmd = Command::cargo_bin("botbox").unwrap();
+    let mut cmd = Command::cargo_bin("edict").unwrap();
     cmd.arg("run")
         .arg("agent")
         .arg("test")
@@ -94,7 +94,7 @@ EVENTS
     fs::write(&fake_pi, script).unwrap();
     fs::set_permissions(&fake_pi, fs::Permissions::from_mode(0o755)).unwrap();
 
-    let mut cmd = Command::cargo_bin("botbox").unwrap();
+    let mut cmd = Command::cargo_bin("edict").unwrap();
     cmd.env(
         "PATH",
         format!(
@@ -148,7 +148,7 @@ EVENTS
     fs::write(&fake_pi, script).unwrap();
     fs::set_permissions(&fake_pi, fs::Permissions::from_mode(0o755)).unwrap();
 
-    let mut cmd = Command::cargo_bin("botbox").unwrap();
+    let mut cmd = Command::cargo_bin("edict").unwrap();
     cmd.env(
         "PATH",
         format!(
@@ -220,7 +220,7 @@ EVENTS
     fs::write(&fake_pi, script).unwrap();
     fs::set_permissions(&fake_pi, fs::Permissions::from_mode(0o755)).unwrap();
 
-    let mut cmd = Command::cargo_bin("botbox").unwrap();
+    let mut cmd = Command::cargo_bin("edict").unwrap();
     cmd.env(
         "PATH",
         format!(
@@ -263,7 +263,7 @@ exit 1
     fs::write(&fake_pi, script).unwrap();
     fs::set_permissions(&fake_pi, fs::Permissions::from_mode(0o755)).unwrap();
 
-    let mut cmd = Command::cargo_bin("botbox").unwrap();
+    let mut cmd = Command::cargo_bin("edict").unwrap();
     cmd.env(
         "PATH",
         format!(

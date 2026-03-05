@@ -6,7 +6,7 @@ async function runHook(
 	extraArgs: string[] = [],
 ): Promise<string | null> {
 	try {
-		const result = await pi.exec("botbox", ["hooks", "run", hookName, ...extraArgs]);
+		const result = await pi.exec("edict", ["hooks", "run", hookName, ...extraArgs]);
 		if (result.code !== 0) {
 			return null;
 		}
@@ -21,13 +21,13 @@ async function runHook(
 
 function injectMessage(pi: ExtensionAPI, stdout: string) {
 	pi.sendMessage({
-		customType: "botbox-hook",
+		customType: "edict-hook",
 		content: stdout,
 		display: false,
 	});
 }
 
-export default function botboxHooksExtension(pi: ExtensionAPI) {
+export default function edictHooksExtension(pi: ExtensionAPI) {
 	let toolResultCount = 0;
 	let pendingSessionStartContext = "";
 

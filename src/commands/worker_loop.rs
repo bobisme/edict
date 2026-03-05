@@ -84,8 +84,8 @@ impl WorkerLoop {
 
         // Dispatched worker env vars (set by dev-loop)
         // Validate bone ID format: bd-XXXX (alphanumeric + hyphens)
-        let dispatched_bone = std::env::var("BOTBOX_BONE")
-            .or_else(|_| std::env::var("BOTBOX_BEAD"))
+        let dispatched_bone = std::env::var("EDICT_BONE")
+            .or_else(|_| std::env::var("EDICT_BEAD"))
             .ok()
             .filter(|v| {
                 !v.is_empty()
@@ -93,7 +93,7 @@ impl WorkerLoop {
                     && v.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
             });
         // Validate workspace name: lowercase alphanumeric + hyphens, no path components
-        let dispatched_workspace = std::env::var("BOTBOX_WORKSPACE").ok().filter(|v| {
+        let dispatched_workspace = std::env::var("EDICT_WORKSPACE").ok().filter(|v| {
             !v.is_empty()
                 && v.len() <= 64
                 && v.bytes()
@@ -102,27 +102,27 @@ impl WorkerLoop {
                 && !v.contains("..")
         });
         // Mission ID has same format as bone ID
-        let dispatched_mission = std::env::var("BOTBOX_MISSION").ok().filter(|v| {
+        let dispatched_mission = std::env::var("EDICT_MISSION").ok().filter(|v| {
             !v.is_empty()
                 && v.len() <= 20
                 && v.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
         });
         // Siblings and file hints are informational — limit size to prevent prompt bloat
-        let dispatched_siblings = std::env::var("BOTBOX_SIBLINGS").ok().map(|v| {
+        let dispatched_siblings = std::env::var("EDICT_SIBLINGS").ok().map(|v| {
             if v.len() > 4096 {
                 v[..v.floor_char_boundary(4096)].to_string()
             } else {
                 v
             }
         });
-        let dispatched_mission_outcome = std::env::var("BOTBOX_MISSION_OUTCOME").ok().map(|v| {
+        let dispatched_mission_outcome = std::env::var("EDICT_MISSION_OUTCOME").ok().map(|v| {
             if v.len() > 2048 {
                 v[..v.floor_char_boundary(2048)].to_string()
             } else {
                 v
             }
         });
-        let dispatched_file_hints = std::env::var("BOTBOX_FILE_HINTS").ok().map(|v| {
+        let dispatched_file_hints = std::env::var("EDICT_FILE_HINTS").ok().map(|v| {
             if v.len() > 4096 {
                 v[..v.floor_char_boundary(4096)].to_string()
             } else {
@@ -155,11 +155,11 @@ impl WorkerLoop {
         // Build prompt for Claude
         let prompt = self.build_prompt();
 
-        // Run agent via botbox run agent (Pi by default), with rate limit fallback
+        // Run agent via edict run agent (Pi by default), with rate limit fallback
         let start = crate::telemetry::metrics::time_start();
         let output = run_agent_with_fallback(&prompt, &self.model_pool, self.timeout)?;
         crate::telemetry::metrics::time_record(
-            "botbox.worker.agent_run_duration_seconds",
+            "edict.worker.agent_run_duration_seconds",
             start,
             &[("agent", &self.agent), ("project", &self.project)],
         );
@@ -167,7 +167,7 @@ impl WorkerLoop {
         // Parse completion signal
         let status = parse_completion_signal(&output);
         crate::telemetry::metrics::counter(
-            "botbox.worker.runs_total",
+            "edict.worker.runs_total",
             1,
             &[("agent", &self.agent), ("project", &self.project)],
         );
@@ -255,7 +255,7 @@ then STOP. Do not start a second task — the outer loop handles iteration."#
      Proceed directly to step 7 (FINISH).
 
    RISK:MEDIUM PATH — Standard review (current default):
-     Try protocol command: botbox protocol review <bone-id> --agent {agent}
+     Try protocol command: edict protocol review <bone-id> --agent {agent}
      Read the output carefully. If status is Ready, run the suggested commands.
      If it fails (exit 1 = command unavailable), fall back to manual review request:
        CHECK for existing review first:
@@ -288,7 +288,7 @@ then STOP. Do not start a second task — the outer loop handles iteration."#
                 agent = self.agent,
                 project = self.project,
                 critical_approvers = if self.critical_approvers.is_empty() {
-                    "Check project.critical_approvers in .botbox.toml".to_string()
+                    "Check project.critical_approvers in .edict.toml".to_string()
                 } else {
                     format!("Approvers: {}", self.critical_approvers.join(", "))
                 }
@@ -302,7 +302,7 @@ then STOP. Do not start a second task — the outer loop handles iteration."#
         let finish_step_7 = if self.dispatched_bone.is_some() {
             format!(
                 r#"7. FINISH (dispatched worker — lead handles merge):
-   Try protocol command: botbox protocol finish <bone-id> --agent {agent} --no-merge
+   Try protocol command: edict protocol finish <bone-id> --agent {agent} --no-merge
    Read the output carefully. If status is Ready, run the suggested commands.
    If it fails (exit 1 = command unavailable), fall back to manual finish:
      Close bone: maw exec default -- bn done <id> --reason "Completed"
@@ -317,7 +317,7 @@ then STOP. Do not start a second task — the outer loop handles iteration."#
         } else {
             format!(
                 r#"7. FINISH (only reached after LGTM from step 0, or after step 6 when REVIEW is false):
-   Try protocol command: botbox protocol finish <bone-id> --agent {agent}
+   Try protocol command: edict protocol finish <bone-id> --agent {agent}
    Read the output carefully. If status is Ready, run the suggested commands.
    If it fails (exit 1 = command unavailable), fall back to manual finish:
      If a review was conducted:
@@ -347,7 +347,7 @@ then STOP. Do not start a second task — the outer loop handles iteration."#
         format!(
             r#"You are worker agent "{agent}" for project "{project}".
 
-IMPORTANT: Use --agent {agent} on ALL bus and crit commands. bn resolves agent identity from $AGENT/$BOTBUS_AGENT env automatically. Set BOTBOX_PROJECT={project}.
+IMPORTANT: Use --agent {agent} on ALL bus and crit commands. bn resolves agent identity from $AGENT/$BOTBUS_AGENT env automatically. Set EDICT_PROJECT={project}.
 
 CRITICAL - HUMAN MESSAGE PRIORITY: If you see a system reminder with "STOP:" showing unread bus messages, these are from humans or other agents trying to reach you. IMMEDIATELY check inbox and respond before continuing your current task. Human questions, clarifications, and redirects take priority over heads-down work.
 
@@ -367,7 +367,7 @@ At the end of your work, output exactly one of these completion signals:
 - <promise>BLOCKED</promise> if you are stuck and cannot proceed
 
 0. RESUME CHECK (do this FIRST):
-   Try protocol command: botbox protocol resume --agent {agent}
+   Try protocol command: edict protocol resume --agent {agent}
    If it fails (exit 1 = command unavailable), fall back to manual resume check:
      Run: bus claims list --agent {agent} --mine
      If you hold a bone:// claim, you have an in-progress bone from a previous iteration.
@@ -427,7 +427,7 @@ At the end of your work, output exactly one of these completion signals:
    SIBLING COORDINATION (missions only):
    When working on a mission bone, you share the codebase with sibling workers. Coordinate through bus:
 
-   READ siblings: Before editing a file listed in BOTBOX_FILE_HINTS as owned by a sibling, and periodically
+   READ siblings: Before editing a file listed in EDICT_FILE_HINTS as owned by a sibling, and periodically
    during work (~every 5 minutes), check for sibling messages:
      bus history {project} -n 10 -L "mission:<mission-id>" --since "5 minutes ago"
    Look for coord:interface messages — these tell you about API/schema/config changes siblings made.
@@ -442,7 +442,7 @@ At the end of your work, output exactly one of these completion signals:
    - coord:blocker — You need something from a sibling: bus send --agent {agent} {project} "Blocked by <sibling-bone>: <reason>" -L coord:blocker -L "mission:<mission-id>"
    - task-done — Signal completion: bus send --agent {agent} {project} "Completed <id>" -L task-done -L "mission:<mission-id>"
 
-3. START: Try protocol command: botbox protocol start <bone-id> --agent {agent}
+3. START: Try protocol command: edict protocol start <bone-id> --agent {agent}
    Read the output carefully. If status is Ready, run the suggested commands.
    If it fails (exit 1 = command unavailable), fall back to manual start:
      maw exec default -- bn do <id>.
@@ -478,7 +478,7 @@ At the end of your work, output exactly one of these completion signals:
 {finish_step}
 
 8. CLEANUP (always run before stopping, even on error or BLOCKED):
-   Try protocol command: botbox protocol cleanup --agent {agent}
+   Try protocol command: edict protocol cleanup --agent {agent}
    If it fails (exit 1 = command unavailable), fall back to manual cleanup:
      bus statuses clear --agent {agent}
      (bn is event-sourced — no sync needed)
@@ -522,7 +522,7 @@ pub enum LoopStatus {
 /// preventing OOM when multiple agents build concurrently.
 ///
 /// Warns if any of these vars are unset or empty, which could indicate that
-/// the .botbox.toml [env] configuration isn't reaching the build process.
+/// the .edict.toml [env] configuration isn't reaching the build process.
 fn emit_build_env_diagnostic(config_env: &std::collections::HashMap<String, String>) {
     use std::env;
 
@@ -567,7 +567,7 @@ fn emit_build_env_diagnostic(config_env: &std::collections::HashMap<String, Stri
 
     if any_missing {
         eprintln!(
-            "  ⚠ Some build env vars are unset. Consider adding them to .botbox.toml [env]"
+            "  ⚠ Some build env vars are unset. Consider adding them to .edict.toml [env]"
         );
         eprintln!(
             "    to prevent OOM from unthrottled parallel builds in multi-agent setups."
@@ -577,7 +577,7 @@ fn emit_build_env_diagnostic(config_env: &std::collections::HashMap<String, Stri
     eprintln!("--- end build env diagnostic ---");
 }
 
-/// Load config from .botbox.toml or .botbox.json using the canonical priority
+/// Load config from .edict.toml (or legacy .botbox.toml/.botbox.json) using the canonical priority
 /// (root TOML > ws/default TOML > root JSON > ws/default JSON).
 fn load_config(root: &Path) -> anyhow::Result<Config> {
     let (config_path, _config_dir) = crate::config::find_config_in_project(root)?;
@@ -606,7 +606,7 @@ fn run_agent_with_fallback(
                         model
                     );
                     crate::telemetry::metrics::counter(
-                        "botbox.worker.rate_limit_retries_total",
+                        "edict.worker.rate_limit_retries_total",
                         1,
                         &[("model", model)],
                     );
@@ -667,7 +667,7 @@ fn is_rate_limit_error(err: &str) -> bool {
         || lower.contains("resource_exhausted")
 }
 
-/// Run an agent via `botbox run agent` (Pi by default).
+/// Run an agent via `edict run agent` (Pi by default).
 ///
 /// Supports `provider/model:thinking` syntax for thinking levels.
 /// Echoes output to stderr for visibility in botty while capturing stdout for parsing.
@@ -684,32 +684,32 @@ fn try_run_agent(prompt: &str, model: &str, timeout: u64) -> anyhow::Result<Stri
         args.push(model);
     }
 
-    let mut child = Command::new("botbox")
+    let mut child = Command::new("edict")
         .args(&args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .spawn()
-        .context("spawning botbox run agent")?;
+        .context("spawning edict run agent")?;
 
     let stdout = child.stdout.take().context("capturing stdout")?;
     let reader = BufReader::new(stdout);
 
     let mut output = String::new();
     for line in reader.lines() {
-        let line = line.context("reading line from botbox run agent")?;
+        let line = line.context("reading line from edict run agent")?;
         // Echo to stderr for visibility in botty
         eprintln!("{}", line);
         output.push_str(&line);
         output.push('\n');
     }
 
-    let status = child.wait().context("waiting for botbox run agent")?;
+    let status = child.wait().context("waiting for edict run agent")?;
     if status.success() {
         Ok(output)
     } else {
         let code = status.code().unwrap_or(-1);
-        anyhow::bail!("botbox run agent exited with code {code}")
+        anyhow::bail!("edict run agent exited with code {code}")
     }
 }
 
@@ -910,8 +910,8 @@ mod tests {
     #[test]
     fn build_prompt_contains_agent_identity() {
         unsafe {
-            std::env::set_var("BOTBOX_BONE", "");
-            std::env::set_var("BOTBOX_WORKSPACE", "");
+            std::env::set_var("EDICT_BONE", "");
+            std::env::set_var("EDICT_WORKSPACE", "");
         }
 
         let worker = WorkerLoop {
@@ -941,8 +941,8 @@ mod tests {
     #[test]
     fn build_prompt_dispatched_fast_path() {
         unsafe {
-            std::env::set_var("BOTBOX_BONE", "bd-test");
-            std::env::set_var("BOTBOX_WORKSPACE", "test-ws");
+            std::env::set_var("EDICT_BONE", "bd-test");
+            std::env::set_var("EDICT_WORKSPACE", "test-ws");
         }
 
         let worker = WorkerLoop {
@@ -971,8 +971,8 @@ mod tests {
     #[test]
     fn build_prompt_contains_all_protocol_commands() {
         unsafe {
-            std::env::set_var("BOTBOX_BONE", "");
-            std::env::set_var("BOTBOX_WORKSPACE", "");
+            std::env::set_var("EDICT_BONE", "");
+            std::env::set_var("EDICT_WORKSPACE", "");
         }
 
         let worker = WorkerLoop {
@@ -995,32 +995,32 @@ mod tests {
 
         // All 5 protocol commands must be referenced in the worker prompt
         assert!(
-            prompt.contains("botbox protocol resume"),
-            "worker prompt must reference 'botbox protocol resume'"
+            prompt.contains("edict protocol resume"),
+            "worker prompt must reference 'edict protocol resume'"
         );
         assert!(
-            prompt.contains("botbox protocol start"),
-            "worker prompt must reference 'botbox protocol start'"
+            prompt.contains("edict protocol start"),
+            "worker prompt must reference 'edict protocol start'"
         );
         assert!(
-            prompt.contains("botbox protocol review"),
-            "worker prompt must reference 'botbox protocol review'"
+            prompt.contains("edict protocol review"),
+            "worker prompt must reference 'edict protocol review'"
         );
         assert!(
-            prompt.contains("botbox protocol finish"),
-            "worker prompt must reference 'botbox protocol finish'"
+            prompt.contains("edict protocol finish"),
+            "worker prompt must reference 'edict protocol finish'"
         );
         assert!(
-            prompt.contains("botbox protocol cleanup"),
-            "worker prompt must reference 'botbox protocol cleanup'"
+            prompt.contains("edict protocol cleanup"),
+            "worker prompt must reference 'edict protocol cleanup'"
         );
     }
 
     #[test]
     fn build_prompt_review_disabled() {
         unsafe {
-            std::env::set_var("BOTBOX_BONE", "");
-            std::env::set_var("BOTBOX_WORKSPACE", "");
+            std::env::set_var("EDICT_BONE", "");
+            std::env::set_var("EDICT_WORKSPACE", "");
         }
 
         let worker = WorkerLoop {
@@ -1048,8 +1048,8 @@ mod tests {
     #[test]
     fn build_prompt_contains_protocol_fallback_wording() {
         unsafe {
-            std::env::set_var("BOTBOX_BONE", "");
-            std::env::set_var("BOTBOX_WORKSPACE", "");
+            std::env::set_var("EDICT_BONE", "");
+            std::env::set_var("EDICT_WORKSPACE", "");
         }
 
         let worker = WorkerLoop {

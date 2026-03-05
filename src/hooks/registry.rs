@@ -27,7 +27,7 @@ pub struct HookEntry {
 
 /// Global hook registry — hooks are named by when they fire, not what they do.
 ///
-/// Each hook detects context at runtime (maw repo, botbox project, $AGENT)
+/// Each hook detects context at runtime (maw repo, edict project, $AGENT)
 /// and outputs info accordingly, or exits silently.
 pub struct HookRegistry;
 

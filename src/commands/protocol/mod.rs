@@ -26,7 +26,7 @@ pub struct ProtocolArgs {
     /// Agent name (default: $AGENT or config defaultAgent)
     #[arg(long)]
     pub agent: Option<String>,
-    /// Project name (default: from .botbox.toml)
+    /// Project name (default: from .edict.toml)
     #[arg(long)]
     pub project: Option<String>,
     /// Project root directory
@@ -286,7 +286,7 @@ impl ProtocolCommand {
         }
     }
 
-    /// Execute the `botbox protocol start <bone-id>` command.
+    /// Execute the `edict protocol start <bone-id>` command.
     ///
     /// Analyzes bone status and outputs shell commands to start work.
     /// All status outcomes (ready, blocked, resumable) exit 0 with status in stdout.
@@ -311,7 +311,7 @@ impl ProtocolCommand {
                 return Err(exit_policy::ProtocolExitError::operational(
                     "start",
                     format!(
-                        "no .botbox.toml or .botbox.json found in {} or {}/ws/default",
+                        "no .edict.toml or .botbox.toml found in {} or {}/ws/default",
                         project_root.display(),
                         project_root.display()
                     ),
@@ -379,7 +379,7 @@ impl ProtocolCommand {
             guidance.status = render::ProtocolStatus::Resumable;
             guidance.workspace = Some(ws_name.to_string());
             guidance.advise(format!(
-                "Resume work in workspace {} with: botbox protocol resume",
+                "Resume work in workspace {} with: edict protocol resume",
                 ws_name
             ));
             return exit_policy::render_guidance(&guidance, format);

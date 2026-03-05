@@ -111,8 +111,8 @@ The freshness metadata enables clients to detect and refresh stale guidance:
 - **Type:** `Option<String>`
 - **Meaning:** Shell command to re-fetch fresh guidance
 - **Examples:**
-  - `"botbox protocol start"`
-  - `"botbox protocol resume"`
+  - `"edict protocol start"`
+  - `"edict protocol resume"`
   - `None` for final states (finish, cleanup)
 - **Client behavior:** Run the command if guidance is stale
 
@@ -147,14 +147,14 @@ The agent reads the `status` field in stdout to decide what to do next. Exit 0 m
 
 Returned when the protocol command cannot produce valid guidance at all:
 
-- `.botbox.toml` (or `.botbox.json`) config not found
+- `.edict.toml (or legacy .botbox.toml) config not found
 - Companion tool missing or unavailable (bus, maw, br, crit)
 - Subprocess output cannot be parsed
 - Command not yet implemented
 
 Exit 1 writes a diagnostic to stderr in the format:
 ```
-botbox protocol: <command>: <detail>
+edict protocol: <command>: <detail>
 ```
 
 ### Exit 2: Usage Error
@@ -255,4 +255,4 @@ If a client sees schema != "protocol-guidance.v1":
 
 For questions about this compatibility policy, see [CLAUDE.md](../../CLAUDE.md) — cross-channel communication process.
 
-File issues at: `bus send --agent $AGENT botbox "Issue: <details>" -L tool-issue`
+File issues at: `bus send --agent $AGENT edict "Issue: <details>" -L tool-issue`

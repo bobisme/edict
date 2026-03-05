@@ -569,7 +569,7 @@ mod tests {
         assert_eq!(safe_ident("bd-3cqv").as_ref(), "bd-3cqv");
         assert_eq!(safe_ident("frost-castle").as_ref(), "frost-castle");
         assert_eq!(safe_ident("in_progress").as_ref(), "in_progress");
-        assert_eq!(safe_ident("botbox-dev").as_ref(), "botbox-dev");
+        assert_eq!(safe_ident("edict-dev").as_ref(), "edict-dev");
     }
 
     #[test]
@@ -625,7 +625,7 @@ mod tests {
 
     #[test]
     fn valid_identifiers() {
-        assert!(validate_identifier("agent", "botbox-dev").is_ok());
+        assert!(validate_identifier("agent", "edict-dev").is_ok());
         assert!(validate_identifier("project", "myproject").is_ok());
         assert!(validate_identifier("agent", "my-agent-123").is_ok());
     }

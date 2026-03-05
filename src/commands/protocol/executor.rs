@@ -164,9 +164,9 @@ pub fn render_report(report: &ExecutionReport, format: OutputFormat) -> String {
 ///
 /// Format:
 /// ```text
-/// step 1/5  bus claims stake --agent $AGENT 'bone://botbox/bd-abc'  ok
+/// step 1/5  bus claims stake --agent $AGENT 'bone://edict/bd-abc'  ok
 /// step 2/5  maw ws create --random  ok  ws=frost-castle
-/// step 3/5  bus claims stake --agent $AGENT 'workspace://botbox/$WS'  FAILED
+/// step 3/5  bus claims stake --agent $AGENT 'workspace://edict/$WS'  FAILED
 /// step 4/5  (not executed)
 /// step 5/5  (not executed)
 /// ```

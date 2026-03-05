@@ -70,7 +70,7 @@ impl DoctorArgs {
         // Check config at root, then ws/default/ (maw v2 bare repo)
         let (config_path, config_dir) = crate::config::find_config_in_project(&project_root)
             .map_err(|_| anyhow::anyhow!(
-                "no .botbox.toml or .botbox.json found at {} or ws/default/ — is this a botbox project?",
+                "no .edict.toml or .botbox.toml found at {} or ws/default/ — is this an edict project?",
                 project_root.display()
             ))?;
         let project_root = config_dir;
@@ -157,17 +157,17 @@ impl DoctorArgs {
         }
 
         // Check project files
-        let agents_dir = project_root.join(".agents/botbox");
+        let agents_dir = project_root.join(".agents/edict");
         let agents_exists = agents_dir.exists();
         report.project_files.push(FileStatus {
-            path: ".agents/botbox".to_string(),
+            path: ".agents/edict".to_string(),
             exists: agents_exists,
         });
 
         if !agents_exists {
             report
                 .issues
-                .push(".agents/botbox/ directory not found".to_string());
+                .push(".agents/edict/ directory not found".to_string());
         }
 
         let agents_md = project_root.join("AGENTS.md");
@@ -276,7 +276,7 @@ impl DoctorArgs {
 
     fn print_text(&self, report: &DoctorReport) {
         println!(
-            "botbox-doctor  project={}  version={}  agent={}  channel={}",
+            "edict-doctor  project={}  version={}  agent={}  channel={}",
             report.config.project,
             report.config.version,
             report.config.agent,

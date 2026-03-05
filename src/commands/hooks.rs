@@ -11,8 +11,8 @@ use crate::error::ExitError;
 use crate::hooks::HookRegistry;
 use crate::subprocess::run_command;
 
-pub(crate) const PI_BOTBOX_HOOKS_EXTENSION: &str =
-    include_str!("../templates/extensions/botbox-hooks.ts");
+pub(crate) const PI_EDICT_HOOKS_EXTENSION: &str =
+    include_str!("../templates/extensions/edict-hooks.ts");
 
 #[derive(Debug, Subcommand)]
 pub enum HooksCommand {
@@ -75,7 +75,7 @@ fn install_hooks(project_root: Option<&Path>) -> Result<()> {
     println!("Installed global hooks in {}", settings_path.display());
 
     // Install Pi extension globally
-    let pi_ext_path = home.join(".pi/agent/extensions/botbox-hooks.ts");
+    let pi_ext_path = home.join(".pi/agent/extensions/edict-hooks.ts");
     install_pi_extension(&pi_ext_path)?;
     println!("Installed Pi extension at {}", pi_ext_path.display());
 
@@ -132,7 +132,7 @@ fn uninstall_hooks() -> Result<()> {
     }
 
     // Remove Pi extension
-    let pi_ext_path = home.join(".pi/agent/extensions/botbox-hooks.ts");
+    let pi_ext_path = home.join(".pi/agent/extensions/edict-hooks.ts");
     if pi_ext_path.exists() {
         fs::remove_file(&pi_ext_path)?;
         println!("Removed {}", pi_ext_path.display());
@@ -255,7 +255,7 @@ fn resolve_project_root(project_root: Option<&Path>) -> Result<PathBuf> {
     match crate::config::find_config_in_project(&canonical) {
         Ok((_config_path, config_dir)) => Ok(config_dir),
         Err(_) => anyhow::bail!(
-            "no .botbox.toml or .botbox.json found at {} or ws/default/ — is this a botbox project?",
+            "no .edict.toml or .botbox.toml found at {} or ws/default/ — is this an edict project?",
             canonical.display()
         ),
     }
@@ -263,7 +263,7 @@ fn resolve_project_root(project_root: Option<&Path>) -> Result<PathBuf> {
 
 fn load_config(root: &Path) -> Result<Config> {
     let (config_path, _config_dir) = crate::config::find_config_in_project(root)
-        .map_err(|_| ExitError::Config("no .botbox.toml or .botbox.json found".into()))?;
+        .map_err(|_| ExitError::Config("no .edict.toml or .botbox.toml found".into()))?;
     Config::load(&config_path)
 }
 
@@ -278,7 +278,7 @@ fn install_global_claude_hooks(settings_path: &Path) -> Result<()> {
                 "matcher": "",
                 "hooks": [{
                     "type": "command",
-                    "command": format!("botbox hooks run {}", hook_entry.name)
+                    "command": format!("edict hooks run {}", hook_entry.name)
                 }]
             });
             hooks_config
@@ -334,12 +334,12 @@ fn install_pi_extension(path: &Path) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
     }
-    fs::write(path, PI_BOTBOX_HOOKS_EXTENSION)
+    fs::write(path, PI_EDICT_HOOKS_EXTENSION)
         .with_context(|| format!("writing {}", path.display()))?;
     Ok(())
 }
 
-/// Check if a hook entry is botbox-managed
+/// Check if a hook entry is edict-managed (current or legacy botbox)
 fn is_botbox_hook_entry(entry: &serde_json::Value) -> bool {
     entry["hooks"]
         .as_array()
@@ -347,10 +347,11 @@ fn is_botbox_hook_entry(entry: &serde_json::Value) -> bool {
             hooks.iter().any(|h| {
                 let cmd = &h["command"];
                 if let Some(cmd_str) = cmd.as_str() {
-                    cmd_str.contains("botbox hooks run")
+                    cmd_str.contains("edict hooks run") || cmd_str.contains("botbox hooks run")
                 } else if let Some(cmd_arr) = cmd.as_array() {
                     cmd_arr.len() >= 3
-                        && cmd_arr[0].as_str() == Some("botbox")
+                        && (cmd_arr[0].as_str() == Some("edict")
+                            || cmd_arr[0].as_str() == Some("botbox"))
                         && cmd_arr[1].as_str() == Some("hooks")
                         && cmd_arr[2].as_str() == Some("run")
                 } else {
@@ -360,14 +361,14 @@ fn is_botbox_hook_entry(entry: &serde_json::Value) -> bool {
         })
 }
 
-/// Check if a specific hook command matches a hook name
+/// Check if a specific hook command matches a hook name (edict or legacy botbox)
 fn is_botbox_hook_command(h: &serde_json::Value, name: &str) -> bool {
     let cmd = &h["command"];
     if let Some(cmd_str) = cmd.as_str() {
         cmd_str.contains(&format!("run {name}"))
     } else if let Some(cmd_arr) = cmd.as_array() {
         cmd_arr.len() >= 4
-            && cmd_arr[0].as_str() == Some("botbox")
+            && (cmd_arr[0].as_str() == Some("edict") || cmd_arr[0].as_str() == Some("botbox"))
             && cmd_arr[1].as_str() == Some("hooks")
             && cmd_arr[2].as_str() == Some("run")
             && cmd_arr[3].as_str() == Some(name)
@@ -410,7 +411,7 @@ fn register_botbus_hooks(root: &Path, config: &Config) -> Result<()> {
     // Register router hook (claim-based)
     let router_claim = format!("agent://{project_name}-router");
     let spawn_name = format!("{project_name}-router");
-    let description = format!("botbox:{project_name}:responder");
+    let description = format!("edict:{project_name}:responder");
 
     let responder_memory_limit = config
         .agents
@@ -447,7 +448,7 @@ fn register_botbus_hooks(root: &Path, config: &Config) -> Result<()> {
         "--cwd",
         &root_str,
         "--",
-        "botbox",
+        "edict",
         "run",
         "responder",
     ]);
@@ -467,7 +468,7 @@ fn register_botbus_hooks(root: &Path, config: &Config) -> Result<()> {
     for reviewer in &config.review.reviewers {
         let reviewer_agent = format!("{project_name}-{reviewer}");
         let claim_uri = format!("agent://{reviewer_agent}");
-        let desc = format!("botbox:{project_name}:reviewer-{reviewer}");
+        let desc = format!("edict:{project_name}:reviewer-{reviewer}");
 
         let mut reviewer_args: Vec<&str> = vec![
             "--agent",
@@ -502,7 +503,7 @@ fn register_botbus_hooks(root: &Path, config: &Config) -> Result<()> {
             "--cwd",
             &root_str,
             "--",
-            "botbox",
+            "edict",
             "run",
             "reviewer-loop",
             "--agent",
@@ -592,7 +593,25 @@ mod tests {
     }
 
     #[test]
-    fn is_botbox_hook_entry_detects_string_command() {
+    fn is_botbox_hook_entry_detects_edict_string_command() {
+        let entry = json!({
+            "matcher": "",
+            "hooks": [{"type": "command", "command": "edict hooks run session-start"}]
+        });
+        assert!(is_botbox_hook_entry(&entry));
+    }
+
+    #[test]
+    fn is_botbox_hook_entry_detects_edict_array_command() {
+        let entry = json!({
+            "matcher": "",
+            "hooks": [{"type": "command", "command": ["edict", "hooks", "run", "session-start"]}]
+        });
+        assert!(is_botbox_hook_entry(&entry));
+    }
+
+    #[test]
+    fn is_botbox_hook_entry_detects_legacy_botbox_string_command() {
         let entry = json!({
             "matcher": "",
             "hooks": [{"type": "command", "command": "botbox hooks run session-start"}]
@@ -601,7 +620,7 @@ mod tests {
     }
 
     #[test]
-    fn is_botbox_hook_entry_detects_array_command() {
+    fn is_botbox_hook_entry_detects_legacy_botbox_array_command() {
         let entry = json!({
             "matcher": "",
             "hooks": [{"type": "command", "command": ["botbox", "hooks", "run", "session-start"]}]

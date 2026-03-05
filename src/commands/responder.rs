@@ -542,7 +542,7 @@ impl Responder {
 
         if project.is_empty() {
             return Err(anyhow!(
-                "Project name required (set in .botbox.toml or provide --project-root)"
+                "Project name required (set in .edict.toml or provide --project-root)"
             ));
         }
 
@@ -682,11 +682,11 @@ impl Responder {
         eprintln!("Running agent (model: {model})...");
         let timeout_str = self.claude_timeout.to_string();
         let start = crate::telemetry::metrics::time_start();
-        let output = Tool::new("botbox")
+        let output = Tool::new("edict")
             .args(&["run", "agent", prompt, "-m", model, "-t", &timeout_str])
             .run_ok()?;
         crate::telemetry::metrics::time_record(
-            "botbox.responder.agent_run_duration_seconds",
+            "edict.responder.agent_run_duration_seconds",
             start,
             &[("model", model)],
         );
@@ -829,7 +829,7 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
         )
     }
 
-    // --- (script path lookup removed — loops are now built into botbox binary) ---
+    // --- (script path lookup removed — loops are now built into edict binary) ---
 
     // --- Check for escalation tag ---
 
@@ -1096,7 +1096,7 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
                     }
                     if let Some(bone) = mission_bone {
                         spawn_args.push("--env".into());
-                        spawn_args.push(format!("BOTBOX_MISSION={bone}"));
+                        spawn_args.push(format!("EDICT_MISSION={bone}"));
                     }
                     for (k, v) in &self.spawn_env {
                         spawn_args.push("--env".into());
@@ -1108,7 +1108,7 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
                         "--cwd".into(),
                         cwd.clone(),
                         "--".into(),
-                        "botbox".into(),
+                        "edict".into(),
                         "run".into(),
                         "dev-loop".into(),
                         "--agent".into(),
@@ -1568,7 +1568,7 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
             return Ok(());
         }
 
-        // Skip messages from project agents (e.g., botbox-dev, botbox-security, botbox-dev/worker-suffix)
+        // Skip messages from project agents (e.g., edict-dev, edict-security, edict-dev/worker-suffix)
         let project_prefix = format!("{}-", self.project);
         if trigger_message.agent.starts_with(&project_prefix) {
             eprintln!(
@@ -1617,7 +1617,7 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
             RouteType::Oneshot => "oneshot",
         };
         crate::telemetry::metrics::counter(
-            "botbox.responder.messages_routed_total",
+            "edict.responder.messages_routed_total",
             1,
             &[("route_type", route_label)],
         );
@@ -1961,13 +1961,13 @@ mod tests {
     #[test]
     fn skip_project_agent_messages() {
         // Test project-agent prefix matching
-        let project = "botbox";
+        let project = "edict";
         let project_prefix = format!("{}-", project);
 
         // Should match project agents
-        assert!(format!("botbox-dev").starts_with(&project_prefix));
-        assert!(format!("botbox-security").starts_with(&project_prefix));
-        assert!(format!("botbox-dev/worker-suffix").starts_with(&project_prefix));
+        assert!(format!("edict-dev").starts_with(&project_prefix));
+        assert!(format!("edict-security").starts_with(&project_prefix));
+        assert!(format!("edict-dev/worker-suffix").starts_with(&project_prefix));
 
         // Should not match external agents
         assert!(!format!("alice").starts_with(&project_prefix));

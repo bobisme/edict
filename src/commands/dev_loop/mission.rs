@@ -80,7 +80,7 @@ fn checkpoint_path(mission_id: &str) -> PathBuf {
     };
 
     cache_base
-        .join("botbox")
+        .join("edict")
         .join("missions")
         .join(format!("{mission_id}.json"))
 }

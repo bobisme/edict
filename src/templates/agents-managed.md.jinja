@@ -1,4 +1,4 @@
-## Botbox Workflow
+## Edict Workflow
 
 ### How to Make Changes
 
@@ -8,7 +8,7 @@
 4. **Merge when done**: `maw ws merge <name> --destroy --message "feat: <bone-title>"` (use conventional commit prefix: `feat:`, `fix:`, `chore:`, etc.)
 5. **Close the bone**: `maw exec default -- bn done <id>`
 
-Do not create git branches manually — `maw ws create` handles branching for you. See [worker-loop.md](.agents/botbox/worker-loop.md) for the full triage → start → work → finish cycle.
+Do not create git branches manually — `maw ws create` handles branching for you. See [worker-loop.md](.agents/edict/worker-loop.md) for the full triage → start → work → finish cycle.
 
 **All tools have `--help`** with usage examples. When unsure, run `<tool> --help` or `<tool> <command> --help`.
 
@@ -99,21 +99,21 @@ Use these commands at protocol transitions to check state and get exact guidance
 
 | Step | Command | Who | Purpose |
 |------|---------|-----|---------|
-| Resume | `botbox protocol resume --agent $AGENT` | Worker | Detect in-progress work from previous session |
-| Start | `botbox protocol start <bone-id> --agent $AGENT` | Worker | Verify bone is ready, get start commands |
-| Review | `botbox protocol review <bone-id> --agent $AGENT` | Worker | Verify work is complete, get review commands |
-| Finish | `botbox protocol finish <bone-id> --agent $AGENT` | Worker | Verify review approved, get close/cleanup commands |
-| Merge | `botbox protocol merge <workspace> --agent $AGENT` | Lead | Check preconditions, detect conflicts, get merge steps |
-| Cleanup | `botbox protocol cleanup --agent $AGENT` | Worker | Check for held resources to release |
+| Resume | `edict protocol resume --agent $AGENT` | Worker | Detect in-progress work from previous session |
+| Start | `edict protocol start <bone-id> --agent $AGENT` | Worker | Verify bone is ready, get start commands |
+| Review | `edict protocol review <bone-id> --agent $AGENT` | Worker | Verify work is complete, get review commands |
+| Finish | `edict protocol finish <bone-id> --agent $AGENT` | Worker | Verify review approved, get close/cleanup commands |
+| Merge | `edict protocol merge <workspace> --agent $AGENT` | Lead | Check preconditions, detect conflicts, get merge steps |
+| Cleanup | `edict protocol cleanup --agent $AGENT` | Worker | Check for held resources to release |
 
-All commands support JSON output with `--format json` for parsing. If a command is unavailable or fails (exit code 1), fall back to manual steps documented in [start](.agents/botbox/start.md), [review-request](.agents/botbox/review-request.md), and [finish](.agents/botbox/finish.md).
+All commands support JSON output with `--format json` for parsing. If a command is unavailable or fails (exit code 1), fall back to manual steps documented in [start](.agents/edict/start.md), [review-request](.agents/edict/review-request.md), and [finish](.agents/edict/finish.md).
 
 ### Bones Conventions
 
 - Create a bone before starting work. Update state: `open` → `doing` → `done`.
 - Post progress comments during work for crash recovery.
 - **Run checks before committing**: {% if check_command %}`{{ check_command }}`{% else %}`just check` (or your project's build/test command){% endif %}. Fix any failures before proceeding.
-- After finishing a bone, follow [finish.md](.agents/botbox/finish.md). **Workers: do NOT push** — the lead handles merges and pushes.
+- After finishing a bone, follow [finish.md](.agents/edict/finish.md). **Workers: do NOT push** — the lead handles merges and pushes.
 {% if install_command %}- **Install locally** after releasing: `{{ install_command }}`
 {% endif %}
 ### Identity
@@ -170,7 +170,7 @@ Agents communicate via bus channels. You don't need to be expert on everything �
    maw exec default -- bn create --title "[tracking] <summary>" --tag tracking --kind task
    ```
 
-See [cross-channel.md](.agents/botbox/cross-channel.md) for the full workflow.
+See [cross-channel.md](.agents/edict/cross-channel.md) for the full workflow.
 
 ### Session Search (optional)
 
@@ -180,12 +180,12 @@ Use `cass search "error or problem"` to find how similar issues were solved in p
 ### Design Guidelines
 
 {% for doc in design_docs %}
-- [{{ doc.description }}](.agents/botbox/design/{{ doc.name }})
+- [{{ doc.description }}](.agents/edict/design/{{ doc.name }})
 {% endfor %}
 
 {% endif %}
 ### Workflow Docs
 
 {% for doc in workflow_docs %}
-- [{{ doc.description }}](.agents/botbox/{{ doc.name }})
+- [{{ doc.description }}](.agents/edict/{{ doc.name }})
 {% endfor %}

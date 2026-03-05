@@ -95,7 +95,7 @@ pub fn hint(c: &Colors, s: &str) -> String {
     format!("{}> {}{}", c.dim, s, c.reset)
 }
 
-/// Fetch config from .botbox.toml/.botbox.json or ws/default/
+/// Fetch config from .edict.toml/.botbox.toml or ws/default/
 fn load_config() -> anyhow::Result<Config> {
     let cwd = std::path::Path::new(".");
     let (config_path, _) = crate::config::find_config_in_project(cwd)?;

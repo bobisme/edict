@@ -1,12 +1,12 @@
-# Botbox
+# Edict
 
-Botbox is a setup and sync tool for multi-agent workflows. It bootstraps projects with workflow docs, scripts, and hooks that enable multiple AI coding agents to collaborate on the same codebase — triaging work, claiming tasks, reviewing each other's code, and communicating via channels.
+Edict is a setup and sync tool for multi-agent workflows. It bootstraps projects with workflow docs, scripts, and hooks that enable multiple AI coding agents to collaborate on the same codebase — triaging work, claiming tasks, reviewing each other's code, and communicating via channels.
 
-Botbox is NOT a runtime. It copies files and regenerates config; the actual coordination happens through the companion tools below.
+Edict is NOT a runtime. It copies files and regenerates config; the actual coordination happens through the companion tools below.
 
 ## Ecosystem
 
-Botbox orchestrates these companion projects (all ours):
+Edict orchestrates these companion projects (all ours):
 
 | Project | Binary | Purpose |
 |---------|--------|---------|
@@ -28,21 +28,21 @@ Understanding the full chain from "message arrives" to "agent does work" is crit
 1. Message lands on a botbus channel (e.g., `bus send myproject "New task" -L task-request`)
 2. botbus checks registered hooks (`bus hooks list`) for matching conditions
 3. Matching hook fires → runs its command (typically `botty spawn ...`)
-4. botty spawn creates a PTY session, runs `botbox run <subcommand>`
+4. botty spawn creates a PTY session, runs `edict run <subcommand>`
 5. The agent loop iterates: triage → start → work → review → finish
 6. Agent communicates back via `bus send`, updates bones via `bn`, manages workspace via `maw`
 ```
 
 ### Hook Types That Trigger Agents
 
-Registered during `botbox init` (and updated via migrations):
+Registered during `edict init` (and updated via migrations):
 
 | Hook Type | Trigger | Spawns | Example |
 |-----------|---------|--------|---------|
-| **Router** (claim-based) | Any message on project channel, when no agent claimed | `botbox run responder` | `bus hooks add --channel myproject --claim "agent://myproject-dev" ...` |
+| **Router** (claim-based) | Any message on project channel, when no agent claimed | `edict run responder` | `bus hooks add --channel myproject --claim "agent://myproject-dev" ...` |
 | **Reviewer** (mention-based) | `@myproject-security` mention | Reviewer agent | `bus hooks add --channel myproject --mention "myproject-security" ...` |
 
-The router hook spawns `botbox run responder` which routes messages based on `!` prefixes:
+The router hook spawns `edict run responder` which routes messages based on `!` prefixes:
 - `!dev [msg]` — create bone + spawn dev-loop
 - `!bead [desc]` — create bone (with dedup via `bn search`)
 - `!q [question]` — answer with sonnet
@@ -182,13 +182,13 @@ Identity resolved from `$AGENT`/`$BOTBUS_AGENT` env. No `--actor`/`--author` fla
 
 ## Agent Subcommands
 
-All agent loops are built into the `botbox` binary as subcommands under `botbox run`. They are invoked by botbus hooks via `botty spawn`.
+All agent loops are built into the `edict` binary as subcommands under `edict run`. They are invoked by botbus hooks via `botty spawn`.
 
-### `botbox run dev-loop` — Lead Dev Agent
+### `edict run dev-loop` — Lead Dev Agent
 
 Triages work, dispatches parallel workers, monitors progress, merges completed work.
 
-**Config:** `.botbox.json` → `agents.dev.{model, timeout, maxLoops, pause}`
+**Config:** `.edict.toml` → `agents.dev.{model, timeout, maxLoops, pause}`
 
 **Per iteration:**
 1. Read inbox, create bones from task requests
@@ -200,11 +200,11 @@ Triages work, dispatches parallel workers, monitors progress, merges completed w
 
 **Dispatch pattern:** Creates workspace per worker, generates random worker name via `bus generate-name`, stakes claims, comments bone with worker/workspace info, spawns via `botty spawn`.
 
-### `botbox run worker-loop` — Worker Agent
+### `edict run worker-loop` — Worker Agent
 
 Sequential: one bone per iteration. Triage → start → work → review → finish.
 
-**Config:** `.botbox.json` → `agents.worker.{model, timeout}`
+**Config:** `.edict.toml` → `agents.worker.{model, timeout}`
 
 **Per iteration:**
 1. Resume check (crash recovery via bone comments)
@@ -216,11 +216,11 @@ Sequential: one bone per iteration. Triage → start → work → review → fin
 7. Finish: close bone, merge workspace (`maw ws merge --destroy`), release claims
 8. Release check: unreleased feat/fix → bump version
 
-### `botbox run reviewer-loop` — Reviewer Agent
+### `edict run reviewer-loop` — Reviewer Agent
 
 Processes reviews, votes LGTM or BLOCK, leaves severity-tagged comments.
 
-**Config:** `.botbox.json` → `agents.reviewer.{model, timeout, maxLoops, pause}`
+**Config:** `.edict.toml` → `agents.reviewer.{model, timeout, maxLoops, pause}`
 
 **Role detection:** Agent name suffix determines role (e.g., `myproject-security` → loads `reviewer-security.md` prompt). Falls back to generic `reviewer.md`.
 
@@ -231,9 +231,9 @@ Processes reviews, votes LGTM or BLOCK, leaves severity-tagged comments.
 4. Vote: BLOCK if CRITICAL/HIGH issues, LGTM otherwise
 5. Post summary to project channel
 
-**Journal:** Maintains `.agents/botbox/review-loop-<role>.txt` with iteration summaries.
+**Journal:** Maintains `.agents/edict/review-loop-<role>.txt` with iteration summaries.
 
-### `botbox run responder` — Universal Message Router
+### `edict run responder` — Universal Message Router
 
 THE single entrypoint for all project channel messages. Routes based on `!` prefixes, maintains conversation context across turns, and can escalate to dev-loop mid-conversation.
 
@@ -241,19 +241,19 @@ THE single entrypoint for all project channel messages. Routes based on `!` pref
 
 **Flow:** Fetch message → route by prefix → dispatch to handler. Question mode enters a conversation loop with transcript buffer. Triage classifies bare messages and routes accordingly. Mid-conversation escalation creates a bone with conversation context and spawns dev-loop.
 
-**Config:** `.botbox.json` → `agents.responder.{model, timeout, wait_timeout, max_conversations}`
+**Config:** `.edict.toml` → `agents.responder.{model, timeout, wait_timeout, max_conversations}`
 
-### `botbox run triage` — Token-Efficient Triage
+### `edict run triage` — Token-Efficient Triage
 
 Wraps `bn triage` output into scannable output: top picks, blockers, quick wins, health metrics.
 
-### `botbox run iteration-start` — Combined Status
+### `edict run iteration-start` — Combined Status
 
 Aggregates inbox, ready bones, pending reviews, active claims into a single status snapshot at iteration start.
 
 ## Subcommand Eligibility
 
-Subcommands require specific companion tools to be enabled in `.botbox.json`:
+Subcommands require specific companion tools to be enabled in `.edict.toml`:
 
 | Subcommand | Requires |
 |------------|----------|
@@ -265,7 +265,7 @@ Subcommands require specific companion tools to be enabled in `.botbox.json`:
 
 ## Claude Code Hooks
 
-Hooks are registered in `.claude/settings.json` as `botbox hooks run <name>` commands:
+Hooks are registered in `.claude/settings.json` as `edict hooks run <name>` commands:
 
 | Hook | Event | Requires | Purpose |
 |------|-------|----------|---------|
@@ -274,16 +274,16 @@ Hooks are registered in `.claude/settings.json` as `botbox hooks run <name>` com
 | `check-bus-inbox` | PostToolUse | botbus | Check for unread bus messages, inject reminder with previews |
 | `claim-agent` | SessionStart, PostToolUse, SessionEnd | botbus | Stake/refresh/release agent claim for session duration |
 
-## How botbox sync Works
+## How edict sync Works
 
-`botbox sync` keeps projects up to date with latest docs, scripts, conventions, and hooks. It manages:
+`edict sync` keeps projects up to date with latest docs, scripts, conventions, and hooks. It manages:
 
-- **Workflow docs** (`.agents/botbox/*.md`) — copied from bundled source
-- **AGENTS.md managed section** — regenerated from templates (between `<!-- botbox:managed-start/end -->` markers)
-- **Claude Code hooks** — registered in `.claude/settings.json` as `botbox hooks run` commands
-- **Prompts** (`.agents/botbox/prompts/*.md`) — reviewer prompt templates
-- **Design docs** (`.agents/botbox/design/*.md`) — copied based on project type
-- **Config migrations** (`.botbox.json`) — runs pending migrations
+- **Workflow docs** (`.agents/edict/*.md`) — copied from bundled source
+- **AGENTS.md managed section** — regenerated from templates (between `<!-- edict:managed-start/end -->` markers)
+- **Claude Code hooks** — registered in `.claude/settings.json` as `edict hooks run` commands
+- **Prompts** (`.agents/edict/prompts/*.md`) — reviewer prompt templates
+- **Design docs** (`.agents/edict/design/*.md`) — copied based on project type
+- **Config migrations** (`.edict.toml`) — runs pending migrations
 
 Each component is version-tracked via SHA-256 content hashes stored in marker files (`.version`, `.hooks-version`, `.prompts-version`, `.design-docs-version`). Sync detects staleness by comparing installed hash vs current bundled hash.
 
@@ -293,15 +293,15 @@ Each component is version-tracked via SHA-256 content hashes stored in marker fi
 
 Migrations are defined in `src/commands/sync.rs`. Each has an ID (semantic version), title, and migration function.
 
-Migrations run automatically during `botbox sync` when the config version is behind. **When adding new botbus hook types or changing runtime behavior, add a migration.**
+Migrations run automatically during `edict sync` when the config version is behind. **When adding new botbus hook types or changing runtime behavior, add a migration.**
 
 ### Init vs Sync
 
-**`botbox init`** does everything: interactive config, creates `.agents/botbox/`, copies all files, generates AGENTS.md + `.botbox.json`, initializes external tools (`bn init`, `maw init`, `crit init`), registers botbus hooks, seeds initial bones, creates .gitignore.
+**`edict init`** does everything: interactive config, creates `.agents/edict/`, copies all files, generates AGENTS.md + `.edict.toml`, initializes external tools (`bn init`, `maw init`, `crit init`), registers botbus hooks, seeds initial bones, creates .gitignore.
 
-**`botbox sync`** is incremental: checks staleness, runs pending migrations, updates only changed components, preserves user edits outside managed markers. `--check` mode exits non-zero without changing anything (CI use).
+**`edict sync`** is incremental: checks staleness, runs pending migrations, updates only changed components, preserves user edits outside managed markers. `--check` mode exits non-zero without changing anything (CI use).
 
-## .botbox.json Config
+## .edict.toml Config
 
 ```json
 {
@@ -331,7 +331,7 @@ Mission config is read from `agents.dev.missions`. `enabled` defaults to true. `
 
 Scripts read `project.defaultAgent` and `project.channel` on startup, making CLI args optional.
 
-## Botbox Release Process
+## Edict Release Process
 
 Changes to workflow docs, templates, or commands require a release:
 
@@ -351,7 +351,7 @@ src/
   ├── commands/        init, sync, doctor, status, run_agent, dev_loop/, worker_loop, etc.
   ├── hooks/           Claude Code hook management (registry, runner)
   ├── templates/       Embedded templates (docs, prompts, design docs, agents-managed.md)
-  ├── config.rs        .botbox.json config parsing
+  ├── config.rs        .edict.toml config parsing
   ├── template.rs      Minijinja template engine
   ├── error.rs         Error types
   ├── lib.rs           Library root
@@ -382,7 +382,7 @@ maw exec default -- just test       # cargo test
 **Manual testing**: ALWAYS use isolated data directories to avoid polluting actual project data:
 
 ```bash
-BOTBUS_DATA_DIR=/tmp/test-botbus botbox init --name test --type cli --tools bones,maw,crit,botbus --no-interactive
+BOTBUS_DATA_DIR=/tmp/test-botbus edict init --name test --type cli --tools bones,maw,crit,botbus --no-interactive
 BOTBUS_DATA_DIR=/tmp/test-botbus bus hooks list
 rm -rf /tmp/test-botbus
 ```
@@ -413,7 +413,7 @@ When asked to look at a botty session, immediately run `botty tail <name> --last
 Drop whatever you're doing and run the tail command. Analyze the output and report what the agent is doing, whether it's stuck, and what might need fixing.
 
 ### Agent not spawning
-1. Check hook registration: `bus hooks list` — is the router hook there? Does the channel match? It should point to `botbox run responder`.
+1. Check hook registration: `bus hooks list` — is the router hook there? Does the channel match? It should point to `edict run responder`.
 2. Check claim availability: `bus claims list` — is the `agent://X-dev` claim already taken? (router hook won't fire if claimed)
 3. Check botty: `botty list` — is the agent already running?
 4. Verify hook command: the hook should run `botty spawn` with correct script path and `--env-inherit`
@@ -456,7 +456,7 @@ For significant features or changes, use the formal proposal process before impl
 2. Validate by investigating open questions, moving answers to "Answered Questions"
 3. Accept (remove tag, create implementation bones) or Reject (document why)
 
-See [proposal.md](.agents/botbox/proposal.md) for full workflow.
+See [proposal.md](.agents/edict/proposal.md) for full workflow.
 
 ## Output Formats
 
@@ -471,8 +471,8 @@ Format auto-detection: `--format` flag > `FORMAT` env > TTY→pretty / non-TTY�
 
 Labels on bus messages categorize intent: `task-request`, `task-claim`, `task-blocked`, `task-done`, `review-request`, `review-done`, `review-response`, `feedback`, `grooming`, `tool-issue`, `agent-idle`, `spawn-ack`, `agent-error`.
 
-<!-- botbox:managed-start -->
-## Botbox Workflow
+<!-- edict:managed-start -->
+## Edict Workflow
 
 ### How to Make Changes
 
@@ -482,7 +482,7 @@ Labels on bus messages categorize intent: `task-request`, `task-claim`, `task-bl
 4. **Merge when done**: `maw ws merge <name> --destroy --message "feat: <bone-title>"` (use conventional commit prefix: `feat:`, `fix:`, `chore:`, etc.)
 5. **Close the bone**: `maw exec default -- bn done <id>`
 
-Do not create git branches manually — `maw ws create` handles branching for you. See [worker-loop.md](.agents/botbox/worker-loop.md) for the full triage → start → work → finish cycle.
+Do not create git branches manually — `maw ws create` handles branching for you. See [worker-loop.md](.agents/edict/worker-loop.md) for the full triage → start → work → finish cycle.
 
 **All tools have `--help`** with usage examples. When unsure, run `<tool> --help` or `<tool> <command> --help`.
 
@@ -568,21 +568,21 @@ Use these commands at protocol transitions to check state and get exact guidance
 
 | Step | Command | Who | Purpose |
 |------|---------|-----|---------|
-| Resume | `botbox protocol resume --agent $AGENT` | Worker | Detect in-progress work from previous session |
-| Start | `botbox protocol start <bone-id> --agent $AGENT` | Worker | Verify bone is ready, get start commands |
-| Review | `botbox protocol review <bone-id> --agent $AGENT` | Worker | Verify work is complete, get review commands |
-| Finish | `botbox protocol finish <bone-id> --agent $AGENT` | Worker | Verify review approved, get close/cleanup commands |
-| Merge | `botbox protocol merge <workspace> --agent $AGENT` | Lead | Check preconditions, detect conflicts, get merge steps |
-| Cleanup | `botbox protocol cleanup --agent $AGENT` | Worker | Check for held resources to release |
+| Resume | `edict protocol resume --agent $AGENT` | Worker | Detect in-progress work from previous session |
+| Start | `edict protocol start <bone-id> --agent $AGENT` | Worker | Verify bone is ready, get start commands |
+| Review | `edict protocol review <bone-id> --agent $AGENT` | Worker | Verify work is complete, get review commands |
+| Finish | `edict protocol finish <bone-id> --agent $AGENT` | Worker | Verify review approved, get close/cleanup commands |
+| Merge | `edict protocol merge <workspace> --agent $AGENT` | Lead | Check preconditions, detect conflicts, get merge steps |
+| Cleanup | `edict protocol cleanup --agent $AGENT` | Worker | Check for held resources to release |
 
-All commands support JSON output with `--format json` for parsing. If a command is unavailable or fails (exit code 1), fall back to manual steps documented in [start](.agents/botbox/start.md), [review-request](.agents/botbox/review-request.md), and [finish](.agents/botbox/finish.md).
+All commands support JSON output with `--format json` for parsing. If a command is unavailable or fails (exit code 1), fall back to manual steps documented in [start](.agents/edict/start.md), [review-request](.agents/edict/review-request.md), and [finish](.agents/edict/finish.md).
 
 ### Bones Conventions
 
 - Create a bone before starting work. Update state: `open` → `doing` → `done`.
 - Post progress comments during work for crash recovery.
 - **Run checks before requesting review**: `just check` (or your project's build/test command). Fix any failures before proceeding.
-- After finishing a bone, follow [finish.md](.agents/botbox/finish.md). **Workers: do NOT push** — the lead handles merges and pushes.
+- After finishing a bone, follow [finish.md](.agents/edict/finish.md). **Workers: do NOT push** — the lead handles merges and pushes.
 - **Install locally** after releasing: `maw exec default -- just install`
 
 ### Identity
@@ -639,7 +639,7 @@ Agents communicate via bus channels. You don't need to be expert on everything �
    maw exec default -- bn create --title "[tracking] <summary>" --tag tracking --kind task
    ```
 
-See [cross-channel.md](.agents/botbox/cross-channel.md) for the full workflow.
+See [cross-channel.md](.agents/edict/cross-channel.md) for the full workflow.
 
 ### Session Search (optional)
 
@@ -649,43 +649,43 @@ Use `cass search "error or problem"` to find how similar issues were solved in p
 ### Design Guidelines
 
 
-- [CLI tool design for humans, agents, and machines](.agents/botbox/design/cli-conventions.md)
+- [CLI tool design for humans, agents, and machines](.agents/edict/design/cli-conventions.md)
 
 
 
 ### Workflow Docs
 
 
-- [Find work from inbox and bones](.agents/botbox/triage.md)
+- [Find work from inbox and bones](.agents/edict/triage.md)
 
-- [Claim bone, create workspace, announce](.agents/botbox/start.md)
+- [Claim bone, create workspace, announce](.agents/edict/start.md)
 
-- [Change bone state (open/doing/done)](.agents/botbox/update.md)
+- [Change bone state (open/doing/done)](.agents/edict/update.md)
 
-- [Close bone, merge workspace, release claims](.agents/botbox/finish.md)
+- [Close bone, merge workspace, release claims](.agents/edict/finish.md)
 
-- [Full triage-work-finish lifecycle](.agents/botbox/worker-loop.md)
+- [Full triage-work-finish lifecycle](.agents/edict/worker-loop.md)
 
-- [Turn specs/PRDs into actionable bones](.agents/botbox/planning.md)
+- [Turn specs/PRDs into actionable bones](.agents/edict/planning.md)
 
-- [Explore unfamiliar code before planning](.agents/botbox/scout.md)
+- [Explore unfamiliar code before planning](.agents/edict/scout.md)
 
-- [Create and validate proposals before implementation](.agents/botbox/proposal.md)
+- [Create and validate proposals before implementation](.agents/edict/proposal.md)
 
-- [Request a review](.agents/botbox/review-request.md)
+- [Request a review](.agents/edict/review-request.md)
 
-- [Handle reviewer feedback (fix/address/defer)](.agents/botbox/review-response.md)
+- [Handle reviewer feedback (fix/address/defer)](.agents/edict/review-response.md)
 
-- [Reviewer agent loop](.agents/botbox/review-loop.md)
+- [Reviewer agent loop](.agents/edict/review-loop.md)
 
-- [Merge a worker workspace (protocol merge + conflict recovery)](.agents/botbox/merge-check.md)
+- [Merge a worker workspace (protocol merge + conflict recovery)](.agents/edict/merge-check.md)
 
-- [Validate toolchain health](.agents/botbox/preflight.md)
+- [Validate toolchain health](.agents/edict/preflight.md)
 
-- [Ask questions, report bugs, and track responses across projects](.agents/botbox/cross-channel.md)
+- [Ask questions, report bugs, and track responses across projects](.agents/edict/cross-channel.md)
 
-- [Report bugs/features to other projects](.agents/botbox/report-issue.md)
+- [Report bugs/features to other projects](.agents/edict/report-issue.md)
 
-- [groom](.agents/botbox/groom.md)
+- [groom](.agents/edict/groom.md)
 
-<!-- botbox:managed-end -->
+<!-- edict:managed-end -->

@@ -44,7 +44,7 @@ impl From<ProtocolExitCode> for ExitCode {
 /// commands can signal operational failures (exit 1) via the standard
 /// error-handling path.
 #[derive(Debug, thiserror::Error)]
-#[error("botbox protocol: {context}: {detail}")]
+#[error("edict protocol: {context}: {detail}")]
 pub struct ProtocolExitError {
     pub code: ProtocolExitCode,
     pub context: String,
@@ -116,7 +116,7 @@ pub fn exit_code_for_status(_status: ProtocolStatus) -> ProtocolExitCode {
 /// Never use stderr for status information like "blocked" or "clean".
 #[allow(dead_code)]
 pub fn write_stderr_diagnostic(context: &str, detail: &str) {
-    eprintln!("botbox protocol: {context}: {detail}");
+    eprintln!("edict protocol: {context}: {detail}");
 }
 
 /// Render guidance to stdout and return the appropriate exit code.
@@ -246,7 +246,7 @@ mod tests {
         assert_eq!(err.context, "start");
         assert_eq!(err.detail, "config not found");
         let msg = err.to_string();
-        assert!(msg.contains("botbox protocol: start: config not found"));
+        assert!(msg.contains("edict protocol: start: config not found"));
     }
 
     #[test]
