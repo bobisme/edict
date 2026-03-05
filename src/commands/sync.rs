@@ -237,6 +237,11 @@ impl SyncArgs {
         // Migrate router hook claim from agent://{name}-router → agent://{name}-dev
         migrate_router_hook_claim(&config, &project_root);
 
+        // Migrate botty → vessel (config key + bus hooks)
+        if !self.check {
+            migrate_vessel_hooks(&config, &project_root, &config_path);
+        }
+
         // Migrate beads → bones (config, data, tooling files)
         if !self.check {
             migrate_beads_to_bones(&project_root, &config_path)?;
@@ -1205,6 +1210,101 @@ fn migrate_router_hook_claim(config: &Config, project_root: &Path) {
             .and_then(|r| r.memory_limit.as_deref());
         super::init::register_router_hook(&root_str, &root_str, name, &agent, responder_ml);
         println!("  Migrated router hook claim: agent://{name}-router → agent://{name}-dev");
+    }
+}
+
+/// Migrate botty → vessel: update config key on disk and re-register bus hooks.
+///
+/// Idempotent — skips steps already done.
+fn migrate_vessel_hooks(config: &Config, project_root: &Path, config_path: &Path) {
+    // 1. Update config TOML on disk: botty = true → vessel = true
+    if let Ok(content) = fs::read_to_string(config_path) {
+        if content.contains("botty = ") {
+            let updated = content.replace("botty = ", "vessel = ");
+            if let Err(e) = fs::write(config_path, updated) {
+                tracing::warn!("failed to update config botty→vessel: {e}");
+            } else {
+                println!("Migrated config: tools.botty → tools.vessel");
+            }
+        }
+    }
+
+    // 2. Re-register edict hooks that still call `botty spawn` with `vessel spawn`.
+    //    ensure_bus_hook deduplicates by description, so calling register_*_hook
+    //    will remove the old hook and re-add it with the updated command.
+    let output = match Tool::new("bus")
+        .args(&["hooks", "list", "--format", "json"])
+        .run()
+    {
+        Ok(o) if o.success() => o,
+        _ => return,
+    };
+
+    let parsed: serde_json::Value = match serde_json::from_str(&output.stdout) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+
+    let hooks = match parsed.get("hooks").and_then(|h| h.as_array()) {
+        Some(h) => h.to_vec(),
+        None => return,
+    };
+
+    let name = &config.project.name;
+
+    // Resolve root path (same logic as other hook migrations)
+    let bare_root = if project_root.ends_with("ws/default") {
+        project_root
+            .parent()
+            .and_then(Path::parent)
+            .filter(|r| r.join(".manifold").exists())
+    } else if project_root.join(".manifold").exists() {
+        Some(project_root)
+    } else {
+        None
+    };
+    let root_str = bare_root
+        .map(|r| r.display().to_string())
+        .unwrap_or_else(|| project_root.display().to_string());
+    let agent = config.default_agent();
+
+    for hook in &hooks {
+        // Only migrate hooks whose command array contains "botty"
+        let uses_botty = hook
+            .get("command")
+            .and_then(|c| c.as_array())
+            .map(|arr| arr.iter().any(|v| v.as_str() == Some("botty")))
+            .unwrap_or(false);
+        if !uses_botty {
+            continue;
+        }
+
+        let desc = hook
+            .get("description")
+            .and_then(|d| d.as_str())
+            .unwrap_or("");
+
+        if desc == format!("edict:{name}:responder") {
+            let ml = config
+                .agents
+                .responder
+                .as_ref()
+                .and_then(|r| r.memory_limit.as_deref());
+            super::init::register_router_hook(&root_str, &root_str, name, &agent, ml);
+            println!("  Migrated router hook: vessel spawn (was botty)");
+        } else if let Some(role) = desc
+            .strip_prefix(&format!("edict:{name}:reviewer-"))
+            .filter(|r| !r.is_empty())
+        {
+            let reviewer_agent = format!("{name}-{role}");
+            let ml = config
+                .agents
+                .reviewer
+                .as_ref()
+                .and_then(|r| r.memory_limit.as_deref());
+            super::init::register_reviewer_hook(&root_str, &root_str, name, &agent, &reviewer_agent, ml);
+            println!("  Migrated reviewer hook {role}: vessel spawn (was botty)");
+        }
     }
 }
 
