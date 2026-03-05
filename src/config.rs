@@ -251,7 +251,7 @@ pub struct DevAgentConfig {
     pub max_loops: u32,
     #[serde(default = "default_pause")]
     pub pause: u32,
-    #[serde(default = "default_timeout_1800")]
+    #[serde(default = "default_timeout_3600")]
     pub timeout: u64,
     #[serde(default = "default_missions")]
     pub missions: Option<MissionsConfig>,
@@ -268,7 +268,7 @@ impl Default for DevAgentConfig {
             model: default_model_dev(),
             max_loops: default_max_loops(),
             pause: default_pause(),
-            timeout: default_timeout_1800(),
+            timeout: default_timeout_3600(),
             missions: default_missions(),
             multi_lead: default_multi_lead(),
             memory_limit: None,
@@ -367,8 +367,8 @@ fn default_timeout_300() -> u64 {
 fn default_timeout_900() -> u64 {
     900
 }
-fn default_timeout_1800() -> u64 {
-    1800
+fn default_timeout_3600() -> u64 {
+    3600
 }
 fn default_true() -> bool {
     true
@@ -782,7 +782,7 @@ model = "sonnet"
         assert_eq!(dev.model, "sonnet");
         assert_eq!(dev.max_loops, 100); // default
         assert_eq!(dev.pause, 2); // default
-        assert_eq!(dev.timeout, 1800); // default
+        assert_eq!(dev.timeout, 3600); // default
     }
 
     #[test]

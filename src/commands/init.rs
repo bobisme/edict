@@ -726,7 +726,7 @@ fn build_config(choices: &InitChoices) -> Config {
                 model: "strong".into(),
                 max_loops: 100,
                 pause: 2,
-                timeout: 1800,
+                timeout: 3600,
                 missions: Some(MissionsConfig {
                     enabled: true,
                     max_workers: 4,
