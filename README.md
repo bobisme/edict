@@ -46,7 +46,7 @@ cargo install --path .
 edict init
 
 # Bootstrap with flags (for agents)
-edict init --name my-api --type api --tools beads,maw,crit,bus --reviewers security --no-interactive
+edict init --name my-api --type api --tools bones,maw,crit,bus --reviewers security --no-interactive
 
 # Sync workflow docs after edict upgrades
 edict sync
@@ -75,8 +75,8 @@ After `edict init`:
 ```
 .agents/edict/          # Workflow docs (embedded in binary, synced to project)
   docs/
-    triage.md            # Find work from inbox and beads
-    start.md             # Claim bead, create workspace, announce
+    triage.md            # Find work from inbox and bones
+    start.md             # Claim bone, create workspace, announce
     update.md            # Post progress updates
     finish.md            # Close bead, merge workspace, release claims
     worker-loop.md       # Full triage-start-work-finish lifecycle
@@ -87,7 +87,7 @@ After `edict init`:
     preflight.md         # Validate toolchain health
     cross-channel.md     # Ask questions, report bugs across projects
     report-issue.md      # Report bugs/features to other projects
-    planning.md          # Turn specs/PRDs into actionable beads
+    planning.md          # Turn specs/PRDs into actionable bones
     scout.md             # Explore unfamiliar code before planning
     proposal.md          # Create and validate proposals before implementation
     groom.md             # Groom backlog
@@ -126,31 +126,26 @@ Agent loops are built-in Rust subcommands of the `edict` binary:
 - **`edict run worker-loop`** — Worker. Sequential: triage → start → work → review → finish.
 - **`edict run reviewer-loop`** — Reviewer. Processes crit reviews, votes LGTM or BLOCK.
 - **`edict run triage`** — Token-efficient triage. Wraps `bv --robot-triage` with scannable output.
-- **`edict run iteration-start`** — Combined status snapshot. Aggregates inbox, beads, reviews, claims.
+- **`edict run iteration-start`** — Combined status snapshot. Aggregates inbox, bones, reviews, claims.
 
 No manual agent management needed — send a message to a project channel and the hook chain handles the rest.
 
 ## Ecosystem
 
-Edict coordinates five specialized Rust tools that work together to enable multi-agent workflows:
+Edict coordinates these specialized tools that work together to enable multi-agent workflows:
 
-| Tool                                                                  | Purpose                         | Key commands                                  | Repository                                          |
-| --------------------------------------------------------------------- | ------------------------------- | --------------------------------------------- | --------------------------------------------------- |
-| **[botbus](https://github.com/bobisme/botbus)**                       | Communication, claims, presence | `send`, `inbox`, `claim`, `release`, `agents` | Pub/sub messaging, resource locking, agent registry |
-| **[maw](https://github.com/bobisme/maw)**                             | Isolated jj workspaces          | `ws create`, `ws merge`, `ws destroy`         | Concurrent work isolation with Jujutsu VCS          |
-| **[beads](https://github.com/Dicklesworthstone/beads_rust)**          | Work tracking (`br`)            | `ready`, `create`, `close`, `update`          | Issue tracker optimized for agent triage            |
-| **[beads_viewer](https://github.com/Dicklesworthstone/beads_viewer)** | Triage interface (`bv`)         | `--robot-triage`, `--robot-next`              | PageRank-based prioritization, graph analysis       |
-| **[crit](https://github.com/bobisme/botcrit)**                        | Code review                     | `review`, `comment`, `lgtm`, `block`          | Asynchronous code review workflow                   |
-| **[botty](https://github.com/bobisme/botty)**                         | Agent runtime                   | `spawn`, `kill`, `tail`, `snapshot`           | Process management for AI agent loops               |
-
-### Flywheel connection
-
-Edict is inspired by and shares tools with the [Agentic Coding Flywheel](https://agent-flywheel.com) ecosystem. We use the same `br` ([beads_rust](https://github.com/Dicklesworthstone/beads_rust)) for issue tracking and `bv` ([beads_viewer](https://github.com/Dicklesworthstone/beads_viewer)) for triage. The built-in `edict run triage` command wraps `bv --robot-triage` to provide token-efficient work prioritization using PageRank-based analysis.
+| Tool                                            | Purpose                          | Key commands                                  | Repository                                          |
+| ----------------------------------------------- | -------------------------------- | --------------------------------------------- | --------------------------------------------------- |
+| **[botbus](https://github.com/bobisme/botbus)** | Communication, claims, presence  | `send`, `inbox`, `claim`, `release`, `agents` | Pub/sub messaging, resource locking, agent registry |
+| **[maw](https://github.com/bobisme/maw)**       | Isolated jj workspaces           | `ws create`, `ws merge`, `ws destroy`         | Concurrent work isolation with Jujutsu VCS          |
+| **[bones](https://github.com/bobisme/bones)**   | Issue tracking and triage (`bn`) | `create`, `next`, `do`, `done`, `triage`      | Event-sourced issue tracker with built-in triage    |
+| **[crit](https://github.com/bobisme/botcrit)**  | Code review                      | `review`, `comment`, `lgtm`, `block`          | Asynchronous code review workflow                   |
+| **[botty](https://github.com/bobisme/botty)**   | Agent runtime                    | `spawn`, `kill`, `tail`, `snapshot`           | Process management for AI agent loops               |
 
 ### How they work together
 
-1. **botbus** provides the communication layer: agents send messages, claim resources (beads, workspaces), and discover each other
-2. **beads** tracks work items and priorities, exposing a triage interface (`br ready`, `bv --robot-next`)
+1. **botbus** provides the communication layer: agents send messages, claim resources (bones, workspaces), and discover each other
+2. **bones** tracks work items and priorities, exposing a triage interface (`bn next`, `bn triage`)
 3. **maw** creates isolated workspaces so multiple agents can work concurrently without conflicts
 4. **crit** enables code review: agents request reviews, reviewers comment, and changes merge after approval
 5. **botty** spawns and manages agent processes, handling crashes and lifecycle
@@ -198,11 +193,3 @@ maw exec default -- just test       # cargo test
 ```
 
 This project uses Jujutsu (jj) for version control and maw for workspace management. Source files live in `ws/default/`, not at the project root. Run `maw exec default -- <command>` to execute commands in the workspace context.
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-## License
-
-MIT
