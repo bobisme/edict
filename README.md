@@ -1,12 +1,12 @@
-# botbox
+# edict
 
-![botbox utopia](images/botbox-utopia.webp)
+![edict utopia](images/edict-utopia.webp)
 
 Setup, sync, and runtime for multi-agent workflows. Bootstraps projects with workflow docs and companion tool configurations, keeps them synchronized across upgrades, and provides built-in agent loop subcommands with protocol guidance.
 
 ## Eval Results
 
-32 behavioral evaluations across Opus, Sonnet, and Haiku. The eval framework tests whether agents follow the botbox protocol when driven autonomously through the botty-native spawn chain (hooks → botty spawn → botbox run).
+32 behavioral evaluations across Opus, Sonnet, and Haiku. The eval framework tests whether agents follow the edict protocol when driven autonomously through the botty-native spawn chain (hooks → botty spawn → edict run).
 
 | Eval | Model | Score | What it tests |
 |------|-------|-------|---------------|
@@ -19,12 +19,12 @@ Setup, sync, and runtime for multi-agent workflows. Bootstraps projects with wor
 
 **Takeaway**: The full autonomous pipeline works. Agents spawn via hooks, coordinate across projects via bus channels, review each other's code via crit, and merge work through maw — all without human intervention. Friction comes from CLI typos, not protocol failures. See [evals/results/](evals/results/README.md) for all 32 runs and detailed findings.
 
-## What is botbox?
+## What is edict?
 
-`botbox` is a Rust CLI (stable edition 2024) that:
+`edict` is a Rust CLI (stable edition 2024) that:
 
 1. **Initializes projects** for multi-agent collaboration (interactive or via flags)
-2. **Syncs workflow docs** from embedded templates to `.agents/botbox/`
+2. **Syncs workflow docs** from embedded templates to `.agents/edict/`
 3. **Validates health** via `doctor` command
 4. **Runs agent loops** as built-in subcommands (`dev-loop`, `worker-loop`, `reviewer-loop`, `responder`)
 5. **Provides protocol commands** that guide agents through state transitions (`protocol start`, `merge`, `finish`, etc.)
@@ -36,44 +36,44 @@ It glues together 5 companion tools (bus, maw, br/bv, crit, botty) into a cohesi
 ```bash
 cargo install --path .
 # or from a release:
-cargo install botbox
+cargo install edict
 ```
 
 ## Usage
 
 ```bash
 # Bootstrap a new project (interactive)
-botbox init
+edict init
 
 # Bootstrap with flags (for agents)
-botbox init --name my-api --type api --tools beads,maw,crit,bus --reviewers security --no-interactive
+edict init --name my-api --type api --tools beads,maw,crit,bus --reviewers security --no-interactive
 
-# Sync workflow docs after botbox upgrades
-botbox sync
+# Sync workflow docs after edict upgrades
+edict sync
 
 # Check if sync is needed
-botbox sync --check
+edict sync --check
 
 # Validate toolchain and project setup
-botbox doctor
+edict doctor
 
 # Run agent loops (typically invoked by botty spawn, not manually)
-botbox run dev-loop --agent myproject-dev
-botbox run worker-loop --agent myproject-dev/worker-1
-botbox run reviewer-loop --agent myproject-security
+edict run dev-loop --agent myproject-dev
+edict run worker-loop --agent myproject-dev/worker-1
+edict run reviewer-loop --agent myproject-security
 
 # Protocol commands — check state and get guidance at transitions
-botbox protocol start <bead-id> --agent $AGENT
-botbox protocol merge <workspace> --agent $AGENT
-botbox protocol finish <bead-id> --agent $AGENT
+edict protocol start <bead-id> --agent $AGENT
+edict protocol merge <workspace> --agent $AGENT
+edict protocol finish <bead-id> --agent $AGENT
 ```
 
 ## What gets created?
 
-After `botbox init`:
+After `edict init`:
 
 ```
-.agents/botbox/          # Workflow docs (embedded in binary, synced to project)
+.agents/edict/          # Workflow docs (embedded in binary, synced to project)
   docs/
     triage.md            # Find work from inbox and beads
     start.md             # Claim bead, create workspace, announce
@@ -102,31 +102,31 @@ After `botbox init`:
   .version               # Version hash for sync tracking
 AGENTS.md                # Generated with managed section + project-specific content
 CLAUDE.md -> AGENTS.md   # Symlink
-.botbox.json             # Project configuration
+.edict.json             # Project configuration
 ```
 
 ## Workflow docs
 
-The workflow docs in `.agents/botbox/docs/` define the protocol. These are embedded in the Rust binary as compile-time templates and synced to projects during `botbox init` and `botbox sync`.
+The workflow docs in `.agents/edict/docs/` define the protocol. These are embedded in the Rust binary as compile-time templates and synced to projects during `edict init` and `edict sync`.
 
-When botbox updates, run `botbox sync` to pull the latest workflow doc changes.
+When edict updates, run `edict sync` to pull the latest workflow doc changes.
 
 ## Agent loops
 
 Agents are spawned automatically via botbus hooks when messages arrive on project channels. The spawn chain:
 
 ```
-message → botbus hook → botty spawn → botbox run responder → botbox run dev-loop
+message → botbus hook → botty spawn → edict run responder → edict run dev-loop
 ```
 
-Agent loops are built-in Rust subcommands of the `botbox` binary:
+Agent loops are built-in Rust subcommands of the `edict` binary:
 
-- **`botbox run responder`** — Universal router. Routes `!dev`, `!q`, `!bead` prefixes; triages bare messages.
-- **`botbox run dev-loop`** — Lead dev. Triages work, dispatches parallel workers, monitors progress, merges.
-- **`botbox run worker-loop`** — Worker. Sequential: triage → start → work → review → finish.
-- **`botbox run reviewer-loop`** — Reviewer. Processes crit reviews, votes LGTM or BLOCK.
-- **`botbox run triage`** — Token-efficient triage. Wraps `bv --robot-triage` with scannable output.
-- **`botbox run iteration-start`** — Combined status snapshot. Aggregates inbox, beads, reviews, claims.
+- **`edict run responder`** — Universal router. Routes `!dev`, `!q`, `!bead` prefixes; triages bare messages.
+- **`edict run dev-loop`** — Lead dev. Triages work, dispatches parallel workers, monitors progress, merges.
+- **`edict run worker-loop`** — Worker. Sequential: triage → start → work → review → finish.
+- **`edict run reviewer-loop`** — Reviewer. Processes crit reviews, votes LGTM or BLOCK.
+- **`edict run triage`** — Token-efficient triage. Wraps `bv --robot-triage` with scannable output.
+- **`edict run iteration-start`** — Combined status snapshot. Aggregates inbox, beads, reviews, claims.
 
 No manual agent management needed — send a message to a project channel and the hook chain handles the rest.
 
@@ -145,7 +145,7 @@ Botbox coordinates five specialized Rust tools that work together to enable mult
 
 ### Flywheel connection
 
-Botbox is inspired by and shares tools with the [Agentic Coding Flywheel](https://agent-flywheel.com) ecosystem. We use the same `br` ([beads_rust](https://github.com/Dicklesworthstone/beads_rust)) for issue tracking and `bv` ([beads_viewer](https://github.com/Dicklesworthstone/beads_viewer)) for triage. The built-in `botbox run triage` command wraps `bv --robot-triage` to provide token-efficient work prioritization using PageRank-based analysis.
+Botbox is inspired by and shares tools with the [Agentic Coding Flywheel](https://agent-flywheel.com) ecosystem. We use the same `br` ([beads_rust](https://github.com/Dicklesworthstone/beads_rust)) for issue tracking and `bv` ([beads_viewer](https://github.com/Dicklesworthstone/beads_viewer)) for triage. The built-in `edict run triage` command wraps `bv --robot-triage` to provide token-efficient work prioritization using PageRank-based analysis.
 
 ### How they work together
 
@@ -155,7 +155,7 @@ Botbox is inspired by and shares tools with the [Agentic Coding Flywheel](https:
 4. **crit** enables code review: agents request reviews, reviewers comment, and changes merge after approval
 5. **botty** spawns and manages agent processes, handling crashes and lifecycle
 
-**botbox** configures projects to use these tools, keeps workflow docs synchronized, and runs the agent loops (`botbox run dev-loop`, `botbox run worker-loop`, etc.) that drive the entire workflow.
+**edict** configures projects to use these tools, keeps workflow docs synchronized, and runs the agent loops (`edict run dev-loop`, `edict run worker-loop`, etc.) that drive the entire workflow.
 
 ## Architecture
 
@@ -163,8 +163,8 @@ Botbox is a Rust project (edition 2024) with:
 
 - **Zero build step** beyond `cargo build` — workflow docs are embedded at compile time via `include_str!` and rendered with `minijinja`
 - **Agent loops as subcommands** — `dev-loop`, `worker-loop`, `reviewer-loop`, `responder` are built into the binary
-- **Protocol commands** — `botbox protocol start/merge/finish` check preconditions and output guidance
-- **Config migrations** — `botbox sync` runs version-based migrations to update `.botbox.json` and botbus hooks
+- **Protocol commands** — `edict protocol start/merge/finish` check preconditions and output guidance
+- **Config migrations** — `edict sync` runs version-based migrations to update `.edict.json` and botbus hooks
 
 See [CLAUDE.md](CLAUDE.md) for full architecture docs, development conventions, and companion tool deep dives.
 
@@ -182,7 +182,7 @@ br create --actor $AGENT --owner $AGENT --title="Bug: ..." --type=bug --priority
 bus send --agent $AGENT botty "Filed bd-xyz: description @botty-dev" -L feedback
 ```
 
-See `.agents/botbox/docs/report-issue.md` for full workflow.
+See `.agents/edict/docs/report-issue.md` for full workflow.
 
 ## Development
 
