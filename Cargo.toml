@@ -1,10 +1,18 @@
 [package]
 name = "edict-cli"
-version = "0.19.0"
+version = "0.20.2"
 edition = "2024"
 description = "Setup, sync, and runtime for multi-agent AI coding workflows"
 license = "MIT"
 repository = "https://github.com/bobisme/edict"
+include = [
+  "src/**/*",
+  "tests/**/*",
+  "Cargo.toml",
+  "LICENSE",
+  "/README.md",
+  "images/edict-embed.jpg",
+]
 
 [[bin]]
 name = "edict"
