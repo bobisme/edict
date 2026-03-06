@@ -148,7 +148,7 @@ The agent reads the `status` field in stdout to decide what to do next. Exit 0 m
 Returned when the protocol command cannot produce valid guidance at all:
 
 - `.edict.toml (or legacy .botbox.toml) config not found
-- Companion tool missing or unavailable (bus, maw, br, seal)
+- Companion tool missing or unavailable (rite, maw, br, seal)
 - Subprocess output cannot be parsed
 - Command not yet implemented
 
@@ -255,4 +255,4 @@ If a client sees schema != "protocol-guidance.v1":
 
 For questions about this compatibility policy, see [CLAUDE.md](../../CLAUDE.md) — cross-channel communication process.
 
-File issues at: `bus send --agent $AGENT edict "Issue: <details>" -L tool-issue`
+File issues at: `rite send --agent $AGENT edict "Issue: <details>" -L tool-issue`

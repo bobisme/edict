@@ -111,7 +111,7 @@ pub fn execute(
         return Ok(());
     }
 
-    // Collect state from bus and maw
+    // Collect state from rite and maw
     let ctx = match ProtocolContext::collect(project, agent) {
         Ok(ctx) => ctx,
         Err(e) => {
@@ -397,7 +397,7 @@ fn build_merge_steps(
     } else {
         format!("Merged workspace {}", workspace)
     };
-    steps.push(shell::bus_send_cmd(
+    steps.push(shell::rite_send_cmd(
         "agent",
         project,
         &announce_msg,
@@ -464,7 +464,7 @@ fn add_conflict_recovery_guidance(
 /// Checks claims first (workspace claim memo = bone ID), then falls back
 /// to checking all held bone claims (for workers with one bone).
 fn find_bone_for_workspace(ctx: &ProtocolContext, workspace: &str) -> Option<String> {
-    // Method 1: check workspace claims for memo (when bus includes memo in JSON)
+    // Method 1: check workspace claims for memo (when rite includes memo in JSON)
     for claim in ctx.claims() {
         if let Some(memo) = &claim.memo {
             for pattern in &claim.patterns {
@@ -719,7 +719,7 @@ mod tests {
         let announce = guidance
             .steps
             .iter()
-            .find(|s| s.contains("bus send"))
+            .find(|s| s.contains("rite send"))
             .unwrap();
         assert!(announce.contains("bd-abc"));
     }

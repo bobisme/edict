@@ -285,7 +285,7 @@ fn build_bone_guidance(
                 bead_id, review.review_id
             ));
             guidance.diagnostic(format!(
-                "Bone {} has review {} but no associated workspace claim. Check claims with: bus claims list --agent $agent --format json",
+                "Bone {} has review {} but no associated workspace claim. Check claims with: rite claims list --agent $agent --format json",
                 bead_id, review.review_id
             ));
         }

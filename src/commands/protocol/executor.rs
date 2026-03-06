@@ -52,8 +52,8 @@ pub enum ExecutionError {
 ///
 /// Example:
 /// - Step 1: `maw ws create --random` outputs "Creating workspace 'frost-castle'"
-/// - Step 2: `bus claims stake --agent $AGENT "workspace://project/$WS"` becomes
-///   `bus claims stake --agent $AGENT "workspace://project/frost-castle"`
+/// - Step 2: `rite claims stake --agent $AGENT "workspace://project/$WS"` becomes
+///   `rite claims stake --agent $AGENT "workspace://project/frost-castle"`
 pub fn execute_steps(steps: &[String]) -> Result<ExecutionReport, ExecutionError> {
     let mut results = Vec::new();
     let mut workspace_name: Option<String> = None;
@@ -164,9 +164,9 @@ pub fn render_report(report: &ExecutionReport, format: OutputFormat) -> String {
 ///
 /// Format:
 /// ```text
-/// step 1/5  bus claims stake --agent $AGENT 'bone://edict/bd-abc'  ok
+/// step 1/5  rite claims stake --agent $AGENT 'bone://edict/bd-abc'  ok
 /// step 2/5  maw ws create --random  ok  ws=frost-castle
-/// step 3/5  bus claims stake --agent $AGENT 'workspace://edict/$WS'  FAILED
+/// step 3/5  rite claims stake --agent $AGENT 'workspace://edict/$WS'  FAILED
 /// step 4/5  (not executed)
 /// step 5/5  (not executed)
 /// ```
@@ -529,7 +529,7 @@ mod tests {
         let steps = vec![
             "maw ws create --random".to_string(),
             "echo workspace is $WS".to_string(),
-            "bus claims stake 'workspace://$WS'".to_string(),
+            "rite claims stake 'workspace://$WS'".to_string(),
         ];
 
         // Mock workspace name extraction
@@ -545,7 +545,7 @@ mod tests {
         assert_eq!(step2_with_sub, "echo workspace is frost-castle");
         assert_eq!(
             step3_with_sub,
-            "bus claims stake 'workspace://frost-castle'"
+            "rite claims stake 'workspace://frost-castle'"
         );
     }
 

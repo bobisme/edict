@@ -147,8 +147,8 @@ pub fn run_iteration_start(agent_override: Option<&str>) -> anyhow::Result<()> {
     println!("{}", h1(&c, &format!("Iteration Start: {}", agent)));
     println!();
 
-    // 1. Unread bus messages
-    let inbox_output = run_json_tool("bus", &["inbox", "--agent", agent, "--channels", &project]);
+    // 1. Unread rite messages
+    let inbox_output = run_json_tool("rite", &["inbox", "--agent", agent, "--channels", &project]);
     let mut unread_count = 0;
 
     if let Some(output) = &inbox_output
@@ -244,7 +244,7 @@ pub fn run_iteration_start(agent_override: Option<&str>) -> anyhow::Result<()> {
 
     // 4. Active claims
     println!("{}", h2(&c, "Active Claims"));
-    let claims_output = run_json_tool("bus", &["claims", "list", "--agent", agent, "--mine"]);
+    let claims_output = run_json_tool("rite", &["claims", "list", "--agent", agent, "--mine"]);
 
     if let Some(output) = claims_output {
         if let Ok(claims_data) = serde_json::from_str::<ClaimsResponse>(&output) {
@@ -298,7 +298,7 @@ pub fn run_iteration_start(agent_override: Option<&str>) -> anyhow::Result<()> {
             hint(
                 &c,
                 &format!(
-                    "Get unread messages and mark them as read: bus inbox --agent {} --channels {} --mark-read",
+                    "Get unread messages and mark them as read: rite inbox --agent {} --channels {} --mark-read",
                     agent, project
                 )
             )

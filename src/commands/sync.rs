@@ -225,11 +225,11 @@ impl SyncArgs {
         // Clean up legacy JS artifacts (scripts, shell hooks)
         self.cleanup_legacy_artifacts(&agents_dir, &mut changed_files);
 
-        // Migrate bus hooks from bun .mjs to edict run
-        migrate_bus_hooks(&config);
+        // Migrate rite hooks from bun .mjs to edict run
+        migrate_rite_hooks(&config);
 
-        // Migrate bus hooks from botbox: descriptions to edict: descriptions
-        migrate_botbox_bus_hooks_to_edict(&config, &project_root);
+        // Migrate rite hooks from botbox: descriptions to edict: descriptions
+        migrate_botbox_rite_hooks_to_edict(&config, &project_root);
 
         // Fix hook --cwd for maw v2 (ws/default → repo root)
         migrate_hook_cwd(&config, &project_root);
@@ -237,7 +237,7 @@ impl SyncArgs {
         // Migrate router hook claim from agent://{name}-router → agent://{name}-dev
         migrate_router_hook_claim(&config, &project_root);
 
-        // Migrate botty → vessel (config key + bus hooks)
+        // Migrate botty → vessel (config key + rite hooks)
         if !self.check {
             migrate_vessel_hooks(&config, &project_root, &config_path);
         }
@@ -698,13 +698,13 @@ impl SyncArgs {
     }
 }
 
-/// Migrate bus hooks from `botbox:` descriptions to `edict:` descriptions.
+/// Migrate rite hooks from `botbox:` descriptions to `edict:` descriptions.
 ///
 /// Finds hooks with `botbox:{name}:responder` or `botbox:{name}:reviewer-*` descriptions,
 /// removes them, and re-registers with `edict:` prefix and `edict run` commands.
 /// Called during `edict sync` on projects that were previously set up with `botbox`.
-fn migrate_botbox_bus_hooks_to_edict(config: &Config, project_root: &Path) {
-    let output = match Tool::new("bus")
+fn migrate_botbox_rite_hooks_to_edict(config: &Config, project_root: &Path) {
+    let output = match Tool::new("rite")
         .args(&["hooks", "list", "--format", "json"])
         .run()
     {
@@ -756,7 +756,7 @@ fn migrate_botbox_bus_hooks_to_edict(config: &Config, project_root: &Path) {
         };
 
         // Remove old botbox hook
-        if Tool::new("bus")
+        if Tool::new("rite")
             .args(&["hooks", "remove", id])
             .run()
             .is_err()
@@ -794,19 +794,19 @@ fn migrate_botbox_bus_hooks_to_edict(config: &Config, project_root: &Path) {
     }
 }
 
-/// Migrate bus hooks from legacy formats to current `edict run` commands with descriptions.
+/// Migrate rite hooks from legacy formats to current `edict run` commands with descriptions.
 ///
 /// Lists all hooks for this project's channel, identifies legacy hooks
 /// (bun-based, old naming, missing descriptions), removes them, and
-/// re-registers via `ensure_bus_hook` with proper descriptions for
+/// re-registers via `ensure_rite_hook` with proper descriptions for
 /// future idempotent management.
-fn migrate_bus_hooks(config: &Config) {
-    let output = match Tool::new("bus")
+fn migrate_rite_hooks(config: &Config) {
+    let output = match Tool::new("rite")
         .args(&["hooks", "list", "--format", "json"])
         .run()
     {
         Ok(o) if o.success() => o,
-        _ => return, // bus not available, skip silently
+        _ => return, // rite not available, skip silently
     };
 
     let parsed: serde_json::Value = match serde_json::from_str(&output.stdout) {
@@ -821,7 +821,7 @@ fn migrate_bus_hooks(config: &Config) {
 
     let name = &config.project.name;
     let agent = config.default_agent();
-    let env_inherit = "BOTBUS_CHANNEL,BOTBUS_MESSAGE_ID,BOTBUS_HOOK_ID,SSH_AUTH_SOCK,OTEL_EXPORTER_OTLP_ENDPOINT,TRACEPARENT";
+    let env_inherit = "RITE_CHANNEL,RITE_MESSAGE_ID,RITE_HOOK_ID,SSH_AUTH_SOCK,OTEL_EXPORTER_OTLP_ENDPOINT,TRACEPARENT";
 
     for hook in hooks {
         let id = match hook.get("id").and_then(|i| i.as_str()) {
@@ -837,7 +837,7 @@ fn migrate_bus_hooks(config: &Config) {
         }
 
         // Skip hooks that already have an edict: or botbox: description (already migrated by
-        // migrate_bus_hooks or migrate_botbox_bus_hooks_to_edict respectively)
+        // migrate_rite_hooks or migrate_botbox_rite_hooks_to_edict respectively)
         let existing_desc = hook
             .get("description")
             .and_then(|d| d.as_str())
@@ -872,9 +872,9 @@ fn migrate_bus_hooks(config: &Config) {
             .map(|w| w[1])
             .unwrap_or(".");
 
-        // Remove old hook (ensure_bus_hook handles dedup by description,
+        // Remove old hook (ensure_rite_hook handles dedup by description,
         // but these legacy hooks have no description so we remove manually)
-        let remove = Tool::new("bus").args(&["hooks", "remove", &id]).run();
+        let remove = Tool::new("rite").args(&["hooks", "remove", &id]).run();
 
         if remove.is_err() || !remove.as_ref().unwrap().success() {
             tracing::warn!(hook_id = %id, "failed to remove legacy hook");
@@ -925,7 +925,7 @@ fn migrate_bus_hooks(config: &Config) {
                 "responder",
             ]);
 
-            match crate::subprocess::ensure_bus_hook(&description, &router_args) {
+            match crate::subprocess::ensure_rite_hook(&description, &router_args) {
                 Ok(_) => println!("  Migrated router hook {id} → edict run responder"),
                 Err(e) => tracing::warn!("failed to re-register router hook: {e}"),
             }
@@ -993,7 +993,7 @@ fn migrate_bus_hooks(config: &Config) {
                 &reviewer_agent,
             ]);
 
-            match crate::subprocess::ensure_bus_hook(&description, &reviewer_args) {
+            match crate::subprocess::ensure_rite_hook(&description, &reviewer_args) {
                 Ok(_) => println!(
                     "  Migrated reviewer hook {id} → edict run reviewer-loop --agent {reviewer_agent}"
                 ),
@@ -1030,7 +1030,7 @@ fn migrate_hook_cwd(config: &Config, project_root: &Path) {
         .to_string();
     let root_str = bare_root.display().to_string();
 
-    let output = match Tool::new("bus")
+    let output = match Tool::new("rite")
         .args(&["hooks", "list", "--format", "json"])
         .run()
     {
@@ -1090,7 +1090,7 @@ fn migrate_hook_cwd(config: &Config, project_root: &Path) {
         };
 
         // Remove old hook first
-        if Tool::new("bus")
+        if Tool::new("rite")
             .args(&["hooks", "remove", id])
             .run()
             .is_err()
@@ -1134,7 +1134,7 @@ fn migrate_hook_cwd(config: &Config, project_root: &Path) {
 /// The new pattern uses `-dev` which matches the responder's own agent claim,
 /// preventing re-trigger while processing.
 fn migrate_router_hook_claim(config: &Config, project_root: &Path) {
-    let output = match Tool::new("bus")
+    let output = match Tool::new("rite")
         .args(&["hooks", "list", "--format", "json"])
         .run()
     {
@@ -1180,7 +1180,7 @@ fn migrate_router_hook_claim(config: &Config, project_root: &Path) {
         };
 
         // Remove old hook and re-register with new claim pattern
-        if Tool::new("bus")
+        if Tool::new("rite")
             .args(&["hooks", "remove", id])
             .run()
             .is_err()
@@ -1213,7 +1213,7 @@ fn migrate_router_hook_claim(config: &Config, project_root: &Path) {
     }
 }
 
-/// Migrate botty → vessel: update config key on disk and re-register bus hooks.
+/// Migrate botty → vessel: update config key on disk and re-register rite hooks.
 ///
 /// Idempotent — skips steps already done.
 fn migrate_vessel_hooks(config: &Config, project_root: &Path, config_path: &Path) {
@@ -1230,9 +1230,9 @@ fn migrate_vessel_hooks(config: &Config, project_root: &Path, config_path: &Path
     }
 
     // 2. Re-register edict hooks that still call `botty spawn` with `vessel spawn`.
-    //    ensure_bus_hook deduplicates by description, so calling register_*_hook
+    //    ensure_rite_hook deduplicates by description, so calling register_*_hook
     //    will remove the old hook and re-add it with the updated command.
-    let output = match Tool::new("bus")
+    let output = match Tool::new("rite")
         .args(&["hooks", "list", "--format", "json"])
         .run()
     {

@@ -18,7 +18,7 @@ pub(crate) const PI_EDICT_HOOKS_EXTENSION: &str =
 pub enum HooksCommand {
     /// Install/update global agent hooks in ~/.claude/settings.json
     Install {
-        /// Project root directory (for botbus hook registration only)
+        /// Project root directory (for rite hook registration only)
         #[arg(long)]
         project_root: Option<PathBuf>,
     },
@@ -66,7 +66,7 @@ impl HooksCommand {
 
 /// Install global agent hooks into ~/.claude/settings.json (and Pi extensions).
 ///
-/// If project_root is provided, also registers botbus hooks (router + reviewers).
+/// If project_root is provided, also registers rite hooks (router + reviewers).
 fn install_hooks(project_root: Option<&Path>) -> Result<()> {
     // Install global Claude Code hooks
     let home = dirs::home_dir().context("could not determine home directory")?;
@@ -79,14 +79,14 @@ fn install_hooks(project_root: Option<&Path>) -> Result<()> {
     install_pi_extension(&pi_ext_path)?;
     println!("Installed Pi extension at {}", pi_ext_path.display());
 
-    // If in a botbox project, also register botbus hooks (router + reviewers)
+    // If in a botbox project, also register rite hooks (router + reviewers)
     if let Some(root) = project_root {
         let root = resolve_project_root(Some(root))?;
         let config = load_config(&root)?;
-        register_botbus_hooks(&root, &config)?;
+        register_rite_hooks(&root, &config)?;
     } else if let Ok(root) = resolve_project_root(None) {
         if let Ok(config) = load_config(&root) {
-            register_botbus_hooks(&root, &config)?;
+            register_rite_hooks(&root, &config)?;
         }
     }
 
@@ -178,14 +178,14 @@ fn audit_hooks(project_root: Option<&Path>, format: super::doctor::OutputFormat)
         }
     }
 
-    // Check botbus hooks (if in a botbox project)
+    // Check rite hooks (if in a botbox project)
     if let Some(root) = project_root
         .and_then(|p| resolve_project_root(Some(p)).ok())
         .or_else(|| resolve_project_root(None).ok())
     {
         if let Ok(config) = load_config(&root) {
-            if config.tools.botbus {
-                check_botbus_hooks(&root, &config, &mut issues)?;
+            if config.tools.rite {
+                check_rite_hooks(&root, &config, &mut issues)?;
             }
         }
     }
@@ -230,7 +230,7 @@ fn run_hook(hook_name: &str, release: bool) -> Result<()> {
         "session-end" => crate::hooks::run_session_end(),
         // Backwards compat: old hook names map to new ones
         "init-agent" | "check-jj" => crate::hooks::run_session_start(),
-        "check-bus-inbox" => crate::hooks::run_post_tool_call(stdin_input.as_deref()),
+        "check-rite-inbox" => crate::hooks::run_post_tool_call(stdin_input.as_deref()),
         "claim-agent" => {
             if release {
                 crate::hooks::run_session_end()
@@ -390,8 +390,8 @@ fn validate_name(name: &str, label: &str) -> Result<()> {
     Ok(())
 }
 
-fn register_botbus_hooks(root: &Path, config: &Config) -> Result<()> {
-    if !config.tools.botbus {
+fn register_rite_hooks(root: &Path, config: &Config) -> Result<()> {
+    if !config.tools.rite {
         return Ok(());
     }
 
@@ -405,7 +405,7 @@ fn register_botbus_hooks(root: &Path, config: &Config) -> Result<()> {
         validate_name(reviewer, "reviewer name")?;
     }
 
-    let env_inherit = "BOTBUS_CHANNEL,BOTBUS_MESSAGE_ID,BOTBUS_HOOK_ID,SSH_AUTH_SOCK,OTEL_EXPORTER_OTLP_ENDPOINT,TRACEPARENT";
+    let env_inherit = "RITE_CHANNEL,RITE_MESSAGE_ID,RITE_HOOK_ID,SSH_AUTH_SOCK,OTEL_EXPORTER_OTLP_ENDPOINT,TRACEPARENT";
     let root_str = root.display().to_string();
 
     // Register router hook (claim-based)
@@ -453,7 +453,7 @@ fn register_botbus_hooks(root: &Path, config: &Config) -> Result<()> {
         "responder",
     ]);
 
-    match crate::subprocess::ensure_bus_hook(&description, &router_args) {
+    match crate::subprocess::ensure_rite_hook(&description, &router_args) {
         Ok((action, _)) => println!("Router hook {action} for #{channel}"),
         Err(e) => eprintln!("Warning: failed to register router hook: {e}"),
     }
@@ -510,7 +510,7 @@ fn register_botbus_hooks(root: &Path, config: &Config) -> Result<()> {
             &reviewer_agent,
         ]);
 
-        match crate::subprocess::ensure_bus_hook(&desc, &reviewer_args) {
+        match crate::subprocess::ensure_rite_hook(&desc, &reviewer_args) {
             Ok((action, _)) => println!("Reviewer hook for @{reviewer_agent} {action}"),
             Err(e) => {
                 eprintln!("Warning: failed to register reviewer hook for @{reviewer_agent}: {e}")
@@ -521,8 +521,8 @@ fn register_botbus_hooks(root: &Path, config: &Config) -> Result<()> {
     Ok(())
 }
 
-fn check_botbus_hooks(root: &Path, config: &Config, issues: &mut Vec<String>) -> Result<()> {
-    let output = run_command("bus", &["hooks", "list", "--format", "json"], Some(root));
+fn check_rite_hooks(root: &Path, config: &Config, issues: &mut Vec<String>) -> Result<()> {
+    let output = run_command("rite", &["hooks", "list", "--format", "json"], Some(root));
 
     let hooks_data = match output {
         Ok(json) => serde_json::from_str::<serde_json::Value>(&json).ok(),
@@ -530,7 +530,7 @@ fn check_botbus_hooks(root: &Path, config: &Config, issues: &mut Vec<String>) ->
     };
 
     if hooks_data.is_none() {
-        issues.push("Failed to fetch botbus hooks".to_string());
+        issues.push("Failed to fetch rite hooks".to_string());
         return Ok(());
     }
 
@@ -548,7 +548,7 @@ fn check_botbus_hooks(root: &Path, config: &Config, issues: &mut Vec<String>) ->
 
     if !has_router {
         issues.push(format!(
-            "Missing botbus router hook (claim: {router_claim})"
+            "Missing rite router hook (claim: {router_claim})"
         ));
     }
 
@@ -562,7 +562,7 @@ fn check_botbus_hooks(root: &Path, config: &Config, issues: &mut Vec<String>) ->
         });
 
         if !has_reviewer {
-            issues.push(format!("Missing botbus reviewer hook for @{mention_name}"));
+            issues.push(format!("Missing rite reviewer hook for @{mention_name}"));
         }
     }
 

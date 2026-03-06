@@ -40,12 +40,12 @@ impl WorkerLoop {
         // Agent name: CLI arg > auto-generated (empty for worker)
         let agent = agent.unwrap_or_default();
 
-        // Set AGENT and BOTBUS_AGENT env so spawned tools resolve identity correctly
+        // Set AGENT and RITE_AGENT env so spawned tools resolve identity correctly
         // SAFETY: single-threaded at this point in startup, before spawning any threads
         if !agent.is_empty() {
             unsafe {
                 std::env::set_var("AGENT", &agent);
-                std::env::set_var("BOTBUS_AGENT", &agent);
+                std::env::set_var("RITE_AGENT", &agent);
             }
         }
 
@@ -264,8 +264,8 @@ then STOP. Do not start a second task — the outer loop handles iteration."#
        Create review with reviewer assignment (only if none exists):
          - maw exec $WS -- seal reviews create --agent {agent} --title "<id>: <title>" --description "<summary>" --reviewers {project}-security
          - IMMEDIATELY record: maw exec default -- bn bone comment add <id> "Review created: <review-id> in workspace $WS"
-       bus statuses set --agent {agent} "Review: <review-id>".
-       Spawn reviewer via @mention: bus send --agent {agent} {project} "Review requested: <review-id> for <id> @{project}-security" -L review-request
+       rite statuses set --agent {agent} "Review: <review-id>".
+       Spawn reviewer via @mention: rite send --agent {agent} {project} "Review requested: <review-id> for <id> @{project}-security" -L review-request
      Do NOT close the bone. Do NOT merge. Do NOT release claims.
      Output: <promise>COMPLETE</promise>
      STOP this iteration.
@@ -282,8 +282,8 @@ then STOP. Do not start a second task — the outer loop handles iteration."#
    RISK:CRITICAL PATH — Security review + human approval required:
      Same as risk:high, but ALSO:
      - Add to review description: "risk:critical — REQUIRES HUMAN APPROVAL before merge."
-     - Post to bus requesting human approval:
-       bus send --agent {agent} {project} "risk:critical review for <id>: requires human approval before merge. {critical_approvers}" -L review-request
+     - Post to rite requesting human approval:
+       rite send --agent {agent} {project} "risk:critical review for <id>: requires human approval before merge. {critical_approvers}" -L review-request
      STOP this iteration."#,
                 agent = self.agent,
                 project = self.project,
@@ -306,8 +306,8 @@ then STOP. Do not start a second task — the outer loop handles iteration."#
    Read the output carefully. If status is Ready, run the suggested commands.
    If it fails (exit 1 = command unavailable), fall back to manual finish:
      Close bone: maw exec default -- bn done <id> --reason "Completed"
-     Announce: bus send --agent {agent} {project} "Completed <id>: <title>" -L task-done
-     Release bone claim: bus claims release --agent {agent} "bone://{project}/<id>"
+     Announce: rite send --agent {agent} {project} "Completed <id>: <title>" -L task-done
+     Release bone claim: rite claims release --agent {agent} "bone://{project}/<id>"
      Do NOT merge the workspace — the lead dev will handle merging via the merge protocol.
      Do NOT run the release check — the lead handles releases.
    Output: <promise>COMPLETE</promise>"#,
@@ -323,13 +323,13 @@ then STOP. Do not start a second task — the outer loop handles iteration."#
      If a review was conducted:
        maw exec default -- seal reviews mark-merged <review-id> --agent {agent}.
      RISK:CRITICAL CHECK — Before merging a risk:critical bone:
-       Verify human approval exists: bus history {project} -n 50 -L review-request | look for approval message referencing this bone/review from an authorized approver.
-       If no approval found, do NOT merge. Post: bus send --agent {agent} {project} "Waiting for human approval on risk:critical <id>" -L review-request. STOP.
-       If approval found, record it: maw exec default -- bn bone comment add <id> "Human approval: <approver> via bus message <msg-id>"
+       Verify human approval exists: rite history {project} -n 50 -L review-request | look for approval message referencing this bone/review from an authorized approver.
+       If no approval found, do NOT merge. Post: rite send --agent {agent} {project} "Waiting for human approval on risk:critical <id>" -L review-request. STOP.
+       If approval found, record it: maw exec default -- bn bone comment add <id> "Human approval: <approver> via rite message <msg-id>"
      maw exec default -- bn bone comment add <id> "Completed by {agent}".
      maw exec default -- bn done <id> --reason "Completed" --suggest-next.
-     bus send --agent {agent} {project} "Completed <id>: <title>" -L task-done.
-     bus claims release --agent {agent} "bone://{project}/<id>".
+     rite send --agent {agent} {project} "Completed <id>: <title>" -L task-done.
+     rite claims release --agent {agent} "bone://{project}/<id>".
      Keep workspace claim — the lead will merge it.
    STOP — do not proceed to RELEASE CHECK (only leads check for releases after merging)."#,
                 agent = self.agent,
@@ -347,9 +347,9 @@ then STOP. Do not start a second task — the outer loop handles iteration."#
         format!(
             r#"You are worker agent "{agent}" for project "{project}".
 
-IMPORTANT: Use --agent {agent} on ALL bus and seal commands. bn resolves agent identity from $AGENT/$BOTBUS_AGENT env automatically. Set EDICT_PROJECT={project}.
+IMPORTANT: Use --agent {agent} on ALL rite and seal commands. bn resolves agent identity from $AGENT/$RITE_AGENT env automatically. Set EDICT_PROJECT={project}.
 
-CRITICAL - HUMAN MESSAGE PRIORITY: If you see a system reminder with "STOP:" showing unread bus messages, these are from humans or other agents trying to reach you. IMMEDIATELY check inbox and respond before continuing your current task. Human questions, clarifications, and redirects take priority over heads-down work.
+CRITICAL - HUMAN MESSAGE PRIORITY: If you see a system reminder with "STOP:" showing unread rite messages, these are from humans or other agents trying to reach you. IMMEDIATELY check inbox and respond before continuing your current task. Human questions, clarifications, and redirects take priority over heads-down work.
 
 COMMAND PATTERN — maw exec: All bn commands run in the default workspace. All seal commands run in their workspace.
   bn:   maw exec default -- bn <args>
@@ -369,7 +369,7 @@ At the end of your work, output exactly one of these completion signals:
 0. RESUME CHECK (do this FIRST):
    Try protocol command: edict protocol resume --agent {agent}
    If it fails (exit 1 = command unavailable), fall back to manual resume check:
-     Run: bus claims list --agent {agent} --mine
+     Run: rite claims list --agent {agent} --mine
      If you hold a bone:// claim, you have an in-progress bone from a previous iteration.
      - Run: maw exec default -- bn comments <bone-id> to understand what was done before and what remains.
      - Look for workspace info in comments (workspace name and path).
@@ -384,7 +384,7 @@ At the end of your work, output exactly one of these completion signals:
             - Reply: maw exec $WS -- seal reply <thread-id> --agent {agent} "Fixed: <what you did>"
             - Resolve: maw exec $WS -- seal threads resolve <thread-id> --agent {agent}
          3. Re-request: maw exec $WS -- seal reviews request <review-id> --reviewers {project}-security --agent {agent}
-         5. Announce: bus send --agent {agent} {project} "Review updated: <review-id> — addressed feedback @{project}-security" -L review-response
+         5. Announce: rite send --agent {agent} {project} "Review updated: <review-id> — addressed feedback @{project}-security" -L review-response
          STOP this iteration — wait for re-review.
        * If PENDING (no votes yet): STOP this iteration. Wait for the reviewer.
        * If review not found: DO NOT merge or create a new review. The reviewer may still be starting up (hooks have latency). STOP this iteration and wait. Only create a new review if the workspace was destroyed AND 3+ iterations have passed since the review comment.
@@ -396,11 +396,11 @@ At the end of your work, output exactly one of these completion signals:
      If no active claims: proceed to step 1 (INBOX).
 
 1. INBOX (do this before triaging):
-   Run: bus inbox --agent {agent} --channels {project} --mark-read
+   Run: rite inbox --agent {agent} --channels {project} --mark-read
    For each message:
    - Task request (-L task-request or asks for work): create a bone with maw exec default -- bn create.
-   - Status check or question: reply on bus, do NOT create a bone.
-   - Feedback (-L feedback): if it contains a bug report, feature request, or actionable work — create a bone. Evaluate critically: is this a real issue? Is it well-scoped? Set priority accordingly. Then acknowledge on bus.
+   - Status check or question: reply on rite, do NOT create a bone.
+   - Feedback (-L feedback): if it contains a bug report, feature request, or actionable work — create a bone. Evaluate critically: is this a real issue? Is it well-scoped? Set priority accordingly. Then acknowledge on rite.
    - Announcements from other agents ("Working on...", "Completed...", "online"): ignore, no action.
    - Duplicate of existing bone: do NOT create another bone, note it covers the request.
 
@@ -415,7 +415,7 @@ At the end of your work, output exactly one of these completion signals:
    Any agent can escalate risk upward. Downgrades require lead approval with justification comment.
    Use maw exec default -- bn --robot-next to pick exactly one small task. If the task is large, break it down with
    maw exec default -- bn create + bn triage dep add, then bn next again. If a bone is claimed
-   (bus claims check --agent {agent} "bone://{project}/<id>"), skip it.
+   (rite claims check --agent {agent} "bone://{project}/<id>"), skip it.
 
    MISSION CONTEXT: After picking a bone, check if it has a mission:bd-xxx label (visible in bn show output).
    If it does, read the mission bone for shared context:
@@ -425,51 +425,51 @@ At the end of your work, output exactly one of these completion signals:
    Use this context to understand how your work fits into the larger effort.
 
    SIBLING COORDINATION (missions only):
-   When working on a mission bone, you share the codebase with sibling workers. Coordinate through bus:
+   When working on a mission bone, you share the codebase with sibling workers. Coordinate through rite:
 
    READ siblings: Before editing a file listed in EDICT_FILE_HINTS as owned by a sibling, and periodically
    during work (~every 5 minutes), check for sibling messages:
-     bus history {project} -n 10 -L "mission:<mission-id>" --since "5 minutes ago"
+     rite history {project} -n 10 -L "mission:<mission-id>" --since "5 minutes ago"
    Look for coord:interface messages — these tell you about API/schema/config changes siblings made.
    If a sibling changed something you depend on, adapt your implementation to match.
 
    POST discoveries: When you change an API, schema, config format, shared type, or exported interface
    that siblings might depend on, announce it immediately:
-     bus send --agent {agent} {project} "<file>: <what changed and why>" -L coord:interface -L "mission:<mission-id>"
+     rite send --agent {agent} {project} "<file>: <what changed and why>" -L coord:interface -L "mission:<mission-id>"
 
-   COORDINATION LABELS on bus messages:
+   COORDINATION LABELS on rite messages:
    - coord:interface — API/schema/config changes that affect siblings
-   - coord:blocker — You need something from a sibling: bus send --agent {agent} {project} "Blocked by <sibling-bone>: <reason>" -L coord:blocker -L "mission:<mission-id>"
-   - task-done — Signal completion: bus send --agent {agent} {project} "Completed <id>" -L task-done -L "mission:<mission-id>"
+   - coord:blocker — You need something from a sibling: rite send --agent {agent} {project} "Blocked by <sibling-bone>: <reason>" -L coord:blocker -L "mission:<mission-id>"
+   - task-done — Signal completion: rite send --agent {agent} {project} "Completed <id>" -L task-done -L "mission:<mission-id>"
 
 3. START: Try protocol command: edict protocol start <bone-id> --agent {agent}
    Read the output carefully. If status is Ready, run the suggested commands.
    If it fails (exit 1 = command unavailable), fall back to manual start:
      maw exec default -- bn do <id>.
-     bus claims stake --agent {agent} "bone://{project}/<id>" -m "<id>".
+     rite claims stake --agent {agent} "bone://{project}/<id>" -m "<id>".
      Create workspace: run maw ws create --random. Note the workspace name AND absolute path
      from the output (e.g., name "frost-castle", path "/abs/path/ws/frost-castle").
      Store the name as WS and the absolute path as WS_PATH.
      IMPORTANT: All file operations (Read, Write, Edit) must use the absolute WS_PATH.
      For commands in the workspace: maw exec $WS -- <command>.
      Do NOT cd into the workspace and stay there — the workspace is destroyed during finish.
-     bus claims stake --agent {agent} "workspace://{project}/$WS" -m "<id>".
+     rite claims stake --agent {agent} "workspace://{project}/$WS" -m "<id>".
      maw exec default -- bn bone comment add <id> "Started in workspace $WS ($WS_PATH)".
-     bus statuses set --agent {agent} "Working: <id>" --ttl 30m.
-     Announce: bus send --agent {agent} {project} "Working on <id>: <title>" -L task-claim.
+     rite statuses set --agent {agent} "Working: <id>" --ttl 30m.
+     Announce: rite send --agent {agent} {project} "Working on <id>: <title>" -L task-claim.
 
 4. WORK: maw exec default -- bn show <id>, then implement the task in the workspace.
-   If this bone is part of a mission, check bus for sibling updates BEFORE starting implementation:
-     bus history {project} -n 10 -L "mission:<mission-id>" -L coord:interface
+   If this bone is part of a mission, check rite for sibling updates BEFORE starting implementation:
+     rite history {project} -n 10 -L "mission:<mission-id>" -L coord:interface
    Adapt your approach if siblings have already defined interfaces you need to consume or conform to.
    Add at least one progress comment: maw exec default -- bn bone comment add <id> "Progress: ...".
 
 5. STUCK CHECK: If same approach tried twice, info missing, or tool fails repeatedly — you are
    stuck. maw exec default -- bn bone comment add <id> "Blocked: <details>".
-   bus statuses set --agent {agent} "Blocked: <short reason>".
-   bus send --agent {agent} {project} "Stuck on <id>: <reason>" -L task-blocked.
+   rite statuses set --agent {agent} "Blocked: <short reason>".
+   rite send --agent {agent} {project} "Stuck on <id>: <reason>" -L task-blocked.
    maw exec default -- bn bone tag <id> blocked.
-   Release: bus claims release --agent {agent} "bone://{project}/<id>".
+   Release: rite claims release --agent {agent} "bone://{project}/<id>".
    Output: <promise>BLOCKED</promise>
    Stop this cycle.
 
@@ -480,18 +480,18 @@ At the end of your work, output exactly one of these completion signals:
 8. CLEANUP (always run before stopping, even on error or BLOCKED):
    Try protocol command: edict protocol cleanup --agent {agent}
    If it fails (exit 1 = command unavailable), fall back to manual cleanup:
-     bus statuses clear --agent {agent}
+     rite statuses clear --agent {agent}
      (bn is event-sourced — no sync needed)
 
 Key rules:
 - Exactly one small task per cycle.
 - Always finish or release before stopping.
 - If claim denied, pick something else.
-- All bus and seal commands use --agent {agent}.
+- All rite and seal commands use --agent {agent}.
 - All file operations use the absolute workspace path from maw ws create output. Do NOT cd into the workspace and stay there.
 - All bn commands: maw exec default -- bn ...
 - All seal/git commands in a workspace: maw exec $WS -- seal/git ...
-- If a tool behaves unexpectedly, report it: bus send --agent {agent} {project} "Tool issue: <details>" -L tool-issue.
+- If a tool behaves unexpectedly, report it: rite send --agent {agent} {project} "Tool issue: <details>" -L tool-issue.
 - STOP after completing one task or determining no work. Do not loop.
 - Always output <promise>COMPLETE</promise> or <promise>BLOCKED</promise> at the end.
 - RISK LABELS: Check bone risk labels before review. REVIEW={review_status}. {review_note}"#,
@@ -775,8 +775,8 @@ fn cleanup(agent: &str, project: &str) -> anyhow::Result<()> {
         }
     }
 
-    // Sign off on bus
-    let _ = Tool::new("bus")
+    // Sign off on rite
+    let _ = Tool::new("rite")
         .args(&[
             "send",
             "--agent",
@@ -790,13 +790,13 @@ fn cleanup(agent: &str, project: &str) -> anyhow::Result<()> {
         .run();
 
     // Clear status
-    let _ = Tool::new("bus")
+    let _ = Tool::new("rite")
         .args(&["statuses", "clear", "--agent", agent])
         .new_process_group()
         .run();
 
     // Release agent claim
-    let _ = Tool::new("bus")
+    let _ = Tool::new("rite")
         .args(&[
             "claims",
             "release",
@@ -808,7 +808,7 @@ fn cleanup(agent: &str, project: &str) -> anyhow::Result<()> {
         .run();
 
     // Release all claims
-    let _ = Tool::new("bus")
+    let _ = Tool::new("rite")
         .args(&["claims", "release", "--agent", agent, "--all"])
         .new_process_group()
         .run();
@@ -827,7 +827,7 @@ pub fn run_worker_loop(
 ) -> anyhow::Result<()> {
     let worker = WorkerLoop::new(project_root, agent, model)?;
 
-    // Announce startup on bus (survives vessel log eviction)
+    // Announce startup on rite (survives vessel log eviction)
     let bone_info = worker
         .dispatched_bone
         .as_deref()
@@ -836,7 +836,7 @@ pub fn run_worker_loop(
         .dispatched_workspace
         .as_deref()
         .unwrap_or("(none)");
-    let _ = Tool::new("bus")
+    let _ = Tool::new("rite")
         .args(&[
             "send",
             "--agent",
@@ -850,14 +850,14 @@ pub fn run_worker_loop(
 
     let status = worker.run_once();
 
-    // Announce exit on bus regardless of outcome
+    // Announce exit on rite regardless of outcome
     let exit_msg = match &status {
         Ok(LoopStatus::Complete) => format!("Worker exited OK: {bone_info} COMPLETE"),
         Ok(LoopStatus::Blocked) => format!("Worker exited OK: {bone_info} BLOCKED"),
         Ok(LoopStatus::Unknown) => format!("Worker exited: {bone_info} (no completion signal)"),
         Err(e) => format!("Worker exited ERROR: {bone_info} — {e}"),
     };
-    let _ = Tool::new("bus")
+    let _ = Tool::new("rite")
         .args(&[
             "send",
             "--agent",

@@ -13,9 +13,9 @@ Once beads exist, the worker loop takes over. Skip these steps if beads are alre
 
 ## Identity
 
-If spawned by `agent-loop.sh`, your identity is provided as `$AGENT` (a random name like `storm-raven`). Otherwise, adopt `<project>-dev` as your name (e.g., `botbox-dev`). Run `bus whoami --agent $AGENT` first to confirm; if it returns a name, use it. It will generate a name if one isn't set.
+If spawned by `agent-loop.sh`, your identity is provided as `$AGENT` (a random name like `storm-raven`). Otherwise, adopt `<project>-dev` as your name (e.g., `botbox-dev`). Run `rite whoami --agent $AGENT` first to confirm; if it returns a name, use it. It will generate a name if one isn't set.
 
-Your project channel is `$BOTBOX_PROJECT`. All bus commands must include `--agent $AGENT`. All announcements go to `$BOTBOX_PROJECT` with appropriate labels (e.g., `-L task-claim`, `-L review-request`).
+Your project channel is `$BOTBOX_PROJECT`. All rite commands must include `--agent $AGENT`. All announcements go to `$BOTBOX_PROJECT` with appropriate labels (e.g., `-L task-claim`, `-L review-request`).
 
 **Important:** Run all `br` and `bv` commands via `maw exec default --` (e.g., `maw exec default -- br update ...`). This ensures they always run in the default workspace context. Run `crit` commands via `maw exec $WS --` to target the correct workspace.
 
@@ -30,7 +30,7 @@ Before triaging new work, check if you have unfinished work from a previous sess
 - `maw exec default -- br list --status in_progress --assignee $AGENT --json` — shows all beads marked in_progress that you own
 - If any beads are found, you have unfinished work. For each bead:
   1. Read the bead and its comments: `maw exec default -- br show <bead-id>` and `maw exec default -- br comments <bead-id>`
-  2. Check if you still hold claims: `bus claims list --agent $AGENT --mine`
+  2. Check if you still hold claims: `rite claims list --agent $AGENT --mine`
   3. Determine the state:
      - **If "Review requested: <review-id>" comment exists:**
        - Check review status: `maw exec $WS -- crit review <review-id>`
@@ -48,7 +48,7 @@ Before triaging new work, check if you have unfinished work from a previous sess
 
 **Second, check for active claims not covered by in_progress beads:**
 
-- `bus claims list --agent $AGENT --mine` — look for `bead://` claims not already handled above
+- `rite claims list --agent $AGENT --mine` — look for `bead://` claims not already handled above
 - This catches edge cases where you hold a claim but the bead status wasn't updated
 
 **If no unfinished work found:** proceed to step 1 (Triage).
@@ -56,9 +56,9 @@ Before triaging new work, check if you have unfinished work from a previous sess
 ### 1. Triage — find and groom work, then pick one small task (always run this, even if you already know what to work on)
 
 - **Mission context**: If a bead has a `mission:bd-xxx` label, you are working as part of a mission. Check the mission bead (`maw exec default -- br show <mission-id>`) for shared outcome, constraints, and sibling context before starting work.
-- Check inbox: `bus inbox --agent $AGENT --channels $BOTBOX_PROJECT --mark-read`
+- Check inbox: `rite inbox --agent $AGENT --channels $BOTBOX_PROJECT --mark-read`
 - For messages that request work, create beads: `maw exec default -- br create --actor $AGENT --owner $AGENT --title="..." --description="..." --type=task --priority=2`
-- For questions or status checks, reply directly: `bus send --agent $AGENT <channel> "<reply>" -L triage-reply`
+- For questions or status checks, reply directly: `rite send --agent $AGENT <channel> "<reply>" -L triage-reply`
 - Check ready beads: `maw exec default -- br ready`
 - If no ready beads and no new beads from inbox, stop with message "No work available."
 - **Check blocked beads** for resolved blockers: if a bead was blocked pending information or an upstream fix that has since landed, unblock it with `maw exec default -- br update --actor $AGENT <id> --status=open` and a comment noting why.
@@ -72,17 +72,17 @@ Before triaging new work, check if you have unfinished work from a previous sess
   5. **Comment your decomposition plan** on the parent bead: what you created, why, and any decisions you made (e.g., "Using in-memory storage instead of SQLite because no DB crate available").
   6. **Verify** with `maw exec default -- br dep tree <parent>` — the graph should have at least one point where multiple tasks are unblocked simultaneously.
   7. Run `maw exec default -- bv --robot-next` again. Repeat until you have exactly one small, atomic task.
-- If the bead is claimed by another agent (`bus claims check --agent $AGENT "bead://$BOTBOX_PROJECT/<id>"`), skip it and pick the next recommendation. If all are claimed, stop with "No work available."
+- If the bead is claimed by another agent (`rite claims check --agent $AGENT "bead://$BOTBOX_PROJECT/<id>"`), skip it and pick the next recommendation. If all are claimed, stop with "No work available."
 
 ### 2. Start — claim and set up
 
 - `maw exec default -- br update --actor $AGENT <bead-id> --status=in_progress --owner=$AGENT`
-- `bus claims stake --agent $AGENT "bead://$BOTBOX_PROJECT/<bead-id>" -m "<bead-id>"`
+- `rite claims stake --agent $AGENT "bead://$BOTBOX_PROJECT/<bead-id>" -m "<bead-id>"`
 - `maw ws create --random` — note the workspace name (e.g., `frost-castle`). Store as `$WS`.
 - **All file operations must use the workspace path** `ws/$WS/`. Use absolute paths for Read, Write, and Edit (e.g., `$PROJECT_ROOT/ws/$WS/src/file.rs`). For commands: `maw exec $WS -- <command>`.
 - **No `jj`**: this workflow is Git + maw. Keep workspace operations in `maw` and run `git` only via `maw exec $WS -- ...`.
-- `bus claims stake --agent $AGENT "workspace://$BOTBOX_PROJECT/$WS" -m "<bead-id>"`
-- `bus send --agent $AGENT $BOTBOX_PROJECT "Working on <bead-id>: <bead-title>" -L task-claim`
+- `rite claims stake --agent $AGENT "workspace://$BOTBOX_PROJECT/$WS" -m "<bead-id>"`
+- `rite send --agent $AGENT $BOTBOX_PROJECT "Working on <bead-id>: <bead-title>" -L task-claim`
 
 ### 3. Work — implement the task
 
@@ -99,12 +99,12 @@ You are stuck if: you attempted the same approach twice without progress, you ca
 
 If stuck:
 - Add a detailed comment with what you tried and where you got blocked: `maw exec default -- br comments add --actor $AGENT --author $AGENT <bead-id> "Blocked: ..."`
-- Post in the project channel: `bus send --agent $AGENT $BOTBOX_PROJECT "Stuck on <bead-id>: <summary>" -L task-blocked`
+- Post in the project channel: `rite send --agent $AGENT $BOTBOX_PROJECT "Stuck on <bead-id>: <summary>" -L task-blocked`
 - **If a tool behaved unexpectedly**, ask the responsible project for help (see [cross-channel](cross-channel.md)):
-  1. Post to their channel: `bus send --agent $AGENT <tool-project> "Getting <error> when running <command>. Context: <details>. @<project>-dev" -L feedback`
+  1. Post to their channel: `rite send --agent $AGENT <tool-project> "Getting <error> when running <command>. Context: <details>. @<project>-dev" -L feedback`
   2. Create a local tracking bead: `maw exec default -- br create --actor $AGENT --owner $AGENT --title="[tracking] Asked #<project> about <issue>" --labels tracking --type=task --priority=3`
 - `maw exec default -- br update --actor $AGENT <bead-id> --status=blocked`
-- Release the bead claim: `bus claims release --agent $AGENT "bead://$BOTBOX_PROJECT/<bead-id>"`
+- Release the bead claim: `rite claims release --agent $AGENT "bead://$BOTBOX_PROJECT/<bead-id>"`
 - Move on to triage again (go to step 1).
 
 **Tip**: Before declaring stuck, try `cass search "your error or problem"` to find how similar issues were solved in past sessions.
@@ -136,23 +136,23 @@ After completing the implementation:
   - Explain what changed and why, not just a summary
 - Add a comment to the bead: `maw exec default -- br comments add --actor $AGENT --author $AGENT <bead-id> "Review requested: <review-id>, workspace: $WS (ws/$WS/)"`
 - **If requesting a specialist reviewer** (e.g., security):
-  - Announce with @mention to trigger spawn: `bus send --agent $AGENT $BOTBOX_PROJECT "Review requested: <review-id> for <bead-id>, @<reviewer>" -L review-request`
+  - Announce with @mention to trigger spawn: `rite send --agent $AGENT $BOTBOX_PROJECT "Review requested: <review-id> for <bead-id>, @<reviewer>" -L review-request`
   - The @mention triggers auto-spawn hooks
 - **If requesting a general code review**:
   - Spawn a subagent to perform the review
-  - Announce: `bus send --agent $AGENT $BOTBOX_PROJECT "Review requested: <review-id> for <bead-id>, spawned subagent for review" -L review-request`
+  - Announce: `rite send --agent $AGENT $BOTBOX_PROJECT "Review requested: <review-id> for <bead-id>, spawned subagent for review" -L review-request`
 - **STOP this iteration.** Do NOT close the bead, merge the workspace, or release claims. The reviewer will process the review, and you will resume in the next iteration via step 0.
 
 **risk:high** — Security review with failure-mode checklist:
 - Create crit review with security reviewer: `maw exec $WS -- crit reviews create --agent $AGENT --title "<bead-title>" --description "For <bead-id>: <summary>. risk:high — failure-mode checklist required. Please answer: 1) What failure modes exist? 2) What edge cases need validation? 3) How can we roll back if this breaks? 4) What monitoring/alerts should we add? 5) What input validation is needed?" --reviewers $BOTBOX_PROJECT-security`
 - Add comment to bead: `maw exec default -- br comments add --actor $AGENT --author $AGENT <bead-id> "Review requested: <review-id>, workspace: $WS (ws/$WS/)"`
-- Announce with @mention: `bus send --agent $AGENT $BOTBOX_PROJECT "Review requested: <review-id> for <bead-id>, @$BOTBOX_PROJECT-security" -L review-request`
+- Announce with @mention: `rite send --agent $AGENT $BOTBOX_PROJECT "Review requested: <review-id> for <bead-id>, @$BOTBOX_PROJECT-security" -L review-request`
 - **STOP this iteration.**
 
 **risk:critical** — Security review + human approval:
 - Create crit review with security reviewer: `maw exec $WS -- crit reviews create --agent $AGENT --title "<bead-title>" --description "For <bead-id>: <summary>. risk:critical — requires human approval before merge." --reviewers $BOTBOX_PROJECT-security`
 - Add comment to bead: `maw exec default -- br comments add --actor $AGENT --author $AGENT <bead-id> "Review requested: <review-id>, workspace: $WS (ws/$WS/)"`
-- Post to bus requesting human approval: `bus send --agent $AGENT $BOTBOX_PROJECT "risk:critical review for <bead-id>: requires human approval before merge. Review: <review-id> @<approver>" -L review-request`
+- Post to rite requesting human approval: `rite send --agent $AGENT $BOTBOX_PROJECT "risk:critical review for <bead-id>: requires human approval before merge. Review: <review-id> @<approver>" -L review-request`
   - List of approvers from `.botbox.json` → `project.criticalApprovers`
   - If no `criticalApprovers` configured, use project lead: `@$BOTBOX_PROJECT-lead`
 - **STOP this iteration.**
@@ -170,9 +170,9 @@ Then proceed with teardown:
 - `maw exec default -- br close --actor $AGENT <bead-id> --reason="Completed" --suggest-next`
 - `maw ws merge $WS --destroy` (if merge conflict, preserve workspace and announce; maw v0.22.0+ produces linear squashed history and auto-moves main)
 - `maw push` (if pushMain enabled in `.botbox.json`; maw v0.24.0+ handles bookmark and push)
-- `bus claims release --agent $AGENT --all`
+- `rite claims release --agent $AGENT --all`
 - `maw exec default -- br sync --flush-only`
-- `bus send --agent $AGENT $BOTBOX_PROJECT "Completed <bead-id>: <bead-title>" -L task-done`
+- `rite send --agent $AGENT $BOTBOX_PROJECT "Completed <bead-id>: <bead-title>" -L task-done`
 
 ### 7. Release check — lead responsibility
 
@@ -187,4 +187,4 @@ Go back to step 0. The loop ends when triage finds no work and no reviews are pe
 - **Exactly one small task at a time.** Never work on multiple beads concurrently.
 - **Always finish or release before picking new work.** Context must be clear.
 - **If claim is denied, back off and pick something else.** Never force or wait.
-- **All bus commands use `--agent $AGENT`.**
+- **All rite commands use `--agent $AGENT`.**

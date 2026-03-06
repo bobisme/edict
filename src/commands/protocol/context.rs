@@ -1,6 +1,6 @@
 //! ProtocolContext: cross-tool shared state collector.
 //!
-//! Gathers bus claims, maw workspaces, and bone/review status in a single
+//! Gathers rite claims, maw workspaces, and bone/review status in a single
 //! structure to avoid duplicating subprocess calls across protocol commands.
 //! Lazy evaluation: state is fetched on-demand via subprocess calls, not upfront.
 
@@ -10,7 +10,7 @@ use super::adapters::{self, BoneInfo, Claim, ReviewDetail, ReviewDetailResponse,
 
 /// Cross-tool state collector for protocol commands.
 ///
-/// Provides cached access to bus claims and maw workspaces (fetched on construction),
+/// Provides cached access to rite claims and maw workspaces (fetched on construction),
 /// plus lazy on-demand methods for bone/review status.
 #[derive(Debug, Clone)]
 pub struct ProtocolContext {
@@ -22,17 +22,17 @@ pub struct ProtocolContext {
 }
 
 impl ProtocolContext {
-    /// Collect shared state from bus and maw.
+    /// Collect shared state from rite and maw.
     ///
     /// Calls:
-    /// - `bus claims list --format json --agent <agent>`
+    /// - `rite claims list --format json --agent <agent>`
     /// - `maw ws list --format json`
     ///
     /// Returns error if either subprocess fails or output is unparseable.
     pub fn collect(project: &str, agent: &str) -> Result<Self, ContextError> {
-        // Fetch bus claims
+        // Fetch rite claims
         let claims_output = Self::run_subprocess(&[
-            "bus", "claims", "list", "--agent", agent, "--format", "json",
+            "rite", "claims", "list", "--agent", agent, "--format", "json",
         ])?;
         let claims_resp = adapters::parse_claims(&claims_output)
             .map_err(|e| ContextError::ParseFailed(format!("claims: {e}")))?;
@@ -96,10 +96,10 @@ impl ProtocolContext {
     ///
     /// Tries memo-based correlation first (most precise), then falls back to
     /// finding any non-default workspace claim from this agent. The fallback
-    /// is needed because `bus claims list --format json` currently omits the
+    /// is needed because `rite claims list --format json` currently omits the
     /// memo field, making memo-based lookup fail.
     pub fn workspace_for_bone(&self, bone_id: &str) -> Option<&str> {
-        // First pass: memo-based correlation (precise, works when bus includes memo)
+        // First pass: memo-based correlation (precise, works when rite includes memo)
         for claim in &self.claims {
             if claim.agent == self.agent {
                 if let Some(memo) = &claim.memo {
@@ -192,7 +192,7 @@ impl ProtocolContext {
     ///
     /// Returns the conflicting claim if another agent holds the bone.
     pub fn check_bone_claim_conflict(&self, bone_id: &str) -> Result<Option<String>, ContextError> {
-        let output = Self::run_subprocess(&["bus", "claims", "list", "--format", "json"])?;
+        let output = Self::run_subprocess(&["rite", "claims", "list", "--format", "json"])?;
         let claims_resp = adapters::parse_claims(&output)
             .map_err(|e| ContextError::ParseFailed(format!("all claims: {e}")))?;
 
@@ -412,7 +412,7 @@ mod tests {
 
     #[test]
     fn test_workspace_for_bone_fallback_no_memo() {
-        // When bus omits memo from JSON, fallback finds workspace by agent match
+        // When rite omits memo from JSON, fallback finds workspace by agent match
         let json = r#"{"claims": [
             {"agent": "dev-agent", "patterns": ["bone://proj/bd-abc"], "active": true},
             {"agent": "dev-agent", "patterns": ["workspace://proj/ember-tower"], "active": true}

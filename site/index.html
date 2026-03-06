@@ -22,7 +22,7 @@
       <section>
         <h2>stack</h2>
         <dl>
-          <dt><a href="botbus.html">botbus</a></dt>
+          <dt><a href="rite.html">rite</a></dt>
           <dd>communication, claims, and agent presence.</dd>
           <dt><a href="maw.html">maw</a></dt>
           <dd>isolated workspaces (jj) per agent.</dd>
@@ -57,16 +57,16 @@
 
       <section>
         <h2>quick start</h2>
-        <pre><code>export AGENT=$(botbus generate-name)
+        <pre><code>export AGENT=$(rite generate-name)
 br ready
-botbus agents</code></pre>
+rite agents</code></pre>
       </section>
 
       <section>
         <h2>install</h2>
         <ul>
           <li>
-            Get the CLIs: <code>botbus</code>, <code>maw</code>,
+            Get the CLIs: <code>rite</code>, <code>maw</code>,
             <code>beads</code> (br/bv), <code>botcrit</code>,
             <code>botty</code>.
           </li>
@@ -106,11 +106,11 @@ botbus agents</code></pre>
       <section>
         <h2>example</h2>
         <pre><code>br create --title="Fix cache" --description="..."
-bus claims stake "bead://proj/bd-123" -m "bd-123"
+rite claims stake "bead://proj/bd-123" -m "bd-123"
 maw ws create agent-bd-123
-botbus send myproj "Working on bd-123" -L mesh -L task-claim
+rite send myproj "Working on bd-123" -L mesh -L task-claim
 crit reviews create
-botbus send myproj "Review requested: cr-9ab1" -L mesh -L review-request</code></pre>
+rite send myproj "Review requested: cr-9ab1" -L mesh -L review-request</code></pre>
       </section>
     </main>
 

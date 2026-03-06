@@ -83,9 +83,9 @@ For manual sessions, use `<project>-dev` (e.g., `myapp-dev`).
 When working on a bead, stake claims to prevent conflicts:
 
 ```bash
-bus claims stake --agent $AGENT "bead://<project>/<id>" -m "<id>"
-bus claims stake --agent $AGENT "workspace://<project>/<ws>" -m "<id>"
-bus claims release --agent $AGENT --all  # when done
+rite claims stake --agent $AGENT "bead://<project>/<id>" -m "<id>"
+rite claims stake --agent $AGENT "workspace://<project>/<ws>" -m "<id>"
+rite claims release --agent $AGENT --all  # when done
 ```
 
 ### Reviews
@@ -94,7 +94,7 @@ Use `@<project>-<role>` mentions to request reviews:
 
 ```bash
 maw exec $WS -- crit reviews request <review-id> --reviewers $PROJECT-security --agent $AGENT
-bus send --agent $AGENT $PROJECT "Review requested: <review-id> @$PROJECT-security" -L review-request
+rite send --agent $AGENT $PROJECT "Review requested: <review-id> @$PROJECT-security" -L review-request
 ```
 
 The @mention triggers the auto-spawn hook for the reviewer.
@@ -103,8 +103,8 @@ The @mention triggers the auto-spawn hook for the reviewer.
 
 **Don't suffer in silence.** If a tool confuses you or behaves unexpectedly, post to its project channel.
 
-1. Find the project: `bus history projects -n 50` (the #projects channel has project registry entries)
-2. Post question or feedback: `bus send --agent $AGENT <project> "..." -L feedback`
+1. Find the project: `rite history projects -n 50` (the #projects channel has project registry entries)
+2. Post question or feedback: `rite send --agent $AGENT <project> "..." -L feedback`
 3. For bugs, create beads in their repo first
 4. **Always create a local tracking bead** so you check back later:
    ```bash

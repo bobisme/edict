@@ -1,6 +1,6 @@
 # Protocol Quality Gate Matrix
 
-**Purpose**: Cross-bead coverage gate for protocol rollout. This matrix maps each protocol feature bead to its unit, e2e/workflow (isolated BOTBUS_DATA_DIR), and diagnostics evidence. Any missing evidence blocks rollout.
+**Purpose**: Cross-bead coverage gate for protocol rollout. This matrix maps each protocol feature bead to its unit, e2e/workflow (isolated RITE_DATA_DIR), and diagnostics evidence. Any missing evidence blocks rollout.
 
 **Scope**: Core protocol command rollout (bd-307u through bd-as4h), excluding status-command enrichment (bd-2nqz and descendants, which have their own tests).
 
@@ -33,7 +33,7 @@
 - Real-world validation via agent loops ✓
 
 **Enhancement Opportunities** (not blocking):
-- Isolated E2E test suite with BOTBUS_DATA_DIR fixtures
+- Isolated E2E test suite with RITE_DATA_DIR fixtures
 - Automated prompt validation framework
 
 ---
@@ -43,7 +43,7 @@
 For each feature bead, we track:
 
 - **Unit Tests**: Module-level tests (src/commands/protocol/**/*.rs `#[test]` blocks)
-- **E2E/Workflow**: Integration tests using isolated BOTBUS_DATA_DIR
+- **E2E/Workflow**: Integration tests using isolated RITE_DATA_DIR
 - **Diagnostics**: Evidence of proper error handling, exit codes, and failure states
 - **Failure Paths**: Tests for blocked/resumable/needs-review states
 - **Fallback Handling**: Tests for command-unavailable scenarios (exit 1)
@@ -81,7 +81,7 @@ For each feature bead, we track:
 
 **Unit Tests**:
 - ✓ `src/commands/protocol/context.rs`:
-  - Context collection from bus claims + maw workspaces
+  - Context collection from rite claims + maw workspaces
   - Bead claim extraction
   - Workspace claim extraction
   - Workspace-bead correlation via memo
@@ -89,7 +89,7 @@ For each feature bead, we track:
   - JSON parsing error handling
 
 **E2E/Workflow**:
-- ✓ Requires live bus/maw data (tested via protocol command integration)
+- ✓ Requires live rite/maw data (tested via protocol command integration)
 - ✓ Used by resume, start, finish, review, cleanup commands
 
 **Diagnostics**:
@@ -189,7 +189,7 @@ For each feature bead, we track:
 
 **E2E/Workflow**:
 - ✓ Tested via dev-loop and worker-loop integration
-- ✓ Isolated BOTBUS_DATA_DIR: requires live test setup
+- ✓ Isolated RITE_DATA_DIR: requires live test setup
 
 **Diagnostics**:
 - ✓ Exit codes: 0 (ready/in-progress), 1 (command unavailable fallback)
@@ -225,7 +225,7 @@ For each feature bead, we track:
   - Bus announcement command
 
 **E2E/Workflow**:
-- ✓ Requires isolated bus + maw environment
+- ✓ Requires isolated rite + maw environment
 - ✓ Integration via worker-loop
 
 **Diagnostics**:
@@ -260,7 +260,7 @@ For each feature bead, we track:
 
 **E2E/Workflow**:
 - ✓ Integration via worker-loop review request flow
-- ✓ Requires isolated seal + bus environment
+- ✓ Requires isolated seal + rite environment
 
 **Diagnostics**:
 - ✓ Exit code 0 for success
@@ -298,7 +298,7 @@ For each feature bead, we track:
 
 **E2E/Workflow**:
 - ✓ Integration via worker-loop finish flow
-- ✓ Requires isolated bus + maw + br environment
+- ✓ Requires isolated rite + maw + br environment
 
 **Diagnostics**:
 - ✓ Exit code 0 for success
@@ -552,7 +552,7 @@ For each feature bead, we track:
 
 **E2E Coverage**:
 - Integration via dev-loop, worker-loop, reviewer-loop
-- Isolated BOTBUS_DATA_DIR testing required for full workflow validation
+- Isolated RITE_DATA_DIR testing required for full workflow validation
 - Manual testing performed during development
 
 **Failure Path Coverage**:
@@ -575,7 +575,7 @@ For each feature bead, we track:
 ## Gaps & Risks
 
 ### Current Gaps
-1. **E2E Workflow Tests**: Need isolated BOTBUS_DATA_DIR integration tests for full protocol flows (resume → start → work → review → finish)
+1. **E2E Workflow Tests**: Need isolated RITE_DATA_DIR integration tests for full protocol flows (resume → start → work → review → finish)
    - Current coverage: Integration via real agent loops (dev-loop, worker-loop)
    - Manual testing performed during development
    - Future: Add isolated E2E test suite with fixture environments
@@ -650,7 +650,7 @@ While not blocking for rollout, an isolated E2E test suite would provide additio
 ### Proposed Test Scenarios
 
 **E2E-1: Full Worker Loop with Protocol Commands**
-- Setup: Isolated BOTBUS_DATA_DIR, test project with beads
+- Setup: Isolated RITE_DATA_DIR, test project with beads
 - Flow: resume → start → work → review → finish → cleanup
 - Validation:
   - Protocol commands execute successfully

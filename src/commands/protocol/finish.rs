@@ -23,7 +23,7 @@ pub fn execute(
     config: &Config,
     format: OutputFormat,
 ) -> anyhow::Result<()> {
-    // Collect state from bus and maw
+    // Collect state from rite and maw
     let ctx = match ProtocolContext::collect(project, agent) {
         Ok(ctx) => ctx,
         Err(e) => {
@@ -69,7 +69,7 @@ pub fn execute(
     if !holds_claim {
         guidance.blocked(format!(
             "agent '{}' does not hold a claim for bone {}. \
-             Check with: bus claims list --agent {} --format json",
+             Check with: rite claims list --agent {} --format json",
             agent, bone_id, agent
         ));
         print_guidance(&guidance, format)?;
@@ -161,7 +161,7 @@ pub fn execute(
                             &required_reviewers.join(","),
                             "agent",
                         ));
-                        steps.push(shell::bus_send_cmd(
+                        steps.push(shell::rite_send_cmd(
                             "agent",
                             project,
                             &format!(
@@ -203,7 +203,7 @@ pub fn execute(
                                 .iter()
                                 .map(|r| format!("@{}", r))
                                 .collect();
-                            steps.push(shell::bus_send_cmd(
+                            steps.push(shell::rite_send_cmd(
                                 "agent",
                                 project,
                                 &format!("Review pending: {} {}", review_id, mentions.join(" ")),
@@ -234,7 +234,7 @@ pub fn execute(
                     .iter()
                     .map(|r| format!("@{}", r))
                     .collect();
-                steps.push(shell::bus_send_cmd(
+                steps.push(shell::rite_send_cmd(
                     "agent",
                     project,
                     &format!("Review requested: <review-id> {}", mentions.join(" ")),
@@ -334,8 +334,8 @@ fn build_finish_steps(
         &format!("Completed in workspace {}", workspace),
     ));
 
-    // 6. Announce completion on bus
-    steps.push(shell::bus_send_cmd(
+    // 6. Announce completion on rite
+    steps.push(shell::rite_send_cmd(
         "agent",
         project,
         &format!("Finished {}: {}", bone_id, bead_title),
@@ -468,7 +468,7 @@ mod tests {
         );
         // Should have bn done
         assert!(guidance.steps.iter().any(|s| s.contains("bn done")));
-        // Should have bus send task-done
+        // Should have rite send task-done
         assert!(guidance.steps.iter().any(|s| s.contains("task-done")));
         // Should have claims release
         assert!(guidance.steps.iter().any(|s| s.contains("claims release")));
@@ -517,11 +517,11 @@ mod tests {
         let announce_step = guidance
             .steps
             .iter()
-            .find(|s| s.contains("bus send"))
+            .find(|s| s.contains("rite send"))
             .unwrap();
         assert!(
             announce_step.contains("'\\''"),
-            "single quotes in title should be escaped in bus send"
+            "single quotes in title should be escaped in rite send"
         );
         let commit_step = guidance
             .steps

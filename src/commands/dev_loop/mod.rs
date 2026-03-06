@@ -37,11 +37,11 @@ pub fn run(
 
     let agent = resolve_agent(&config, agent_override)?;
 
-    // Set AGENT and BOTBUS_AGENT env so spawned tools resolve identity correctly
+    // Set AGENT and RITE_AGENT env so spawned tools resolve identity correctly
     // SAFETY: single-threaded at this point in startup, before spawning any threads
     unsafe {
         std::env::set_var("AGENT", &agent);
-        std::env::set_var("BOTBUS_AGENT", &agent);
+        std::env::set_var("RITE_AGENT", &agent);
     }
 
     // Apply config [env] vars to our own process so tools we invoke (cargo, etc.) inherit them
@@ -128,13 +128,13 @@ pub fn run(
     }
 
     // Confirm identity
-    Tool::new("bus")
+    Tool::new("rite")
         .args(&["whoami", "--agent", &agent])
         .run_ok()
         .context("confirming agent identity")?;
 
     // Stake agent claim (ignore failure — may already be held)
-    let _ = Tool::new("bus")
+    let _ = Tool::new("rite")
         .args(&[
             "claims",
             "stake",
@@ -147,7 +147,7 @@ pub fn run(
         .run();
 
     // Announce
-    Tool::new("bus")
+    Tool::new("rite")
         .args(&[
             "send",
             "--agent",
@@ -160,7 +160,7 @@ pub fn run(
         .run_ok()?;
 
     // Set starting status
-    let _ = Tool::new("bus")
+    let _ = Tool::new("rite")
         .args(&[
             "statuses",
             "set",
@@ -202,7 +202,7 @@ pub fn run(
         );
 
         // Refresh agent claim TTL
-        let _ = Tool::new("bus")
+        let _ = Tool::new("rite")
             .args(&[
                 "claims",
                 "refresh",
@@ -215,11 +215,11 @@ pub fn run(
         if !has_work(&agent, &project)? {
             idle_count += 1;
             if idle_count >= max_idle {
-                let _ = Tool::new("bus")
+                let _ = Tool::new("rite")
                     .args(&["statuses", "set", "--agent", &agent, "Idle"])
                     .run();
                 eprintln!("No work after {max_idle} idle checks. Exiting cleanly.");
-                let _ = Tool::new("bus")
+                let _ = Tool::new("rite")
                     .args(&[
                         "send", "--agent", &agent, &project,
                         &format!("No work remaining after {max_idle} checks. Dev agent {agent} signing off."),
@@ -232,7 +232,7 @@ pub fn run(
             eprintln!(
                 "No work available (idle {idle_count}/{max_idle}). Waiting {delay}s before retrying..."
             );
-            let _ = Tool::new("bus")
+            let _ = Tool::new("rite")
                 .args(&[
                     "statuses",
                     "set",
@@ -251,7 +251,7 @@ pub fn run(
         // Guard: if a review is pending, don't run Claude — just wait
         if let Some(pending_bead) = has_pending_review(&agent)? {
             eprintln!("Review pending for {pending_bead} — waiting (not running Claude)");
-            let _ = Tool::new("bus")
+            let _ = Tool::new("rite")
                 .args(&[
                     "statuses",
                     "set",
@@ -319,8 +319,8 @@ pub fn run(
                     || err_str.contains("rate limit")
                     || err_str.contains("overloaded");
                 if is_fatal {
-                    eprintln!("Fatal error detected, posting to botbus and exiting...");
-                    let _ = Tool::new("bus")
+                    eprintln!("Fatal error detected, posting to rite and exiting...");
+                    let _ = Tool::new("rite")
                         .args(&[
                             "send",
                             "--agent",
@@ -416,8 +416,8 @@ fn resolve_agent(config: &Config, agent_override: Option<&str>) -> anyhow::Resul
     if !from_config.is_empty() {
         return Ok(from_config);
     }
-    // Generate a name via bus
-    let output = Tool::new("bus")
+    // Generate a name via rite
+    let output = Tool::new("rite")
         .arg("generate-name")
         .run_ok()
         .context("generating agent name")?;
@@ -458,7 +458,7 @@ fn resolve_worker_model(config: &Config) -> String {
 /// Check if there is any work to do (inbox, claims, ready bones).
 fn has_work(agent: &str, project: &str) -> anyhow::Result<bool> {
     // Check claims (bone:// or workspace:// means active work)
-    if let Ok(output) = Tool::new("bus")
+    if let Ok(output) = Tool::new("rite")
         .args(&[
             "claims", "list", "--agent", agent, "--mine", "--format", "json",
         ])
@@ -483,7 +483,7 @@ fn has_work(agent: &str, project: &str) -> anyhow::Result<bool> {
     }
 
     // Check inbox
-    if let Ok(output) = Tool::new("bus")
+    if let Ok(output) = Tool::new("rite")
         .args(&[
             "inbox",
             "--agent",
@@ -635,7 +635,7 @@ fn parse_comments(json: &str) -> Vec<String> {
 
 /// Discover sibling lead agents (multi-lead mode).
 fn discover_sibling_leads(agent: &str) -> anyhow::Result<Vec<SiblingLead>> {
-    let output = Tool::new("bus")
+    let output = Tool::new("rite")
         .args(&["claims", "list", "--format", "json"])
         .run()?;
 
@@ -765,7 +765,7 @@ fn cleanup(agent: &str, project: &str) -> anyhow::Result<()> {
     // otherwise kill these children before they complete).
 
     // Sign off
-    let _ = Tool::new("bus")
+    let _ = Tool::new("rite")
         .args(&[
             "send",
             "--agent",
@@ -779,13 +779,13 @@ fn cleanup(agent: &str, project: &str) -> anyhow::Result<()> {
         .run();
 
     // Clear status
-    let _ = Tool::new("bus")
+    let _ = Tool::new("rite")
         .args(&["statuses", "clear", "--agent", agent])
         .new_process_group()
         .run();
 
     // Release merge mutex if held
-    let _ = Tool::new("bus")
+    let _ = Tool::new("rite")
         .args(&[
             "claims",
             "release",
@@ -797,7 +797,7 @@ fn cleanup(agent: &str, project: &str) -> anyhow::Result<()> {
         .run();
 
     // Release agent claim
-    let _ = Tool::new("bus")
+    let _ = Tool::new("rite")
         .args(&[
             "claims",
             "release",
@@ -809,7 +809,7 @@ fn cleanup(agent: &str, project: &str) -> anyhow::Result<()> {
         .run();
 
     // Release all remaining claims
-    let _ = Tool::new("bus")
+    let _ = Tool::new("rite")
         .args(&["claims", "release", "--agent", agent, "--all"])
         .new_process_group()
         .run();
@@ -831,7 +831,7 @@ fn is_systemd_dbus_available() -> bool {
         return true;
     }
     if let Ok(xdg) = std::env::var("XDG_RUNTIME_DIR") {
-        if std::path::Path::new(&xdg).join("bus").exists() {
+        if std::path::Path::new(&xdg).join("rite").exists() {
             return true;
         }
     }

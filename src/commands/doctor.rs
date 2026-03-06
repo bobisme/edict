@@ -123,7 +123,7 @@ impl DoctorArgs {
             ("bones (bn)", config.tools.bones, "bn"),
             ("maw", config.tools.maw, "maw"),
             ("seal", config.tools.seal, "seal"),
-            ("botbus (bus)", config.tools.botbus, "bus"),
+            ("rite", config.tools.rite, "rite"),
             ("vessel", config.tools.vessel, "vessel"),
         ];
 

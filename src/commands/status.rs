@@ -213,7 +213,7 @@ impl StatusArgs {
         }
 
         // 3. Pending inbox
-        if let Ok(output) = Tool::new("bus")
+        if let Ok(output) = Tool::new("rite")
             .arg("inbox")
             .arg("--format")
             .arg("json")
@@ -237,7 +237,7 @@ impl StatusArgs {
         }
 
         // 5. Active claims
-        if let Ok(output) = Tool::new("bus")
+        if let Ok(output) = Tool::new("rite")
             .arg("claims")
             .arg("list")
             .arg("--format")
@@ -424,7 +424,7 @@ impl StatusArgs {
                 severity: "INFO".to_string(),
                 message: "No held bones and no ready work → check inbox or create bones from tasks"
                     .to_string(),
-                command: Some("bus inbox --agent $AGENT".to_string()),
+                command: Some("rite inbox --agent $AGENT".to_string()),
             });
         }
 

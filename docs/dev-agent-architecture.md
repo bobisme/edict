@@ -32,9 +32,9 @@ The target architecture for a project-level dev agent (e.g., `terseid-dev`). Thi
 
 ### 1. Inbox
 
-Check `bus inbox --agent $AGENT --channels $PROJECT --mark-read`. Handle each message by type:
+Check `rite inbox --agent $AGENT --channels $PROJECT --mark-read`. Handle each message by type:
 - **Task requests**: Create beads or merge into existing.
-- **Status checks**: Reply on botbus.
+- **Status checks**: Reply on rite.
 - **Review responses**: Handle reviewer comments (see Review Lifecycle below).
 - **Worker announcements**: Track progress, note completions.
 - **Feedback**: Triage referenced beads, reply.
@@ -59,12 +59,12 @@ vessel spawn --name <random-name> -- \
 ```
 
 Each worker:
-- Claims the bead and workspace via botbus
+- Claims the bead and workspace via rite
 - Implements the task in its workspace
 - Runs `br close`, `maw ws merge --destroy`, releases claims
 - Announces completion on `#<project>`
 
-The dev agent doesn't wait — it continues its loop. On subsequent iterations it sees worker completions in botbus and bead closures in `br ready`.
+The dev agent doesn't wait — it continues its loop. On subsequent iterations it sees worker completions in rite and bead closures in `br ready`.
 
 ### 4. Review Lifecycle
 
@@ -73,16 +73,16 @@ After work is complete (either by the dev agent or a worker), if review is enabl
 **Request review:**
 1. Create a seal review: `seal reviews create --title "..." --change <jj-change-id>`
 2. Request reviewer: `seal reviews request <review-id> --reviewers security-reviewer`
-3. Announce on botbus: `bus send --agent $AGENT $PROJECT "Review requested: <review-id> @security-reviewer" -L mesh -L review-request`
+3. Announce on rite: `rite send --agent $AGENT $PROJECT "Review requested: <review-id> @security-reviewer" -L mesh -L review-request`
 
 **Ensure reviewer is running:**
-1. Check if reviewer is active: `bus claims check --agent $AGENT "agent://security-reviewer"`
+1. Check if reviewer is active: `rite claims check --agent $AGENT "agent://security-reviewer"`
 2. If not running, spawn it: `vessel spawn --name security-reviewer -- <reviewer-script>`
 
 **Wait for review:**
 The dev agent doesn't block. It continues its loop. Options:
 - Sleep briefly and check next iteration (simplest)
-- Use `bus wait --agent $AGENT -L review-done -t 120` for event-driven notification
+- Use `rite wait --agent $AGENT -L review-done -t 120` for event-driven notification
 - Check `seal reviews list --agent $AGENT --status=open --format=json` each iteration for review status
 
 **Handle review response:**
@@ -93,7 +93,7 @@ On the next iteration where a review response is visible:
    - **Fix**: Make the code change in a workspace, commit, comment "Fixed in <change>"
    - **Address**: Reply explaining why the current approach is correct (won't-fix with rationale)
    - **Defer**: Create a bead for future work, comment "Filed <bead-id> for follow-up"
-3. Re-request review: `bus send --agent $AGENT $PROJECT "Re-review requested: <review-id> @security-reviewer" -L mesh -L review-request`
+3. Re-request review: `rite send --agent $AGENT $PROJECT "Re-review requested: <review-id> @security-reviewer" -L mesh -L review-request`
 4. Repeat until LGTM or all blockers resolved.
 
 **Merge:**
@@ -106,19 +106,19 @@ On the next iteration where a review response is visible:
 Same as the current agent-loop finish:
 - `br comments add <id> "Completed by $AGENT"`
 - `br close <id> --reason="Completed" --suggest-next`
-- `bus claims release --agent $AGENT --all`
+- `rite claims release --agent $AGENT --all`
 - `br sync --flush-only`
-- `bus send --agent $AGENT $PROJECT "Completed <id>" -L mesh -L task-done`
+- `rite send --agent $AGENT $PROJECT "Completed <id>" -L mesh -L task-done`
 
 ## Coordination Model
 
 Agents coordinate through two channels:
 
-**botbus** — real-time messaging. Announcements, mentions, review requests. Agents check inbox each iteration. Labels (`-L review-request`, `-L task-done`, `-L review-done`) enable filtering.
+**rite** — real-time messaging. Announcements, mentions, review requests. Agents check inbox each iteration. Labels (`-L review-request`, `-L task-done`, `-L review-done`) enable filtering.
 
-**beads + seal** — persistent state. Bead status (open/in_progress/closed), seal reviews (pending/approved/blocked), comments and threads. This is the source of truth; botbus messages are notifications.
+**beads + seal** — persistent state. Bead status (open/in_progress/closed), seal reviews (pending/approved/blocked), comments and threads. This is the source of truth; rite messages are notifications.
 
-Claims (`bus claims stake`) prevent conflicts:
+Claims (`rite claims stake`) prevent conflicts:
 - `agent://<name>` — agent lease (one instance at a time)
 - `bead://<project>/<id>` — bead ownership
 - `workspace://<project>/<ws>` — workspace ownership

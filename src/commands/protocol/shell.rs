@@ -204,14 +204,14 @@ fn safe_ident(value: &str) -> std::borrow::Cow<'_, str> {
 // or escaped before inclusion. Structural identifiers pass through safe_ident()
 // for defense-in-depth against unvalidated callers.
 
-/// Build: `bus claims stake --agent <agent> "bone://<project>/<id>" -m "<memo>"`
+/// Build: `rite claims stake --agent <agent> "bone://<project>/<id>" -m "<memo>"`
 pub fn claims_stake_cmd(agent: &str, uri: &str, memo: &str) -> String {
     validate_identifier("agent", agent).expect("invalid agent name");
     let agent_safe = safe_ident(agent);
     let mut cmd = String::new();
     write!(
         cmd,
-        "bus claims stake --agent {} {}",
+        "rite claims stake --agent {} {}",
         agent_safe,
         shell_escape(uri)
     )
@@ -222,27 +222,27 @@ pub fn claims_stake_cmd(agent: &str, uri: &str, memo: &str) -> String {
     cmd
 }
 
-/// Build: `bus claims release --agent <agent> "<uri>"`
+/// Build: `rite claims release --agent <agent> "<uri>"`
 #[allow(dead_code)]
 pub fn claims_release_cmd(agent: &str, uri: &str) -> String {
     validate_identifier("agent", agent).expect("invalid agent name");
     let agent_safe = safe_ident(agent);
     format!(
-        "bus claims release --agent {} {}",
+        "rite claims release --agent {} {}",
         agent_safe,
         shell_escape(uri)
     )
 }
 
-/// Build: `bus claims release --agent <agent> --all`
+/// Build: `rite claims release --agent <agent> --all`
 pub fn claims_release_all_cmd(agent: &str) -> String {
     validate_identifier("agent", agent).expect("invalid agent name");
     let agent_safe = safe_ident(agent);
-    format!("bus claims release --agent {} --all", agent_safe)
+    format!("rite claims release --agent {} --all", agent_safe)
 }
 
-/// Build: `bus send --agent <agent> <project> '<message>' -L <label>`
-pub fn bus_send_cmd(agent: &str, project: &str, message: &str, label: &str) -> String {
+/// Build: `rite send --agent <agent> <project> '<message>' -L <label>`
+pub fn rite_send_cmd(agent: &str, project: &str, message: &str, label: &str) -> String {
     validate_identifier("agent", agent).expect("invalid agent name");
     let agent_safe = safe_ident(agent);
 
@@ -252,7 +252,7 @@ pub fn bus_send_cmd(agent: &str, project: &str, message: &str, label: &str) -> S
         let mut cmd = String::new();
         write!(
             cmd,
-            "bus send --agent {} {} {}",
+            "rite send --agent {} {} {}",
             agent_safe,
             shell_escape(project),
             shell_escape(message)
@@ -267,7 +267,7 @@ pub fn bus_send_cmd(agent: &str, project: &str, message: &str, label: &str) -> S
     let mut cmd = String::new();
     write!(
         cmd,
-        "bus send --agent {} {} {}",
+        "rite send --agent {} {} {}",
         agent_safe,
         safe_ident(project),
         shell_escape(message)
@@ -432,11 +432,11 @@ pub fn seal_show_cmd(workspace: &str, review_id: &str) -> String {
     )
 }
 
-/// Build: `bus statuses clear --agent <agent>`
-pub fn bus_statuses_clear_cmd(agent: &str) -> String {
+/// Build: `rite statuses clear --agent <agent>`
+pub fn rite_statuses_clear_cmd(agent: &str) -> String {
     validate_identifier("agent", agent).expect("invalid agent name");
     let agent_safe = safe_ident(agent);
-    format!("bus statuses clear --agent {}", agent_safe)
+    format!("rite statuses clear --agent {}", agent_safe)
 }
 
 #[cfg(test)]
@@ -654,7 +654,7 @@ mod tests {
         let cmd = claims_stake_cmd("crimson-storm", "bone://myproject/bd-abc", "bd-abc");
         assert_eq!(
             cmd,
-            "bus claims stake --agent crimson-storm 'bone://myproject/bd-abc' -m 'bd-abc'"
+            "rite claims stake --agent crimson-storm 'bone://myproject/bd-abc' -m 'bd-abc'"
         );
     }
 
@@ -663,7 +663,7 @@ mod tests {
         let cmd = claims_stake_cmd("crimson-storm", "bone://myproject/bd-abc", "");
         assert_eq!(
             cmd,
-            "bus claims stake --agent crimson-storm 'bone://myproject/bd-abc'"
+            "rite claims stake --agent crimson-storm 'bone://myproject/bd-abc'"
         );
     }
 
@@ -672,19 +672,19 @@ mod tests {
         let cmd = claims_release_cmd("crimson-storm", "bone://myproject/bd-abc");
         assert_eq!(
             cmd,
-            "bus claims release --agent crimson-storm 'bone://myproject/bd-abc'"
+            "rite claims release --agent crimson-storm 'bone://myproject/bd-abc'"
         );
     }
 
     #[test]
     fn claims_release_all() {
         let cmd = claims_release_all_cmd("crimson-storm");
-        assert_eq!(cmd, "bus claims release --agent crimson-storm --all");
+        assert_eq!(cmd, "rite claims release --agent crimson-storm --all");
     }
 
     #[test]
-    fn bus_send_basic() {
-        let cmd = bus_send_cmd(
+    fn rite_send_basic() {
+        let cmd = rite_send_cmd(
             "crimson-storm",
             "myproject",
             "Task claimed: bd-abc",
@@ -692,23 +692,23 @@ mod tests {
         );
         assert_eq!(
             cmd,
-            "bus send --agent crimson-storm myproject 'Task claimed: bd-abc' -L task-claim"
+            "rite send --agent crimson-storm myproject 'Task claimed: bd-abc' -L task-claim"
         );
     }
 
     #[test]
-    fn bus_send_with_quotes_in_message() {
-        let cmd = bus_send_cmd("crimson-storm", "myproject", "it's done", "task-done");
+    fn rite_send_with_quotes_in_message() {
+        let cmd = rite_send_cmd("crimson-storm", "myproject", "it's done", "task-done");
         assert_eq!(
             cmd,
-            "bus send --agent crimson-storm myproject 'it'\\''s done' -L task-done"
+            "rite send --agent crimson-storm myproject 'it'\\''s done' -L task-done"
         );
     }
 
     #[test]
-    fn bus_send_no_label() {
-        let cmd = bus_send_cmd("crimson-storm", "myproject", "hello", "");
-        assert_eq!(cmd, "bus send --agent crimson-storm myproject 'hello'");
+    fn rite_send_no_label() {
+        let cmd = rite_send_cmd("crimson-storm", "myproject", "hello", "");
+        assert_eq!(cmd, "rite send --agent crimson-storm myproject 'hello'");
     }
 
     #[test]
@@ -789,8 +789,8 @@ mod tests {
     #[test]
     fn command_builders_are_deterministic() {
         // Same inputs always produce same output
-        let cmd1 = bus_send_cmd("crimson-storm", "proj", "msg", "label");
-        let cmd2 = bus_send_cmd("crimson-storm", "proj", "msg", "label");
+        let cmd1 = rite_send_cmd("crimson-storm", "proj", "msg", "label");
+        let cmd2 = rite_send_cmd("crimson-storm", "proj", "msg", "label");
         assert_eq!(cmd1, cmd2);
     }
 

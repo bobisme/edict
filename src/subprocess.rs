@@ -58,7 +58,7 @@ impl Tool {
 
     /// Spawn the subprocess in a new process group so it survives a SIGTERM
     /// sent to the parent's process group.  Use this for cleanup subprocesses
-    /// (e.g. `bus claims release`) that are spawned from a signal handler.
+    /// (e.g. `rite claims release`) that are spawned from a signal handler.
     ///
     /// On non-Unix platforms this is a no-op (the flag is ignored).
     pub fn new_process_group(mut self) -> Self {
@@ -334,17 +334,17 @@ mod tests {
     }
 }
 
-/// Ensure exactly one bus hook exists with the given description.
+/// Ensure exactly one rite hook exists with the given description.
 ///
 /// Performs idempotent upsert: finds any existing hook(s) matching the
 /// description, removes them, then adds a new hook with current parameters.
-/// The `add_args` slice should contain all args for `bus hooks add` *except*
+/// The `add_args` slice should contain all args for `rite hooks add` *except*
 /// `--description` (which is added automatically).
 ///
 /// Returns `Ok(("created"|"updated"|"unchanged", hook_id))`.
-pub fn ensure_bus_hook(description: &str, add_args: &[&str]) -> anyhow::Result<(String, String)> {
+pub fn ensure_rite_hook(description: &str, add_args: &[&str]) -> anyhow::Result<(String, String)> {
     // List existing hooks
-    let existing = Tool::new("bus")
+    let existing = Tool::new("rite")
         .args(&["hooks", "list", "--format", "json"])
         .run();
 
@@ -357,7 +357,7 @@ pub fn ensure_bus_hook(description: &str, add_args: &[&str]) -> anyhow::Result<(
                         let desc = hook.get("description").and_then(|d| d.as_str());
                         if desc == Some(description) {
                             if let Some(id) = hook.get("id").and_then(|i| i.as_str()) {
-                                let _ = Tool::new("bus").args(&["hooks", "remove", id]).run();
+                                let _ = Tool::new("rite").args(&["hooks", "remove", id]).run();
                                 removed = true;
                             }
                         }
@@ -371,10 +371,10 @@ pub fn ensure_bus_hook(description: &str, add_args: &[&str]) -> anyhow::Result<(
     let mut args = vec!["hooks", "add", "--description", description];
     args.extend_from_slice(add_args);
 
-    let result = Tool::new("bus").args(&args).run()?;
+    let result = Tool::new("rite").args(&args).run()?;
 
     if !result.success() {
-        anyhow::bail!("bus hooks add failed: {}", result.stderr.trim());
+        anyhow::bail!("rite hooks add failed: {}", result.stderr.trim());
     }
 
     // Extract hook ID from output (format: "Added: Hook hk-xxx created")

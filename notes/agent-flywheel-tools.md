@@ -2,7 +2,7 @@
 
 Catalog of tools found on [agent-flywheel.com](https://agent-flywheel.com), with assessment of fit for the botbox ecosystem.
 
-**Botbox ecosystem context**: beads (issue tracking), maw (jj workspaces), botbus (messaging), seal (code review), vessel (agent runtime)
+**Botbox ecosystem context**: beads (issue tracking), maw (jj workspaces), rite (messaging), seal (code review), vessel (agent runtime)
 
 ---
 
@@ -19,7 +19,7 @@ Catalog of tools found on [agent-flywheel.com](https://agent-flywheel.com), with
   - SQLite-backed persistent storage
   - MCP integration
 
-**Botbox fit**: **OVERLAPS with botbus**. Very similar problem space - agent coordination and messaging. botbus uses channels/claims, Mail uses threads/file reservations. Worth investigating their MCP integration approach.
+**Botbox fit**: **OVERLAPS with rite**. Very similar problem space - agent coordination and messaging. rite uses channels/claims, Mail uses threads/file reservations. Worth investigating their MCP integration approach.
 
 ---
 
@@ -292,7 +292,7 @@ Catalog of tools found on [agent-flywheel.com](https://agent-flywheel.com), with
 7. **NTM (Named Tmux Manager)** - Different approach to agent orchestration
 
 ### Low Priority (tangential)
-- Mail (overlaps with botbus)
+- Mail (overlaps with rite)
 - ACFS (different scope - machine setup vs project setup)
 - UBS (static analysis - we have oxlint)
 
@@ -306,7 +306,7 @@ Catalog of tools found on [agent-flywheel.com](https://agent-flywheel.com), with
 
 1. **Shared Foundation**: They use the same `beads` (BR) issue tracker we do - this is the same ecosystem.
 
-2. **MCP Integration**: Many tools expose MCP servers. We could consider MCP integration for botbus/vessel.
+2. **MCP Integration**: Many tools expose MCP servers. We could consider MCP integration for rite/vessel.
 
 3. **Safety Focus**: Multiple tools (DCG, SLB) address agent safety - a real concern for autonomous agents.
 

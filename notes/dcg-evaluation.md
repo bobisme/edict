@@ -180,7 +180,7 @@ dcg packs --verbose         # List available packs
 
 4. **Claude Code already has some protections**: Claude's built-in safety won't run `rm -rf /` without confirmation. DCG adds more granular control but there's overlap.
 
-5. **Botbox hooks could do similar checks**: Our existing hook infrastructure (botbus hooks, Claude Code hooks) could implement project-specific guards without DCG.
+5. **Botbox hooks could do similar checks**: Our existing hook infrastructure (rite hooks, Claude Code hooks) could implement project-specific guards without DCG.
 
 ### Gaps
 

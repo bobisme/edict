@@ -44,7 +44,7 @@ pub fn has_unreleased_changes() -> bool {
 
 /// Acquire the release mutex.
 pub fn acquire_release_mutex(agent: &str, project: &str) -> anyhow::Result<()> {
-    Tool::new("bus")
+    Tool::new("rite")
         .args(&[
             "claims",
             "stake",
@@ -62,7 +62,7 @@ pub fn acquire_release_mutex(agent: &str, project: &str) -> anyhow::Result<()> {
 
 /// Release the release mutex.
 pub fn release_release_mutex(agent: &str, project: &str) {
-    let _ = Tool::new("bus")
+    let _ = Tool::new("rite")
         .args(&[
             "claims",
             "release",

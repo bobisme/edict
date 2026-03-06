@@ -66,13 +66,13 @@ Returns surrounding messages with full reasoning, not just snippets.
 
 **Adding a rule:**
 ```bash
-cm playbook add "Botbus hooks are managed through migrations, not direct sync logic" --category workflow
+cm playbook add "Botrite hooks are managed through migrations, not direct sync logic" --category workflow
 ```
 Rule created with ID `b-ml9k2jya-y88o42`, maturity "candidate".
 
 **Context query includes the rule:**
 ```bash
-cm context "add a new botbus hook type" --json
+cm context "add a new rite hook type" --json
 ```
 Returns rule with relevance score 4, plus 10 history snippets from cass.
 
@@ -294,7 +294,7 @@ If cass/cm prove consistently valuable:
 
 - **beads** — tracks work (issues, status). cm tracks knowledge. Complementary.
 - **CLAUDE.md** — manual rules still valuable. cm augments with auto-discovered rules.
-- **botbus** — coordination between agents. cm is knowledge management.
+- **rite** — coordination between agents. cm is knowledge management.
 
 ---
 

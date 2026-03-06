@@ -1,6 +1,6 @@
 //! JSON adapters for companion tool output.
 //!
-//! Tolerant parsing for bus claims, maw workspaces, bn show, and seal review.
+//! Tolerant parsing for rite claims, maw workspaces, bn show, and seal review.
 //! Each adapter handles optional/new fields gracefully and produces clear
 //! parse errors. ProtocolContext consumes these instead of ad-hoc parsing.
 
@@ -8,7 +8,7 @@ use serde::Deserialize;
 
 // --- Bus Claims ---
 
-/// Parsed output from `bus claims list --format json`.
+/// Parsed output from `rite claims list --format json`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ClaimsResponse {
     #[serde(default)]
@@ -231,10 +231,10 @@ impl std::error::Error for AdapterError {}
 
 // --- Convenience parsers ---
 
-/// Parse `bus claims list --format json`.
+/// Parse `rite claims list --format json`.
 pub fn parse_claims(json: &str) -> Result<ClaimsResponse, AdapterError> {
     serde_json::from_str(json).map_err(|e| AdapterError::ParseFailed {
-        tool: "bus claims list",
+        tool: "rite claims list",
         detail: e.to_string(),
     })
 }
@@ -310,7 +310,7 @@ mod tests {
         let result = parse_claims("not json");
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(err.to_string().contains("bus claims list"));
+        assert!(err.to_string().contains("rite claims list"));
     }
 
     // --- Workspace parsing ---

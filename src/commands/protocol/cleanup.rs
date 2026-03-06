@@ -1,10 +1,10 @@
 //! Protocol cleanup command: check for held resources and suggest cleanup.
 //!
-//! Reads agent's active claims (from bus) and stale workspaces (from maw)
+//! Reads agent's active claims (from rite) and stale workspaces (from maw)
 //! to produce cleanup guidance. Skips release commands for active bone claims.
 //!
 //! Exit policy: always exits 0 with status in stdout (clean or has-resources).
-//! Operational failures (bus/maw unavailable) propagate as anyhow errors → exit 1.
+//! Operational failures (rite/maw unavailable) propagate as anyhow errors → exit 1.
 
 use super::context::ProtocolContext;
 use super::executor;
@@ -26,7 +26,7 @@ pub fn execute(
     project: &str,
     format: OutputFormat,
 ) -> anyhow::Result<()> {
-    // Collect state from bus and maw
+    // Collect state from rite and maw
     let ctx = ProtocolContext::collect(project, agent)?;
 
     // Build guidance
@@ -54,7 +54,7 @@ pub fn execute(
     let mut steps = Vec::new();
 
     // Step 1: Post agent idle message
-    steps.push(shell::bus_send_cmd(
+    steps.push(shell::rite_send_cmd(
         "agent",
         project,
         "Agent idle",
@@ -62,7 +62,7 @@ pub fn execute(
     ));
 
     // Step 2: Clear statuses
-    steps.push(shell::bus_statuses_clear_cmd("agent"));
+    steps.push(shell::rite_statuses_clear_cmd("agent"));
 
     // Step 3: Release claims (but warn if bone claims are active)
     if !bone_claims.is_empty() {
@@ -210,25 +210,25 @@ mod tests {
         let mut guidance = ProtocolGuidance::new("cleanup");
         guidance.status = ProtocolStatus::HasResources;
         guidance.steps(vec![
-            "bus send --agent test-agent test-project \"Agent idle\" -L agent-idle".to_string(),
-            "bus statuses clear --agent test-agent".to_string(),
-            "bus claims release --agent test-agent --all".to_string(),
+            "rite send --agent test-agent test-project \"Agent idle\" -L agent-idle".to_string(),
+            "rite statuses clear --agent test-agent".to_string(),
+            "rite claims release --agent test-agent --all".to_string(),
         ]);
 
         assert_eq!(format!("{:?}", guidance.status), "HasResources");
         assert_eq!(guidance.steps.len(), 3);
-        assert!(guidance.steps.iter().any(|s| s.contains("bus send")));
+        assert!(guidance.steps.iter().any(|s| s.contains("rite send")));
         assert!(
             guidance
                 .steps
                 .iter()
-                .any(|s| s.contains("bus statuses clear"))
+                .any(|s| s.contains("rite statuses clear"))
         );
         assert!(
             guidance
                 .steps
                 .iter()
-                .any(|s| s.contains("bus claims release"))
+                .any(|s| s.contains("rite claims release"))
         );
     }
 

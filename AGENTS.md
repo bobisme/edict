@@ -10,7 +10,7 @@ Edict orchestrates these companion projects (all ours):
 
 | Project | Binary | Purpose |
 |---------|--------|---------|
-| **botbus** | `bus` | Channel-based messaging, claims (advisory locks), agent coordination |
+| **rite** | `rite` | Channel-based messaging, claims (advisory locks), agent coordination |
 | **maw** | `maw` | Multi-agent workspaces — isolated Git worktrees for concurrent edits |
 | **seal** | `seal` | Distributed code review — threads, votes, LGTM/block workflow |
 | **vessel** | `vessel` | PTY-based agent runtime — spawn, manage, and communicate with agents |
@@ -25,12 +25,12 @@ Understanding the full chain from "message arrives" to "agent does work" is crit
 ### The Agent Spawn Chain
 
 ```
-1. Message lands on a botbus channel (e.g., `bus send myproject "New task" -L task-request`)
-2. botbus checks registered hooks (`bus hooks list`) for matching conditions
+1. Message lands on a rite channel (e.g., `rite send myproject "New task" -L task-request`)
+2. rite checks registered hooks (`rite hooks list`) for matching conditions
 3. Matching hook fires → runs its command (typically `vessel spawn ...`)
 4. vessel spawn creates a PTY session, runs `edict run <subcommand>`
 5. The agent loop iterates: triage → start → work → review → finish
-6. Agent communicates back via `bus send`, updates bones via `bn`, manages workspace via `maw`
+6. Agent communicates back via `rite send`, updates bones via `bn`, manages workspace via `maw`
 ```
 
 ### Hook Types That Trigger Agents
@@ -39,8 +39,8 @@ Registered during `edict init` (and updated via migrations):
 
 | Hook Type | Trigger | Spawns | Example |
 |-----------|---------|--------|---------|
-| **Router** (claim-based) | Any message on project channel, when no agent claimed | `edict run responder` | `bus hooks add --channel myproject --claim "agent://myproject-dev" ...` |
-| **Reviewer** (mention-based) | `@myproject-security` mention | Reviewer agent | `bus hooks add --channel myproject --mention "myproject-security" ...` |
+| **Router** (claim-based) | Any message on project channel, when no agent claimed | `edict run responder` | `rite hooks add --channel myproject --claim "agent://myproject-dev" ...` |
+| **Reviewer** (mention-based) | `@myproject-security` mention | Reviewer agent | `rite hooks add --channel myproject --mention "myproject-security" ...` |
 
 The router hook spawns `edict run responder` which routes messages based on `!` prefixes:
 - `!dev [msg]` — create bone + spawn dev-loop
@@ -53,7 +53,7 @@ The router hook spawns `edict run responder` which routes messages based on `!` 
 
 Also accepts old-style `q:` / `qq:` / `big q:` / `q(model):` prefixes for backwards compatibility.
 
-Hook commands use `vessel spawn` with `--env-inherit` to forward environment variables (BOTBUS_CHANNEL, BOTBUS_MESSAGE_ID, BOTBUS_AGENT) to the spawned agent.
+Hook commands use `vessel spawn` with `--env-inherit` to forward environment variables (RITE_CHANNEL, RITE_MESSAGE_ID, RITE_AGENT) to the spawned agent.
 
 ### Observing Agents in Action
 
@@ -64,44 +64,44 @@ vessel tail <name> --last 100  # See last 100 lines
 vessel kill <name>             # Stop a misbehaving agent
 vessel send <name> "message"   # Send input to agent's PTY
 
-bus history <channel> -n 20   # See recent channel messages
-bus statuses list             # See agent presence/status
-bus claims list               # See all active claims
-bus inbox --all               # See unread messages across all channels
+rite history <channel> -n 20   # See recent channel messages
+rite statuses list             # See agent presence/status
+rite claims list               # See all active claims
+rite inbox --all               # See unread messages across all channels
 ```
 
 `vessel tail` is the primary way to see what an agent is doing, whether it's stuck, and what tools it's calling. This is how you evaluate the effectiveness of the entire tool suite.
 
 ## Companion Tools Deep Dive
 
-### botbus (`bus`) — Messaging and Coordination
+### rite (`rite`) — Messaging and Coordination
 
 SQLite-backed channel messaging system. Default output is `text` format (concise, token-efficient). Use `--format json` when you need structured data for parsing.
 
 **Core commands:**
-- `bus send [--agent $AGENT] <channel> "message" [-L label]` — Post message to channel. Labels categorize messages (task-request, review-request, task-done, feedback, etc.)
-- `bus inbox [--channels <ch>] [--mentions] [--mark-read]` — Check unread messages. `--mentions` checks all channels for @agent mentions. `--count-only` for just the count.
-- `bus history <channel> [-n count] [--from agent] [--since time]` — Browse message history. Channel can also be passed as `-c/--channel <ch>`. `bus history projects` shows the project registry.
-- `bus search <query> [-c channel]` — Full-text search (FTS5 syntax)
-- `bus wait [-c channel] [--mention] [-L label] [-t timeout]` — Block until matching message arrives. Used by the responder for follow-up conversations.
-- `bus watch [-c channel] [--all]` — Stream messages in real-time
+- `rite send [--agent $AGENT] <channel> "message" [-L label]` — Post message to channel. Labels categorize messages (task-request, review-request, task-done, feedback, etc.)
+- `rite inbox [--channels <ch>] [--mentions] [--mark-read]` — Check unread messages. `--mentions` checks all channels for @agent mentions. `--count-only` for just the count.
+- `rite history <channel> [-n count] [--from agent] [--since time]` — Browse message history. Channel can also be passed as `-c/--channel <ch>`. `rite history projects` shows the project registry.
+- `rite search <query> [-c channel]` — Full-text search (FTS5 syntax)
+- `rite wait [-c channel] [--mention] [-L label] [-t timeout]` — Block until matching message arrives. Used by the responder for follow-up conversations.
+- `rite watch [-c channel] [--all]` — Stream messages in real-time
 
 **Claims (advisory locks):**
-- `bus claims stake --agent $AGENT "<uri>" [-m memo] [--ttl duration]` — Claim a resource
-- `bus claims release --agent $AGENT [--all | "<uri>"]` — Release claims
-- `bus claims list [--mine] [--agent $AGENT]` — List active claims
+- `rite claims stake --agent $AGENT "<uri>" [-m memo] [--ttl duration]` — Claim a resource
+- `rite claims release --agent $AGENT [--all | "<uri>"]` — Release claims
+- `rite claims list [--mine] [--agent $AGENT]` — List active claims
 - Claim URI patterns: `bone://project/id`, `workspace://project/ws`, `agent://name`, `respond://name`
 
 **Hooks (event triggers):**
-- `bus hooks add --channel <ch> --cwd <dir> [--claim uri] [--mention name] [--ttl secs] <command>` — Register hook. `--cwd` is mandatory.
-- `bus hooks list` — List registered hooks with their conditions
-- `bus hooks remove <id>` — Remove a hook
+- `rite hooks add --channel <ch> --cwd <dir> [--claim uri] [--mention name] [--ttl secs] <command>` — Register hook. `--cwd` is mandatory.
+- `rite hooks list` — List registered hooks with their conditions
+- `rite hooks remove <id>` — Remove a hook
 - Hook matching: `--claim` fires when claim is available; `--mention` fires on @name in message
 
 **Other:**
-- `bus statuses set/clear/list` — Agent presence and status messages
-- `bus generate-name` — Generate random agent names (used by dev-loop for worker dispatch)
-- `bus whoami [--agent $AGENT]` — Show/verify agent identity
+- `rite statuses set/clear/list` — Agent presence and status messages
+- `rite generate-name` — Generate random agent names (used by dev-loop for worker dispatch)
+- `rite whoami [--agent $AGENT]` — Show/verify agent identity
 
 ### maw — Multi-Agent Workspaces
 
@@ -147,7 +147,7 @@ maw exec $WS -- seal inbox --agent $AGENT                        # Show reviews/
 **Key details:**
 - Always run seal commands via `maw exec <ws> --` in the workspace context
 - Reviewers iterate workspaces via `maw ws list` + `maw exec $WS -- seal inbox` per workspace
-- Agent identity via `--agent` flag or `CRIT_AGENT`/`BOTBUS_AGENT` env vars
+- Agent identity via `--agent` flag or `CRIT_AGENT`/`RITE_AGENT` env vars
 - `--user` flag switches to human identity ($USER) for manual reviews
 
 ### vessel — Agent Runtime
@@ -155,7 +155,7 @@ maw exec $WS -- seal inbox --agent $AGENT                        # Show reviews/
 PTY-based agent spawner and manager. Runs Claude Code sessions in managed PTY processes.
 
 **Core commands:**
-- `vessel spawn [--pass-env] [--model model] [--timeout secs] <name> <command...>` — Spawn agent. `--pass-env` forwards BOTBUS_* env vars to the spawned process.
+- `vessel spawn [--pass-env] [--model model] [--timeout secs] <name> <command...>` — Spawn agent. `--pass-env` forwards RITE_* env vars to the spawned process.
 - `vessel list [--format json]` — List running agents with PIDs and uptime
 - `vessel tail <name> [--last n] [--follow]` — Stream agent output. **Primary debugging tool.**
 - `vessel kill <name>` — Terminate agent
@@ -178,11 +178,11 @@ Unified issue tracker. Bones are stored in `.bones/`. Event-sourced, no sync nee
 - `bn triage` — Triage output with scores and recommendations
 - `bn search <query>` — Full-text search
 
-Identity resolved from `$AGENT`/`$BOTBUS_AGENT` env. No `--actor`/`--author` flags needed.
+Identity resolved from `$AGENT`/`$RITE_AGENT` env. No `--actor`/`--author` flags needed.
 
 ## Agent Subcommands
 
-All agent loops are built into the `edict` binary as subcommands under `edict run`. They are invoked by botbus hooks via `vessel spawn`.
+All agent loops are built into the `edict` binary as subcommands under `edict run`. They are invoked by rite hooks via `vessel spawn`.
 
 ### `edict run dev-loop` — Lead Dev Agent
 
@@ -198,7 +198,7 @@ Triages work, dispatches parallel workers, monitors progress, merges completed w
 5. Monitor worker progress, merge completed workspaces
 6. Check for releases (feat/fix commits → version bump + tag)
 
-**Dispatch pattern:** Creates workspace per worker, generates random worker name via `bus generate-name`, stakes claims, comments bone with worker/workspace info, spawns via `vessel spawn`.
+**Dispatch pattern:** Creates workspace per worker, generates random worker name via `rite generate-name`, stakes claims, comments bone with worker/workspace info, spawns via `vessel spawn`.
 
 ### `edict run worker-loop` — Worker Agent
 
@@ -257,11 +257,11 @@ Subcommands require specific companion tools to be enabled in `.edict.toml`:
 
 | Subcommand | Requires |
 |------------|----------|
-| `worker-loop`, `dev-loop` | bones + maw + seal + botbus |
-| `reviewer-loop` | seal + botbus |
-| `responder` | botbus |
+| `worker-loop`, `dev-loop` | bones + maw + seal + rite |
+| `reviewer-loop` | seal + rite |
+| `responder` | rite |
 | `triage` | bones |
-| `iteration-start` | bones + seal + botbus |
+| `iteration-start` | bones + seal + rite |
 
 ## Claude Code Hooks
 
@@ -269,10 +269,10 @@ Hooks are registered in `.claude/settings.json` as `edict hooks run <name>` comm
 
 | Hook | Event | Requires | Purpose |
 |------|-------|----------|---------|
-| `init-agent` | SessionStart | botbus | Display agent identity and project channel |
+| `init-agent` | SessionStart | rite | Display agent identity and project channel |
 | `check-jj` | SessionStart | maw | Display workspace tips and maw usage reminders |
-| `check-bus-inbox` | PostToolUse | botbus | Check for unread bus messages, inject reminder with previews |
-| `claim-agent` | SessionStart, PostToolUse, SessionEnd | botbus | Stake/refresh/release agent claim for session duration |
+| `check-rite-inbox` | PostToolUse | rite | Check for unread rite messages, inject reminder with previews |
+| `claim-agent` | SessionStart, PostToolUse, SessionEnd | rite | Stake/refresh/release agent claim for session duration |
 
 ## How edict sync Works
 
@@ -289,15 +289,15 @@ Each component is version-tracked via SHA-256 content hashes stored in marker fi
 
 ### Migrations
 
-**Botbus hooks** (registered via `bus hooks add`) and other runtime changes are managed through **migrations**, not direct sync logic.
+**Botrite hooks** (registered via `rite hooks add`) and other runtime changes are managed through **migrations**, not direct sync logic.
 
 Migrations are defined in `src/commands/sync.rs`. Each has an ID (semantic version), title, and migration function.
 
-Migrations run automatically during `edict sync` when the config version is behind. **When adding new botbus hook types or changing runtime behavior, add a migration.**
+Migrations run automatically during `edict sync` when the config version is behind. **When adding new rite hook types or changing runtime behavior, add a migration.**
 
 ### Init vs Sync
 
-**`edict init`** does everything: interactive config, creates `.agents/edict/`, copies all files, generates AGENTS.md + `.edict.toml`, initializes external tools (`bn init`, `maw init`, `seal init`), registers botbus hooks, seeds initial bones, creates .gitignore.
+**`edict init`** does everything: interactive config, creates `.agents/edict/`, copies all files, generates AGENTS.md + `.edict.toml`, initializes external tools (`bn init`, `maw init`, `seal init`), registers rite hooks, seeds initial bones, creates .gitignore.
 
 **`edict sync`** is incremental: checks staleness, runs pending migrations, updates only changed components, preserves user edits outside managed markers. `--check` mode exits non-zero without changing anything (CI use).
 
@@ -313,7 +313,7 @@ Migrations run automatically during `edict sync` when the config version is behi
     "channel": "myproject",
     "installCommand": "just install"
   },
-  "tools": { "bones": true, "maw": true, "seal": true, "botbus": true, "vessel": true },
+  "tools": { "bones": true, "maw": true, "seal": true, "rite": true, "vessel": true },
   "review": { "enabled": true, "reviewers": ["security"] },
   "pushMain": false,
   "agents": {
@@ -382,12 +382,12 @@ maw exec default -- just test       # cargo test
 **Manual testing**: ALWAYS use isolated data directories to avoid polluting actual project data:
 
 ```bash
-BOTBUS_DATA_DIR=/tmp/test-botbus edict init --name test --type cli --tools bones,maw,seal,botbus --no-interactive
-BOTBUS_DATA_DIR=/tmp/test-botbus bus hooks list
-rm -rf /tmp/test-botbus
+RITE_DATA_DIR=/tmp/test-rite edict init --name test --type cli --tools bones,maw,seal,rite --no-interactive
+RITE_DATA_DIR=/tmp/test-rite rite hooks list
+rm -rf /tmp/test-rite
 ```
 
-**Applies to**: Any manual testing with bus, vessel, seal, maw, or bn commands during development.
+**Applies to**: Any manual testing with rite, vessel, seal, maw, or bn commands during development.
 
 ## Conventions
 
@@ -413,21 +413,21 @@ When asked to look at a vessel session, immediately run `vessel tail <name> --la
 Drop whatever you're doing and run the tail command. Analyze the output and report what the agent is doing, whether it's stuck, and what might need fixing.
 
 ### Agent not spawning
-1. Check hook registration: `bus hooks list` — is the router hook there? Does the channel match? It should point to `edict run responder`.
-2. Check claim availability: `bus claims list` — is the `agent://X-dev` claim already taken? (router hook won't fire if claimed)
+1. Check hook registration: `rite hooks list` — is the router hook there? Does the channel match? It should point to `edict run responder`.
+2. Check claim availability: `rite claims list` — is the `agent://X-dev` claim already taken? (router hook won't fire if claimed)
 3. Check vessel: `vessel list` — is the agent already running?
 4. Verify hook command: the hook should run `vessel spawn` with correct script path and `--env-inherit`
 
 ### Agent stuck or looping
 1. `vessel tail <name>` — what is the agent doing right now?
-2. Check claims: `bus claims list --mine --agent <name>` — stuck claim?
+2. Check claims: `rite claims list --mine --agent <name>` — stuck claim?
 3. Check bone state: `bn show <id>` — is the bone in expected state?
 4. Check workspace: `maw ws list` — is workspace still alive?
 
 ### Review not being picked up
 1. `maw exec $WS -- seal inbox --agent <reviewer>` — does it show the review? (check each workspace)
-2. Verify the @mention: the bus message MUST contain `@<project>-<role>` (no @ prefix in hook registration, but @ in message)
-3. Check hook: `bus hooks list` — is there a mention hook for that reviewer?
+2. Verify the @mention: the rite message MUST contain `@<project>-<role>` (no @ prefix in hook registration, but @ in message)
+3. Check hook: `rite hooks list` — is there a mention hook for that reviewer?
 4. Verify reviewer workspace path: reviewer reads code from workspace, not project root
 
 ### Common pitfalls from evals
@@ -436,7 +436,7 @@ Drop whatever you're doing and run the tail command. Analyze the output and repo
 - **Duplicate bones**: Check existing bones before creating from inbox messages
 - **bn via maw exec**: Always use `maw exec default -- bn ...` — never run `bn` directly
 - **seal via maw exec**: Always use `maw exec $WS -- seal ...` — seal runs in workspace context
-- **Mention format**: `--mention "agent-name"` in hook registration (no @), but `@agent-name` in bus messages
+- **Mention format**: `--mention "agent-name"` in hook registration (no @), but `@agent-name` in rite messages
 
 ## Eval Framework
 
@@ -444,7 +444,7 @@ Behavioral eval framework for testing agent protocol compliance. See [notes/eval
 
 Eval types: L2 (single session), Agent Loop, R1 (reviewer bugs), R2 (author response), R3 (full review loop), R4 (integration), R5 (cross-project), R6 (parallel dispatch), R7 (planning), R8 (adversarial review), R9 (crash recovery).
 
-Eval scripts in `evals/scripts/` use `BOTBUS_DATA_DIR` for isolation. Rubrics in `evals/rubrics.md`.
+Eval scripts in `evals/scripts/` use `RITE_DATA_DIR` for isolation. Rubrics in `evals/rubrics.md`.
 
 ## Proposals
 
@@ -469,7 +469,7 @@ Format auto-detection: `--format` flag > `FORMAT` env > TTY→pretty / non-TTY�
 
 ## Message Labels
 
-Labels on bus messages categorize intent: `task-request`, `task-claim`, `task-blocked`, `task-done`, `review-request`, `review-done`, `review-response`, `feedback`, `grooming`, `tool-issue`, `agent-idle`, `spawn-ack`, `agent-error`.
+Labels on rite messages categorize intent: `task-request`, `task-claim`, `task-blocked`, `task-done`, `review-request`, `review-done`, `review-response`, `feedback`, `grooming`, `tool-issue`, `agent-idle`, `spawn-ack`, `agent-error`.
 
 <!-- edict:managed-start -->
 ## Edict Workflow
@@ -600,9 +600,9 @@ For manual sessions, use `<project>-dev` (e.g., `myapp-dev`).
 When working on a bone, stake claims to prevent conflicts:
 
 ```bash
-bus claims stake --agent $AGENT "bone://<project>/<id>" -m "<id>"
-bus claims stake --agent $AGENT "workspace://<project>/<ws>" -m "<id>"
-bus claims release --agent $AGENT --all  # when done
+rite claims stake --agent $AGENT "bone://<project>/<id>" -m "<id>"
+rite claims stake --agent $AGENT "workspace://<project>/<ws>" -m "<id>"
+rite claims release --agent $AGENT --all  # when done
 ```
 
 ### Reviews
@@ -611,33 +611,33 @@ Use `@<project>-<role>` mentions to request reviews:
 
 ```bash
 maw exec $WS -- seal reviews request <review-id> --reviewers $PROJECT-security --agent $AGENT
-bus send --agent $AGENT $PROJECT "Review requested: <review-id> @$PROJECT-security" -L review-request
+rite send --agent $AGENT $PROJECT "Review requested: <review-id> @$PROJECT-security" -L review-request
 ```
 
 The @mention triggers the auto-spawn hook for the reviewer.
 
 ### Bus Communication
 
-Agents communicate via bus channels. You don't need to be expert on everything — ask the right project.
+Agents communicate via rite channels. You don't need to be expert on everything — ask the right project.
 
 | Operation | Command |
 |-----------|---------|
-| Send message | `bus send --agent $AGENT <channel> "message" [-L label]` |
-| Check inbox | `bus inbox --agent $AGENT --channels <ch> [--mark-read]` |
-| Wait for reply | `bus wait -c <channel> --mention -t 120` |
-| Browse history | `bus history <channel> -n 20` |
-| Search messages | `bus search "query" -c <channel>` |
+| Send message | `rite send --agent $AGENT <channel> "message" [-L label]` |
+| Check inbox | `rite inbox --agent $AGENT --channels <ch> [--mark-read]` |
+| Wait for reply | `rite wait -c <channel> --mention -t 120` |
+| Browse history | `rite history <channel> -n 20` |
+| Search messages | `rite search "query" -c <channel>` |
 
-**Conversations**: After sending a question, use `bus wait -c <channel> --mention -t <seconds>` to block until the other agent replies. This enables back-and-forth conversations across channels.
+**Conversations**: After sending a question, use `rite wait -c <channel> --mention -t <seconds>` to block until the other agent replies. This enables back-and-forth conversations across channels.
 
-**Project experts**: Each `<project>-dev` is the expert on their project. When stuck on a companion tool (bus, maw, seal, vessel, bn), post a question to its project channel instead of guessing.
+**Project experts**: Each `<project>-dev` is the expert on their project. When stuck on a companion tool (rite, maw, seal, vessel, bn), post a question to its project channel instead of guessing.
 
 ### Cross-Project Communication
 
 **Don't suffer in silence.** If a tool confuses you or behaves unexpectedly, post to its project channel.
 
-1. Find the project: `bus history projects -n 50` (the #projects channel has project registry entries)
-2. Post question or feedback: `bus send --agent $AGENT <project> "..." -L feedback`
+1. Find the project: `rite history projects -n 50` (the #projects channel has project registry entries)
+2. Post question or feedback: `rite send --agent $AGENT <project> "..." -L feedback`
 3. For bugs, create bones in their repo first
 4. **Always create a local tracking bone** so you check back later:
    ```bash

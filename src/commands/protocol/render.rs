@@ -171,7 +171,7 @@ pub fn validate_guidance(guidance: &ProtocolGuidance) -> Result<(), ValidationEr
 /// Workspace: brave-tiger
 ///
 /// Steps:
-/// 1. bus send --agent $AGENT edict 'Working...' -L task-claim
+/// 1. rite send --agent $AGENT edict 'Working...' -L task-claim
 /// 2. maw ws create --random
 ///
 /// Advice: Create workspace and stake claims before starting implementation.
@@ -574,10 +574,10 @@ mod tests {
         g.workspace = Some("brave-tiger".to_string());
         g.steps(vec![
             "maw exec default -- bn do bd-3t1d".to_string(),
-            "bus claims stake --agent crimson-storm 'bone://edict/bd-3t1d' -m 'bd-3t1d'"
+            "rite claims stake --agent crimson-storm 'bone://edict/bd-3t1d' -m 'bd-3t1d'"
                 .to_string(),
             "maw ws create --random".to_string(),
-            "bus claims stake --agent crimson-storm 'workspace://edict/brave-tiger' -m 'bd-3t1d'"
+            "rite claims stake --agent crimson-storm 'workspace://edict/brave-tiger' -m 'bd-3t1d'"
                 .to_string(),
         ]);
         g.advise("Workspace created. Implement render.rs with ProtocolGuidance, ProtocolStatus, and rendering functions.".to_string());
@@ -598,12 +598,12 @@ mod tests {
             title: "protocol: shell-safe command renderer".to_string(),
         });
         g.blocked("bone already claimed by another agent".to_string());
-        g.diagnostic("Check: bus claims list --format json".to_string());
+        g.diagnostic("Check: rite claims list --format json".to_string());
 
         let text = render_text(&g);
         assert!(text.contains("Status: Blocked"));
         assert!(text.contains("already claimed"));
-        assert!(text.contains("bus claims list"));
+        assert!(text.contains("rite claims list"));
     }
 
     #[test]
@@ -622,7 +622,7 @@ mod tests {
         g.status = ProtocolStatus::NeedsReview;
         g.steps(vec![
             "maw exec brave-tiger -- seal reviews request cr-123 --reviewers edict-security --agent crimson-storm".to_string(),
-            "bus send --agent crimson-storm edict 'Review requested: cr-123 @edict-security' -L review-request".to_string(),
+            "rite send --agent crimson-storm edict 'Review requested: cr-123 @edict-security' -L review-request".to_string(),
         ]);
         g.advise("Review is open. Awaiting approval from edict-security.".to_string());
 
@@ -638,14 +638,14 @@ mod tests {
         let mut g = ProtocolGuidance::new("cleanup");
         g.status = ProtocolStatus::Clean;
         g.steps(vec![
-            "bus claims list --agent crimson-storm --mine --format json".to_string(),
-            "bus claims release --agent crimson-storm --all".to_string(),
+            "rite claims list --agent crimson-storm --mine --format json".to_string(),
+            "rite claims release --agent crimson-storm --all".to_string(),
         ]);
         g.advise("All held resources released.".to_string());
 
         let text = render_text(&g);
         assert!(text.contains("Command: cleanup"));
-        assert!(text.contains("bus claims release") && text.contains("--all"));
+        assert!(text.contains("rite claims release") && text.contains("--all"));
         assert!(text.contains("Clean"));
     }
 
@@ -927,11 +927,11 @@ mod tests {
     fn render_text_status_has_resources() {
         let mut g = ProtocolGuidance::new("cleanup");
         g.status = ProtocolStatus::HasResources;
-        g.steps(vec!["bus claims list --agent $AGENT --mine".to_string()]);
+        g.steps(vec!["rite claims list --agent $AGENT --mine".to_string()]);
 
         let text = render_text(&g);
         assert!(text.contains("Status: Has Resources"));
-        assert!(text.contains("bus claims list"));
+        assert!(text.contains("rite claims list"));
     }
 
     #[test]

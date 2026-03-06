@@ -26,7 +26,7 @@ pub fn acquire_merge_mutex(
     let mut attempt = 0usize;
 
     loop {
-        let result = Tool::new("bus")
+        let result = Tool::new("rite")
             .args(&[
                 "claims",
                 "stake",
@@ -69,7 +69,7 @@ pub fn acquire_merge_mutex(
                 );
 
                 // Check if a coord:merge message appeared (lock might be free)
-                if let Ok(output) = Tool::new("bus")
+                if let Ok(output) = Tool::new("rite")
                     .args(&[
                         "history",
                         project,
@@ -96,7 +96,7 @@ pub fn acquire_merge_mutex(
 
 /// Release the merge mutex.
 pub fn release_merge_mutex(agent: &str, project: &str) {
-    let _ = Tool::new("bus")
+    let _ = Tool::new("rite")
         .args(&[
             "claims",
             "release",

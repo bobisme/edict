@@ -390,7 +390,7 @@ fn cleanup(agent: &str, project: &str, already_signed_off: bool) -> Result<()> {
     // otherwise kill these children before they complete).
 
     if !already_signed_off {
-        let _ = Tool::new("bus")
+        let _ = Tool::new("rite")
             .args(&[
                 "send",
                 "--agent",
@@ -404,12 +404,12 @@ fn cleanup(agent: &str, project: &str, already_signed_off: bool) -> Result<()> {
             .run();
     }
 
-    let _ = Tool::new("bus")
+    let _ = Tool::new("rite")
         .args(&["statuses", "clear", "--agent", agent])
         .new_process_group()
         .run();
 
-    let _ = Tool::new("bus")
+    let _ = Tool::new("rite")
         .args(&[
             "claims",
             "release",
@@ -447,11 +447,11 @@ pub fn run_reviewer_loop(
         .or_else(|| config.project.default_agent.clone())
         .unwrap_or_else(|| config.default_agent());
 
-    // Set AGENT and BOTBUS_AGENT env so spawned tools (seal, bus) resolve identity correctly
+    // Set AGENT and RITE_AGENT env so spawned tools (seal, rite) resolve identity correctly
     // SAFETY: single-threaded at this point in startup, before spawning any threads
     unsafe {
         env::set_var("AGENT", &agent);
-        env::set_var("BOTBUS_AGENT", &agent);
+        env::set_var("RITE_AGENT", &agent);
     }
 
     // Apply config [env] vars to our own process
@@ -493,7 +493,7 @@ pub fn run_reviewer_loop(
     eprintln!("Journal:   {}", journal_path.display());
 
     // Confirm identity
-    let whoami = Tool::new("bus")
+    let whoami = Tool::new("rite")
         .args(&["whoami", "--agent", &agent])
         .run()?;
 
@@ -502,7 +502,7 @@ pub fn run_reviewer_loop(
     }
 
     // Try to refresh claim, otherwise stake
-    let refresh = Tool::new("bus")
+    let refresh = Tool::new("rite")
         .args(&[
             "claims",
             "refresh",
@@ -513,7 +513,7 @@ pub fn run_reviewer_loop(
         .run();
 
     if refresh.is_err() || !refresh.as_ref().unwrap().success() {
-        let stake = Tool::new("bus")
+        let stake = Tool::new("rite")
             .args(&[
                 "claims",
                 "stake",
@@ -531,7 +531,7 @@ pub fn run_reviewer_loop(
     }
 
     // Announce
-    let _ = Tool::new("bus")
+    let _ = Tool::new("rite")
         .args(&[
             "send",
             "--agent",
@@ -544,7 +544,7 @@ pub fn run_reviewer_loop(
         .run();
 
     // Set starting status
-    let _ = Tool::new("bus")
+    let _ = Tool::new("rite")
         .args(&[
             "statuses",
             "set",
@@ -583,13 +583,13 @@ pub fn run_reviewer_loop(
         let work_items = find_work(&agent)?;
 
         if work_items.is_empty() {
-            let _ = Tool::new("bus")
+            let _ = Tool::new("rite")
                 .args(&["statuses", "set", "--agent", &agent, "Idle"])
                 .run();
 
             eprintln!("No reviews pending. Exiting cleanly.");
 
-            let _ = Tool::new("bus")
+            let _ = Tool::new("rite")
                 .args(&[
                     "send",
                     "--agent",

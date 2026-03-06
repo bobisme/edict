@@ -76,7 +76,7 @@ fn gather_unfinished_bones(agent: &str) -> Option<String> {
 }
 
 fn gather_claims(agent: &str) -> Option<String> {
-    let output = Tool::new("bus")
+    let output = Tool::new("rite")
         .args(&[
             "claims", "list", "--agent", agent, "--mine", "--format", "json",
         ])
@@ -139,7 +139,7 @@ fn gather_claims(agent: &str) -> Option<String> {
 }
 
 fn gather_inbox(agent: &str, project: &str) -> Option<String> {
-    let output = Tool::new("bus")
+    let output = Tool::new("rite")
         .args(&[
             "inbox",
             "--agent",

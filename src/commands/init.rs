@@ -14,7 +14,7 @@ use crate::subprocess::{Tool, run_command};
 use crate::template::render_agents_md;
 
 const PROJECT_TYPES: &[&str] = &["api", "cli", "frontend", "library", "monorepo", "tui"];
-const AVAILABLE_TOOLS: &[&str] = &["bones", "maw", "seal", "botbus", "vessel"];
+const AVAILABLE_TOOLS: &[&str] = &["bones", "maw", "seal", "rite", "vessel"];
 const REVIEWER_ROLES: &[&str] = &["security"];
 const LANGUAGES: &[&str] = &["rust", "python", "node", "go", "typescript", "java"];
 const CONFIG_VERSION: &str = "1.0.16";
@@ -73,7 +73,7 @@ pub struct InitArgs {
     /// Project types (comma-separated: api, cli, frontend, library, monorepo, tui)
     #[arg(long, value_delimiter = ',')]
     pub r#type: Vec<String>,
-    /// Tools to enable (comma-separated: bones, maw, seal, botbus, vessel)
+    /// Tools to enable (comma-separated: bones, maw, seal, rite, vessel)
     #[arg(long, value_delimiter = ',')]
     pub tools: Vec<String>,
     /// Reviewer roles (comma-separated: security)
@@ -244,7 +244,7 @@ impl InitArgs {
         }
 
         // Register project on #projects channel (skip on re-init)
-        if choices.tools.contains(&"botbus".to_string()) && !is_reinit {
+        if choices.tools.contains(&"rite".to_string()) && !is_reinit {
             let abs_path = project_dir
                 .canonicalize()
                 .unwrap_or_else(|_| project_dir.clone());
@@ -257,7 +257,7 @@ impl InitArgs {
                 agent,
                 tools_list
             );
-            match Tool::new("bus")
+            match Tool::new("rite")
                 .args(&[
                     "send",
                     "--agent",
@@ -272,7 +272,7 @@ impl InitArgs {
                 Ok(output) if output.success() => {
                     println!("Registered project on #projects channel")
                 }
-                _ => tracing::warn!("failed to register on #projects (is bus installed?)"),
+                _ => tracing::warn!("failed to register on #projects (is rite installed?)"),
             }
         }
 
@@ -285,8 +285,8 @@ impl InitArgs {
             }
         }
 
-        // Register botbus hooks
-        if choices.tools.contains(&"botbus".to_string()) {
+        // Register rite hooks
+        if choices.tools.contains(&"rite".to_string()) {
             register_spawn_hooks(&project_dir, &choices.name, &choices.reviewers, &config);
         }
 
@@ -713,7 +713,7 @@ fn build_config(choices: &InitChoices) -> Config {
             bones: choices.tools.contains(&"bones".to_string()),
             maw: choices.tools.contains(&"maw".to_string()),
             seal: choices.tools.contains(&"seal".to_string()),
-            botbus: choices.tools.contains(&"botbus".to_string()),
+            rite: choices.tools.contains(&"rite".to_string()),
             vessel: choices.tools.contains(&"vessel".to_string()),
         },
         review: ReviewConfig {
@@ -846,8 +846,8 @@ fn register_spawn_hooks(project_dir: &Path, name: &str, reviewers: &[String], co
     // Detect maw v2 workspace context
     let (hook_cwd, spawn_cwd) = detect_hook_paths(&abs_path);
 
-    // Check if bus supports hooks
-    if Tool::new("bus").arg("hooks").arg("list").run().is_err() {
+    // Check if rite supports hooks
+    if Tool::new("rite").arg("hooks").arg("list").run().is_err() {
         return;
     }
 
@@ -892,7 +892,7 @@ pub(super) fn register_router_hook(
     agent: &str,
     memory_limit: Option<&str>,
 ) {
-    let env_inherit = "BOTBUS_CHANNEL,BOTBUS_MESSAGE_ID,BOTBUS_HOOK_ID,SSH_AUTH_SOCK,OTEL_EXPORTER_OTLP_ENDPOINT,TRACEPARENT";
+    let env_inherit = "RITE_CHANNEL,RITE_MESSAGE_ID,RITE_HOOK_ID,SSH_AUTH_SOCK,OTEL_EXPORTER_OTLP_ENDPOINT,TRACEPARENT";
     let claim_uri = format!("agent://{name}-dev");
     let spawn_name = format!("{name}-responder");
     let description = format!("edict:{name}:responder");
@@ -931,7 +931,7 @@ pub(super) fn register_router_hook(
         "responder",
     ]);
 
-    match crate::subprocess::ensure_bus_hook(&description, &args) {
+    match crate::subprocess::ensure_rite_hook(&description, &args) {
         Ok((action, _id)) => println!("Router hook {action} for #{name}"),
         Err(e) => eprintln!("Warning: Failed to register router hook: {e}"),
     }
@@ -945,7 +945,7 @@ pub(super) fn register_reviewer_hook(
     reviewer_agent: &str,
     memory_limit: Option<&str>,
 ) {
-    let env_inherit = "BOTBUS_CHANNEL,BOTBUS_MESSAGE_ID,BOTBUS_HOOK_ID,SSH_AUTH_SOCK,OTEL_EXPORTER_OTLP_ENDPOINT,TRACEPARENT";
+    let env_inherit = "RITE_CHANNEL,RITE_MESSAGE_ID,RITE_HOOK_ID,SSH_AUTH_SOCK,OTEL_EXPORTER_OTLP_ENDPOINT,TRACEPARENT";
     let claim_uri = format!("agent://{reviewer_agent}");
     // Extract role suffix from reviewer_agent (e.g., "myproject-security" → "security")
     let role = reviewer_agent
@@ -993,7 +993,7 @@ pub(super) fn register_reviewer_hook(
         reviewer_agent,
     ]);
 
-    match crate::subprocess::ensure_bus_hook(&description, &args) {
+    match crate::subprocess::ensure_rite_hook(&description, &args) {
         Ok((action, _id)) => println!("Reviewer hook for @{reviewer_agent} {action}"),
         Err(e) => eprintln!("Warning: Failed to register mention hook for @{reviewer_agent}: {e}"),
     }

@@ -20,11 +20,11 @@ No significant confusion or gaps were identified.
 ## Test Questions and Responses
 
 ### 1. Identity Management
-**Question**: How do you identify yourself when using tools like botbus or crit?
+**Question**: How do you identify yourself when using tools like rite or crit?
 
 **Response**: ✅ Correct
 - Cited `--agent <name>` requirement
-- Showed `botbus generate-name` usage
+- Showed `rite generate-name` usage
 - Understood environment variable pattern
 
 **Quality**: Excellent. Agent understood both generation and usage.
@@ -35,7 +35,7 @@ No significant confusion or gaps were identified.
 **Question**: If you want to find work to do, what steps should you take?
 
 **Response**: ✅ Correct
-- Cited Quick Start section (`botbus generate-name`, `botbus whoami`, `br ready`)
+- Cited Quick Start section (`rite generate-name`, `rite whoami`, `br ready`)
 - Referenced triage.md for detailed flow
 - Explained full sequence: inbox → create beads → ready → bv → claim check
 

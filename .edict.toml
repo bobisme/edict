@@ -16,7 +16,7 @@ install_command = "maw exec default -- just install"
 bones = true
 maw = true
 seal = true
-botbus = true
+rite = true
 vessel = true
 
 # Code review configuration

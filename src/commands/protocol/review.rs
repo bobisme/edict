@@ -129,7 +129,7 @@ pub fn execute(
         }
     }
 
-    // No review exists: output seal reviews create + bus announce commands
+    // No review exists: output seal reviews create + rite announce commands
     guidance.status = ProtocolStatus::NeedsReview;
 
     let reviewers_str = reviewer_names.join(",");
@@ -143,10 +143,10 @@ pub fn execute(
         &reviewers_str,
     ));
 
-    // Announce on bus with @mentions for each reviewer
+    // Announce on rite with @mentions for each reviewer
     let mentions: Vec<String> = reviewer_names.iter().map(|r| format!("@{r}")).collect();
     let announce_msg = format!("Review requested: {bone_id} {}", mentions.join(" "));
-    steps.push(shell::bus_send_cmd(
+    steps.push(shell::rite_send_cmd(
         agent,
         project,
         &announce_msg,
@@ -234,7 +234,7 @@ fn handle_existing_review(
                 agent,
             ));
 
-            // Step 3: Announce re-request on bus
+            // Step 3: Announce re-request on rite
             let mentions: Vec<String> = decision
                 .blocked_by
                 .iter()
@@ -244,7 +244,7 @@ fn handle_existing_review(
                 "Review updated: {review_id} — addressed feedback, re-requesting {}",
                 mentions.join(" ")
             );
-            steps.push(shell::bus_send_cmd(
+            steps.push(shell::rite_send_cmd(
                 agent,
                 project,
                 &announce_msg,
@@ -294,7 +294,7 @@ fn handle_existing_review(
                     .map(|r| format!("@{r}"))
                     .collect();
                 let announce_msg = format!("Review requested: {review_id} {}", mentions.join(" "));
-                steps.push(shell::bus_send_cmd(
+                steps.push(shell::rite_send_cmd(
                     agent,
                     project,
                     &announce_msg,

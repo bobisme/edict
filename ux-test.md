@@ -12,7 +12,7 @@ Validate that AGENTS.md (and its linked workflow docs) provide sufficient, clear
    ```bash
    WORKDIR=$(mktemp -d)
    cd "$WORKDIR" && jj git init
-   botbox init --name ux-test --type api --tools beads,maw,crit,botbus,vessel --no-interactive
+   botbox init --name ux-test --type api --tools beads,maw,crit,rite,vessel --no-interactive
    ```
 
 2. **Spawn subagent** in that directory:
@@ -50,8 +50,8 @@ Validate that AGENTS.md (and its linked workflow docs) provide sufficient, clear
 ## Example Questions
 
 ### Identity
-- "How do you identify yourself when using tools like botbus or crit?"
-- Expected: `--agent <name>`, `botbus generate-name`
+- "How do you identify yourself when using tools like rite or crit?"
+- Expected: `--agent <name>`, `rite generate-name`
 
 ### Work Discovery
 - "If you want to find work to do, what steps should you take?"

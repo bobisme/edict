@@ -13,11 +13,11 @@ Setup, sync, and runtime for multi-agent workflows. Bootstraps projects with wor
 | **E11-L3** | Opus        | 133/140 (95%) | Full lifecycle: 2 projects, 3 agents, cross-project coordination, security review cycle — all from a single task-request |
 | **E10**    | Opus+Sonnet | 159/160 (99%) | 8-phase scripted lifecycle: 2 projects, 3 agents, cross-project bug discovery, review block/fix/LGTM                     |
 | **E11-L2** | Opus        | 97/105 (92%)  | Botty-native dev + reviewer: single project, review cycle through real hooks                                             |
-| **R5**     | Opus        | 70/70 (100%)  | Cross-project coordination: file bugs in external projects via bus channels                                              |
+| **R5**     | Opus        | 70/70 (100%)  | Cross-project coordination: file bugs in external projects via rite channels                                              |
 | **R4**     | Sonnet      | 95/95 (100%)  | Integration: full triage → work → review → merge lifecycle                                                               |
 | **R8**     | Opus        | 49/65 (75%)   | Adversarial review: multi-file security bugs requiring cross-file reasoning                                              |
 
-**Takeaway**: The full autonomous pipeline works. Agents spawn via hooks, coordinate across projects via bus channels, review each other's code via seal, and merge work through maw — all without human intervention. Friction comes from CLI typos, not protocol failures. See [evals/results/](evals/results/README.md) for all 32 runs and detailed findings.
+**Takeaway**: The full autonomous pipeline works. Agents spawn via hooks, coordinate across projects via rite channels, review each other's code via seal, and merge work through maw — all without human intervention. Friction comes from CLI typos, not protocol failures. See [evals/results/](evals/results/README.md) for all 32 runs and detailed findings.
 
 ## What is edict?
 
@@ -29,7 +29,7 @@ Setup, sync, and runtime for multi-agent workflows. Bootstraps projects with wor
 4. **Runs agent loops** as built-in subcommands (`dev-loop`, `worker-loop`, `reviewer-loop`, `responder`)
 5. **Provides protocol commands** that guide agents through state transitions (`protocol start`, `merge`, `finish`, etc.)
 
-It glues together 5 companion tools (bus, maw, br/bv, seal, vessel) into a cohesive workflow and provides the runtime that drives agent behavior.
+It glues together 5 companion tools (rite, maw, br/bv, seal, vessel) into a cohesive workflow and provides the runtime that drives agent behavior.
 
 ## Install
 
@@ -46,7 +46,7 @@ cargo install --path .
 edict init
 
 # Bootstrap with flags (for agents)
-edict init --name my-api --type api --tools bones,maw,seal,bus --reviewers security --no-interactive
+edict init --name my-api --type api --tools bones,maw,seal,rite --reviewers security --no-interactive
 
 # Sync workflow docs after edict upgrades
 edict sync
@@ -113,10 +113,10 @@ When edict updates, run `edict sync` to pull the latest workflow doc changes.
 
 ## Agent loops
 
-Agents are spawned automatically via botbus hooks when messages arrive on project channels. The spawn chain:
+Agents are spawned automatically via rite hooks when messages arrive on project channels. The spawn chain:
 
 ```
-message → botbus hook → vessel spawn → edict run responder → edict run dev-loop
+message → rite hook → vessel spawn → edict run responder → edict run dev-loop
 ```
 
 Agent loops are built-in Rust subcommands of the `edict` binary:
@@ -136,7 +136,7 @@ Edict coordinates these specialized tools that work together to enable multi-age
 
 | Tool                                            | Purpose                          | Key commands                                  | Repository                                          |
 | ----------------------------------------------- | -------------------------------- | --------------------------------------------- | --------------------------------------------------- |
-| **[botbus](https://github.com/bobisme/botbus)** | Communication, claims, presence  | `send`, `inbox`, `claim`, `release`, `agents` | Pub/sub messaging, resource locking, agent registry |
+| **[rite](https://github.com/bobisme/rite)** | Communication, claims, presence  | `send`, `inbox`, `claim`, `release`, `agents` | Pub/sub messaging, resource locking, agent registry |
 | **[maw](https://github.com/bobisme/maw)**       | Isolated jj workspaces           | `ws create`, `ws merge`, `ws destroy`         | Concurrent work isolation with Jujutsu VCS          |
 | **[bones](https://github.com/bobisme/bones)**   | Issue tracking and triage (`bn`) | `create`, `next`, `do`, `done`, `triage`      | Event-sourced issue tracker with built-in triage    |
 | **[seal](https://github.com/bobisme/seal)**  | Code review                      | `review`, `comment`, `lgtm`, `block`          | Asynchronous code review workflow                   |
@@ -144,7 +144,7 @@ Edict coordinates these specialized tools that work together to enable multi-age
 
 ### How they work together
 
-1. **botbus** provides the communication layer: agents send messages, claim resources (bones, workspaces), and discover each other
+1. **rite** provides the communication layer: agents send messages, claim resources (bones, workspaces), and discover each other
 2. **bones** tracks work items and priorities, exposing a triage interface (`bn next`, `bn triage`)
 3. **maw** creates isolated workspaces so multiple agents can work concurrently without conflicts
 4. **seal** enables code review: agents request reviews, reviewers comment, and changes merge after approval
@@ -159,22 +159,22 @@ Edict is a Rust project (edition 2024) with:
 - **Zero build step** beyond `cargo build` — workflow docs are embedded at compile time via `include_str!` and rendered with `minijinja`
 - **Agent loops as subcommands** — `dev-loop`, `worker-loop`, `reviewer-loop`, `responder` are built into the binary
 - **Protocol commands** — `edict protocol start/merge/finish` check preconditions and output guidance
-- **Config migrations** — `edict sync` runs version-based migrations to update `.edict.json` and botbus hooks
+- **Config migrations** — `edict sync` runs version-based migrations to update `.edict.json` and rite hooks
 
 See [CLAUDE.md](CLAUDE.md) for full architecture docs, development conventions, and companion tool deep dives.
 
 ## Cross-project feedback
 
-The `#projects` registry on botbus tracks which tools belong to which projects:
+The `#projects` registry on rite tracks which tools belong to which projects:
 
 ```bash
 # Find who owns a tool
-bus history projects -n 50 | grep "tools:.*vessel"
+rite history projects -n 50 | grep "tools:.*vessel"
 
 # File bugs in their repo
 cd ~/src/vessel
 br create --actor $AGENT --owner $AGENT --title="Bug: ..." --type=bug --priority=2
-bus send --agent $AGENT vessel "Filed bd-xyz: description @vessel-dev" -L feedback
+rite send --agent $AGENT vessel "Filed bd-xyz: description @vessel-dev" -L feedback
 ```
 
 See `.agents/edict/docs/report-issue.md` for full workflow.

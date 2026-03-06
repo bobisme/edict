@@ -251,7 +251,7 @@ mod tests {
 
     #[test]
     fn protocol_exit_error_to_exit_error() {
-        let err = ProtocolExitError::operational("cleanup", "bus not available");
+        let err = ProtocolExitError::operational("cleanup", "rite not available");
         let exit_err = err.into_exit_error();
         // ExitError::WithCode { code: 1, message: ... }
         assert_eq!(exit_err.exit_code(), ExitCode::from(1u8));

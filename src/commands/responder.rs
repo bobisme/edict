@@ -524,21 +524,21 @@ impl Responder {
         let multi_lead_max_leads = multi_lead_config.as_ref().map(|m| m.max_leads).unwrap_or(3);
 
         // Resolve agent name: CLI flag > config default
-        // Note: we intentionally ignore AGENT/BOTBUS_AGENT here because in hook context
+        // Note: we intentionally ignore AGENT/RITE_AGENT here because in hook context
         // they're set to the message *sender*, not the responder's identity.
         let agent = agent.unwrap_or(default_agent);
 
-        // Override AGENT/BOTBUS_AGENT env with the resolved identity so spawned tools
-        // (bus, seal, bn) use the responder's identity, not the message sender's.
+        // Override AGENT/RITE_AGENT env with the resolved identity so spawned tools
+        // (rite, seal, bn) use the responder's identity, not the message sender's.
         // SAFETY: single-threaded at this point in startup, before spawning any threads
         unsafe {
             std::env::set_var("AGENT", &agent);
-            std::env::set_var("BOTBUS_AGENT", &agent);
+            std::env::set_var("RITE_AGENT", &agent);
         }
 
         // Resolve channel from env (set by hook) — required
-        let channel = std::env::var("BOTBUS_CHANNEL")
-            .map_err(|_| anyhow!("BOTBUS_CHANNEL not set (should be set by hook)"))?;
+        let channel = std::env::var("RITE_CHANNEL")
+            .map_err(|_| anyhow!("RITE_CHANNEL not set (should be set by hook)"))?;
 
         if project.is_empty() {
             return Err(anyhow!(
@@ -575,7 +575,7 @@ impl Responder {
 
     // --- Bus helpers ---
 
-    fn bus_send(&self, message: &str, label: Option<&str>) -> anyhow::Result<()> {
+    fn rite_send(&self, message: &str, label: Option<&str>) -> anyhow::Result<()> {
         let mut args = vec!["send", "--agent", &self.agent, &self.channel, message];
         let label_owned;
         if let Some(l) = label {
@@ -583,18 +583,18 @@ impl Responder {
             args.push("-L");
             args.push(&label_owned);
         }
-        Tool::new("bus").args(&args).run_ok()?;
+        Tool::new("rite").args(&args).run_ok()?;
         Ok(())
     }
 
-    fn bus_mark_read(&self) {
-        let _ = Tool::new("bus")
+    fn rite_mark_read(&self) {
+        let _ = Tool::new("rite")
             .args(&["mark-read", "--agent", &self.agent, &self.channel])
             .run();
     }
 
-    fn bus_set_status(&self, status: &str, ttl: &str) {
-        let _ = Tool::new("bus")
+    fn rite_set_status(&self, status: &str, ttl: &str) {
+        let _ = Tool::new("rite")
             .args(&[
                 "statuses",
                 "set",
@@ -607,8 +607,8 @@ impl Responder {
             .run();
     }
 
-    fn bus_clear_status(&self) {
-        let _ = Tool::new("bus")
+    fn rite_clear_status(&self) {
+        let _ = Tool::new("rite")
             .args(&["statuses", "clear", "--agent", &self.agent])
             .run();
     }
@@ -616,7 +616,7 @@ impl Responder {
     fn refresh_claim(&self) {
         let uri = format!("agent://{}", self.agent);
         let ttl = format!("{}", self.wait_timeout + 120);
-        let _ = Tool::new("bus")
+        let _ = Tool::new("rite")
             .args(&[
                 "claims",
                 "stake",
@@ -631,7 +631,7 @@ impl Responder {
 
     fn release_agent_claim(&self) {
         let uri = format!("agent://{}", self.agent);
-        let _ = Tool::new("bus")
+        let _ = Tool::new("rite")
             .args(&["claims", "release", "--agent", &self.agent, &uri])
             .run();
     }
@@ -693,10 +693,10 @@ impl Responder {
         Ok(output.stdout)
     }
 
-    // --- Capture agent response from bus history ---
+    // --- Capture agent response from rite history ---
 
     fn capture_agent_response(&self) -> Option<String> {
-        let result = Tool::new("bus")
+        let result = Tool::new("rite")
             .args(&[
                 "history",
                 &self.channel,
@@ -726,7 +726,7 @@ impl Responder {
 
     fn wait_for_follow_up(&self) -> Option<BusMessage> {
         let timeout_str = self.wait_timeout.to_string();
-        let result = Tool::new("bus")
+        let result = Tool::new("rite")
             .args(&[
                 "wait",
                 "--agent",
@@ -743,7 +743,7 @@ impl Responder {
             .ok()?;
         if !result.success() {
             eprintln!(
-                "bus wait: {}",
+                "rite wait: {}",
                 if result.stderr.contains("timeout") {
                     "timeout"
                 } else {
@@ -779,9 +779,9 @@ You received a message in channel #{channel} from {sender}.
 
 INSTRUCTIONS:
 - Answer the question helpfully and concisely
-- Use --agent {agent} on ALL bus commands
+- Use --agent {agent} on ALL rite commands
 - If you need to check files, bones, or code to answer, do so
-- RESPOND using: bus send --agent {agent} {channel} "your response here"
+- RESPOND using: rite send --agent {agent} {channel} "your response here"
 - Do NOT create bones or workspaces — this is a conversation, not a work task
 - If during the conversation you realize this is actually a bug or work item that needs
   immediate attention, output <escalate>brief description of the issue</escalate> AFTER
@@ -816,8 +816,8 @@ describe a solution — just confirm receipt), then output
 Otherwise, just respond helpfully — I'll wait for follow-ups automatically.
 
 RULES:
-- Use --agent {agent} on ALL bus commands
-- RESPOND using: bus send --agent {agent} {channel} "your response"
+- Use --agent {agent} on ALL rite commands
+- RESPOND using: rite send --agent {agent} {channel} "your response"
 - Keep responses concise
 
 After posting your response, output: <promise>RESPONDED</promise>"#,
@@ -878,7 +878,7 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
                         eprintln!("Escalation detected: {reason}");
                         match self.bn_create(&reason, &reason, None) {
                             Ok(bone_id) => {
-                                let _ = self.bus_send(
+                                let _ = self.rite_send(
                                     &format!("Filed {bone_id}: {reason}"),
                                     Some("feedback"),
                                 );
@@ -886,7 +886,7 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
                             }
                             Err(e) => {
                                 eprintln!("Error creating bone from escalation: {e}");
-                                let _ = self.bus_send(
+                                let _ = self.rite_send(
                                     &format!("Got a work request but failed to file bone: {e}"),
                                     None,
                                 );
@@ -901,12 +901,12 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
                 }
             }
 
-            self.bus_mark_read();
+            self.rite_mark_read();
 
             eprintln!("\nWaiting {}s for follow-up...", self.wait_timeout);
             self.refresh_claim();
             let ttl = format!("{}s", self.wait_timeout + 60);
-            self.bus_set_status("Waiting for follow-up", &ttl);
+            self.rite_set_status("Waiting for follow-up", &ttl);
 
             let follow_up = match self.wait_for_follow_up() {
                 Some(msg) => msg,
@@ -961,7 +961,7 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
 
     fn handle_bone(&self, body: &str) -> anyhow::Result<()> {
         if body.is_empty() {
-            self.bus_send("Usage: !bone <description of what needs to be done>", None)?;
+            self.rite_send("Usage: !bone <description of what needs to be done>", None)?;
             return Ok(());
         }
 
@@ -986,7 +986,7 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
                     let msg = format!(
                         "Possible duplicates found:\n{match_list}\nUse `bn show <id>` to check. Send `!bone` again with more specific wording to force-create."
                     );
-                    self.bus_send(&msg, None)?;
+                    self.rite_send(&msg, None)?;
                     return Ok(());
                 }
             }
@@ -1012,11 +1012,11 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
 
         match self.bn_create(&title, &description, None) {
             Ok(bone_id) => {
-                self.bus_send(&format!("Created {bone_id}: {title}"), Some("feedback"))?;
+                self.rite_send(&format!("Created {bone_id}: {title}"), Some("feedback"))?;
             }
             Err(e) => {
                 eprintln!("Error creating bone: {e}");
-                self.bus_send(&format!("Failed to create bone: {e}"), None)?;
+                self.rite_send(&format!("Failed to create bone: {e}"), None)?;
             }
         }
         Ok(())
@@ -1053,7 +1053,7 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
             let claim_uri = format!("agent://{}", lead_name);
 
             // Try to stake the slot claim — atomic admission control
-            let claim_result = Tool::new("bus")
+            let claim_result = Tool::new("rite")
                 .args(&[
                     "claims",
                     "stake",
@@ -1088,7 +1088,7 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
                         "--env".into(),
                         format!("AGENT={lead_name}"),
                         "--env".into(),
-                        format!("BOTBUS_CHANNEL={}", self.channel),
+                        format!("RITE_CHANNEL={}", self.channel),
                     ]);
                     if let Some(tp) = crate::telemetry::current_traceparent() {
                         spawn_args.push("--env".into());
@@ -1123,20 +1123,20 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
                     match spawn_result {
                         Ok(out) if out.success() => {
                             spawned += 1;
-                            let _ = self.bus_send(
+                            let _ = self.rite_send(
                                 &format!("Lead {lead_name} spawned ({spawned}/{cap})."),
                                 Some("spawn-ack"),
                             );
                         }
                         Ok(out) => {
                             eprintln!("Failed to spawn lead {lead_name}: {}", out.stderr);
-                            let _ = Tool::new("bus")
+                            let _ = Tool::new("rite")
                                 .args(&["claims", "release", "--agent", &lead_name, &claim_uri])
                                 .run();
                         }
                         Err(e) => {
                             eprintln!("Failed to spawn lead {lead_name}: {e}");
-                            let _ = Tool::new("bus")
+                            let _ = Tool::new("rite")
                                 .args(&["claims", "release", "--agent", &lead_name, &claim_uri])
                                 .run();
                         }
@@ -1149,7 +1149,7 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
         }
 
         if spawned == 0 {
-            self.bus_send("No lead slots available.", Some("feedback"))?;
+            self.rite_send("No lead slots available.", Some("feedback"))?;
         }
 
         Ok(())
@@ -1157,7 +1157,7 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
 
     fn handle_mission(&self, body: &str) -> anyhow::Result<()> {
         if body.is_empty() {
-            self.bus_send("Usage: !mission <description of the desired outcome>", None)?;
+            self.rite_send("Usage: !mission <description of the desired outcome>", None)?;
             return Ok(());
         }
 
@@ -1187,12 +1187,12 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
             Ok(id) => id,
             Err(e) => {
                 eprintln!("Error creating mission bone: {e}");
-                self.bus_send(&format!("Failed to create mission bone: {e}"), None)?;
+                self.rite_send(&format!("Failed to create mission bone: {e}"), None)?;
                 return Ok(());
             }
         };
 
-        let _ = self.bus_send(
+        let _ = self.rite_send(
             &format!("Mission created: {bone_id}: {title}"),
             Some("feedback"),
         );
@@ -1215,7 +1215,7 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
                     eprintln!("Triage → work: \"{reason}\"");
                     match self.bn_create(&reason, &reason, None) {
                         Ok(bone_id) => {
-                            let _ = self.bus_send(
+                            let _ = self.rite_send(
                                 &format!("Filed {bone_id}: {reason}"),
                                 Some("feedback"),
                             );
@@ -1223,7 +1223,7 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
                         }
                         Err(e) => {
                             eprintln!("Error creating bone from triage: {e}");
-                            let _ = self.bus_send(
+                            let _ = self.rite_send(
                                 &format!("Got a work request but failed to file bone: {e}"),
                                 None,
                             );
@@ -1247,7 +1247,7 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
         if let Err(e) = self.run_agent(&prompt, &self.default_model) {
             eprintln!("Error running Claude: {e}");
         }
-        self.bus_mark_read();
+        self.rite_mark_read();
         Ok(())
     }
 
@@ -1257,12 +1257,12 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
         let mut current_message;
 
         while conversation_count < self.max_conversations {
-            self.bus_mark_read();
+            self.rite_mark_read();
 
             eprintln!("\nWaiting {}s for follow-up...", self.wait_timeout);
             self.refresh_claim();
             let ttl = format!("{}s", self.wait_timeout + 60);
-            self.bus_set_status("Waiting for follow-up", &ttl);
+            self.rite_set_status("Waiting for follow-up", &ttl);
 
             let follow_up = match self.wait_for_follow_up() {
                 Some(msg) => msg,
@@ -1330,7 +1330,7 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
                         eprintln!("Escalation detected: {reason}");
                         match self.bn_create(&reason, &reason, None) {
                             Ok(bone_id) => {
-                                let _ = self.bus_send(
+                                let _ = self.rite_send(
                                     &format!("Filed {bone_id}: {reason}"),
                                     Some("feedback"),
                                 );
@@ -1338,7 +1338,7 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
                             }
                             Err(e) => {
                                 eprintln!("Error creating bone from escalation: {e}");
-                                let _ = self.bus_send(
+                                let _ = self.rite_send(
                                     &format!("Got a work request but failed to file bone: {e}"),
                                     None,
                                 );
@@ -1363,7 +1363,7 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
     /// Returns true if we got the claim (proceed), false if already claimed (skip).
     fn stake_message_claim(&self, message_id: &str) -> bool {
         let uri = format!("message://{}/{}", self.project, message_id);
-        let result = Tool::new("bus")
+        let result = Tool::new("rite")
             .args(&[
                 "claims",
                 "stake",
@@ -1388,7 +1388,7 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
     /// (!mission, !dev, !leads) from the inbox and process them.
     /// `trigger_id` is the ID of the message that was already processed — skip it.
     fn drain_actionable_messages(&self, trigger_id: Option<&str>) -> anyhow::Result<()> {
-        let output = Tool::new("bus")
+        let output = Tool::new("rite")
             .args(&[
                 "inbox",
                 "--agent",
@@ -1470,18 +1470,18 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
     fn cleanup(&self) {
         eprintln!("Cleaning up...");
         self.release_agent_claim();
-        self.bus_clear_status();
+        self.rite_clear_status();
         eprintln!("Cleanup complete for {}.", self.agent);
     }
 
     // --- Fetch trigger message ---
 
     fn fetch_trigger_message(&self) -> anyhow::Result<BusMessage> {
-        let target_message_id = std::env::var("BOTBUS_MESSAGE_ID").ok();
+        let target_message_id = std::env::var("RITE_MESSAGE_ID").ok();
 
         // Try direct fetch by ID
         if let Some(ref msg_id) = target_message_id {
-            match Tool::new("bus")
+            match Tool::new("rite")
                 .args(&["messages", "get", msg_id, "--format", "json"])
                 .run_ok()
             {
@@ -1498,7 +1498,7 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
         }
 
         // Fall back to inbox
-        let output = Tool::new("bus")
+        let output = Tool::new("rite")
             .args(&[
                 "inbox",
                 "--agent",
@@ -1543,7 +1543,7 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
 
         // Set status
         let status_msg = format!("Routing message in #{}", self.channel);
-        self.bus_set_status(&status_msg, "10m");
+        self.rite_set_status(&status_msg, "10m");
 
         // Get the triggering message
         let trigger_message = match self.fetch_trigger_message() {
@@ -1689,11 +1689,11 @@ pub fn run_responder(
         // Use .new_process_group() so these subprocesses run in their own process
         // group and survive the SIGTERM that killed the parent's process group.
         let uri = format!("agent://{signal_agent}");
-        let _ = Tool::new("bus")
+        let _ = Tool::new("rite")
             .args(&["claims", "release", "--agent", &signal_agent, &uri])
             .new_process_group()
             .run();
-        let _ = Tool::new("bus")
+        let _ = Tool::new("rite")
             .args(&["statuses", "clear", "--agent", &signal_agent])
             .new_process_group()
             .run();

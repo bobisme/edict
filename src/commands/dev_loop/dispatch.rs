@@ -31,13 +31,13 @@ pub fn create_workspace() -> anyhow::Result<String> {
 
 /// Generate a random worker name suffix.
 pub fn generate_worker_name() -> anyhow::Result<String> {
-    let output = Tool::new("bus").arg("generate-name").run_ok()?;
+    let output = Tool::new("rite").arg("generate-name").run_ok()?;
     Ok(output.stdout.trim().to_string())
 }
 
 /// Stake a bone claim.
 pub fn claim_bone(agent: &str, project: &str, bone_id: &str, memo: &str) -> anyhow::Result<()> {
-    Tool::new("bus")
+    Tool::new("rite")
         .args(&[
             "claims",
             "stake",
@@ -53,7 +53,7 @@ pub fn claim_bone(agent: &str, project: &str, bone_id: &str, memo: &str) -> anyh
 
 /// Stake a workspace claim.
 pub fn claim_workspace(agent: &str, project: &str, ws: &str, memo: &str) -> anyhow::Result<()> {
-    Tool::new("bus")
+    Tool::new("rite")
         .args(&[
             "claims",
             "stake",

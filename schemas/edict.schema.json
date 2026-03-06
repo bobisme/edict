@@ -17,7 +17,7 @@
     "tools": {
       "default": {
         "bones": false,
-        "botbus": false,
+        "rite": false,
         "vessel": false,
         "crit": false,
         "maw": false
@@ -167,7 +167,7 @@
           "default": false,
           "type": "boolean"
         },
-        "botbus": {
+        "rite": {
           "default": false,
           "type": "boolean"
         },

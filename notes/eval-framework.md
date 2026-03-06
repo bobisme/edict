@@ -137,8 +137,8 @@ cat $EVAL_DIR/artifacts/phase1.stdout.log
 cat $EVAL_DIR/artifacts/phase5.prompt.md
 
 # Channel history
-BOTBUS_DATA_DIR=$BOTBUS_DATA_DIR bus history alpha -n 30
-BOTBUS_DATA_DIR=$BOTBUS_DATA_DIR bus history beta -n 20
+RITE_DATA_DIR=$RITE_DATA_DIR rite history alpha -n 30
+RITE_DATA_DIR=$RITE_DATA_DIR rite history beta -n 20
 
 # Bead state (use maw exec for v2 bare repo layout)
 cd $ALPHA_DIR && maw exec default -- br show $BEAD

@@ -46,7 +46,7 @@ impl ProtocolArgs {
         if let Ok(agent) = std::env::var("AGENT") {
             return agent;
         }
-        if let Ok(agent) = std::env::var("BOTBUS_AGENT") {
+        if let Ok(agent) = std::env::var("RITE_AGENT") {
             return agent;
         }
         config.default_agent()
@@ -78,7 +78,7 @@ pub enum ProtocolCommand {
     Start {
         /// Bone ID to start working on
         bone_id: String,
-        /// Omit bus send announcement (for dispatched workers)
+        /// Omit rite send announcement (for dispatched workers)
         #[arg(long)]
         dispatched: bool,
         /// Execute the steps immediately instead of outputting guidance
@@ -325,7 +325,7 @@ impl ProtocolCommand {
         let agent = args.resolve_agent(&config);
         let format = args.resolve_format();
 
-        // Collect state from bus and maw
+        // Collect state from rite and maw
         let ctx = context::ProtocolContext::collect(&project, &agent)?;
 
         // Check if bone exists and get its status
@@ -358,7 +358,7 @@ impl ProtocolCommand {
             Ok(Some(other_agent)) => {
                 guidance.blocked(format!("bone already claimed by agent '{}'", other_agent));
                 guidance.diagnostic(
-                    "Check current claims with: bus claims list --format json".to_string(),
+                    "Check current claims with: rite claims list --format json".to_string(),
                 );
                 return exit_policy::render_guidance(&guidance, format);
             }
@@ -419,9 +419,9 @@ impl ProtocolCommand {
         // 6. Comment bone with workspace info
         steps.push(shell::bn_comment_cmd(bone_id, "Started in workspace $WS"));
 
-        // 7. Announce on bus (unless --dispatched)
+        // 7. Announce on rite (unless --dispatched)
         if !dispatched {
-            steps.push(shell::bus_send_cmd(
+            steps.push(shell::rite_send_cmd(
                 &agent,
                 &project,
                 &format!("Working on {}: {}", bone_id, &bone_info.title),
@@ -431,7 +431,7 @@ impl ProtocolCommand {
 
         guidance.steps(steps);
         guidance.advise(
-            "Stake bone claim first, then create workspace, stake workspace claim, update bone status, and announce on bus.".to_string()
+            "Stake bone claim first, then create workspace, stake workspace claim, update bone status, and announce on rite.".to_string()
         );
 
         // If --execute is set and status is Ready, execute the steps

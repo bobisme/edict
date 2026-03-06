@@ -12,7 +12,7 @@ struct HookContext {
     maw_root: Option<std::path::PathBuf>,
     /// If in an edict project, the loaded config
     edict_config: Option<Config>,
-    /// Agent name from $AGENT or $BOTBUS_AGENT
+    /// Agent name from $AGENT or $RITE_AGENT
     agent: Option<String>,
 }
 
@@ -21,7 +21,7 @@ impl HookContext {
         let cwd = std::env::current_dir().unwrap_or_default();
 
         let agent = std::env::var("AGENT")
-            .or_else(|_| std::env::var("BOTBUS_AGENT"))
+            .or_else(|_| std::env::var("RITE_AGENT"))
             .ok()
             .filter(|a| validate_agent_name(a));
 
@@ -59,7 +59,7 @@ pub fn run_session_start() -> Result<()> {
     // 2. Agent identity + project channel (if edict project and agent set)
     if let Some(ref agent) = ctx.agent {
         if let Some(ref config) = ctx.edict_config {
-            println!("Agent ID for use with botbus/seal/bn: {agent}");
+            println!("Agent ID for use with rite/seal/bn: {agent}");
             println!("Project channel: {}", config.channel());
         }
     }
@@ -72,7 +72,7 @@ pub fn run_session_start() -> Result<()> {
     Ok(())
 }
 
-/// Run post-tool-call hook: check bus inbox + refresh claim
+/// Run post-tool-call hook: check rite inbox + refresh claim
 pub fn run_post_tool_call(hook_input: Option<&str>) -> Result<()> {
     let ctx = HookContext::detect();
 
@@ -80,8 +80,8 @@ pub fn run_post_tool_call(hook_input: Option<&str>) -> Result<()> {
         return Ok(());
     };
 
-    // 1. Check bus inbox
-    check_bus_inbox(&ctx, agent, hook_input)?;
+    // 1. Check rite inbox
+    check_rite_inbox(&ctx, agent, hook_input)?;
 
     // 2. Refresh claim if expiring
     refresh_claim_if_needed(agent);
@@ -92,7 +92,7 @@ pub fn run_post_tool_call(hook_input: Option<&str>) -> Result<()> {
 /// Run session-end hook: release claim + clear status
 pub fn run_session_end() -> Result<()> {
     let agent = std::env::var("AGENT")
-        .or_else(|_| std::env::var("BOTBUS_AGENT"))
+        .or_else(|_| std::env::var("RITE_AGENT"))
         .ok()
         .filter(|a| validate_agent_name(a));
 
@@ -102,12 +102,12 @@ pub fn run_session_end() -> Result<()> {
 
     let claim_uri = format!("agent://{agent}");
     let _ = run_command(
-        "bus",
+        "rite",
         &["claims", "release", "--agent", &agent, &claim_uri, "-q"],
         None,
     );
     let _ = run_command(
-        "bus",
+        "rite",
         &["statuses", "clear", "--agent", &agent, "-q"],
         None,
     );
@@ -120,7 +120,7 @@ pub fn run_session_end() -> Result<()> {
 fn stake_claim(agent: &str) {
     let claim_uri = format!("agent://{agent}");
     let _ = run_command(
-        "bus",
+        "rite",
         &[
             "claims", "stake", "--agent", agent, &claim_uri, "--ttl", "600", "-q",
         ],
@@ -133,7 +133,7 @@ fn refresh_claim_if_needed(agent: &str) {
     let refresh_threshold = 120;
 
     let list_output = run_command(
-        "bus",
+        "rite",
         &[
             "claims", "list", "--mine", "--agent", agent, "--format", "json",
         ],
@@ -152,7 +152,7 @@ fn refresh_claim_if_needed(agent: &str) {
                 && expires_in < refresh_threshold
             {
                 let _ = run_command(
-                    "bus",
+                    "rite",
                     &[
                         "claims", "refresh", "--agent", agent, &claim_uri, "--ttl", "600", "-q",
                     ],
@@ -163,7 +163,7 @@ fn refresh_claim_if_needed(agent: &str) {
     }
 }
 
-fn check_bus_inbox(ctx: &HookContext, agent: &str, _hook_input: Option<&str>) -> Result<()> {
+fn check_rite_inbox(ctx: &HookContext, agent: &str, _hook_input: Option<&str>) -> Result<()> {
     let channel = match ctx.channel() {
         Some(ch) => ch,
         None => return Ok(()), // No edict project, skip inbox check
@@ -173,7 +173,7 @@ fn check_bus_inbox(ctx: &HookContext, agent: &str, _hook_input: Option<&str>) ->
 
     // Check unread count
     let count_output = run_command(
-        "bus",
+        "rite",
         &[
             "inbox",
             &agent_flag,
@@ -197,7 +197,7 @@ fn check_bus_inbox(ctx: &HookContext, agent: &str, _hook_input: Option<&str>) ->
 
     // Fetch messages as JSON
     let inbox_json = run_command(
-        "bus",
+        "rite",
         &[
             "inbox",
             &agent_flag,
@@ -215,10 +215,10 @@ fn check_bus_inbox(ctx: &HookContext, agent: &str, _hook_input: Option<&str>) ->
 
     let messages = parse_inbox_previews(&inbox_json, Some(agent));
 
-    let mark_read_cmd = format!("bus inbox --agent {agent} --mentions --channels {channel} --mark-read");
+    let mark_read_cmd = format!("rite inbox --agent {agent} --mentions --channels {channel} --mark-read");
 
     let context = format!(
-        "STOP: You have {count} unread bus message(s) in #{channel}. Check if any need a response:\n{messages}\n\nTo read and respond: `{mark_read_cmd}`"
+        "STOP: You have {count} unread rite message(s) in #{channel}. Check if any need a response:\n{messages}\n\nTo read and respond: `{mark_read_cmd}`"
     );
 
     let hook_output = serde_json::json!({
