@@ -637,13 +637,13 @@ impl SyncArgs {
             return Ok(()); // No VCS found, skip commit
         }
 
-        // All paths that botbox sync may touch — git add is a no-op for unchanged files
+        // All paths that edict sync may touch — git add is a no-op for unchanged files
         let managed_paths: &[&str] = &[
-            ".agents/botbox/",
+            ".agents/edict/",
             "AGENTS.md",
             ".sealignore",
-            ".botbox.toml",
-            ".botbox.json",
+            ".edict.toml",
+            ".edict.json",
             ".gitignore",
         ];
 
