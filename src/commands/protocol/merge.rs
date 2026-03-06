@@ -222,7 +222,7 @@ pub fn execute(
                         );
 
                         let mut steps = Vec::new();
-                        steps.push(shell::crit_show_cmd(workspace, &review_id));
+                        steps.push(shell::seal_show_cmd(workspace, &review_id));
                         guidance.steps(steps);
 
                         print_guidance(&guidance, format)?;
@@ -240,7 +240,7 @@ pub fn execute(
                         );
 
                         let mut steps = Vec::new();
-                        steps.push(shell::crit_show_cmd(workspace, &review_id));
+                        steps.push(shell::seal_show_cmd(workspace, &review_id));
                         guidance.steps(steps);
 
                         print_guidance(&guidance, format)?;
@@ -264,7 +264,7 @@ pub fn execute(
                         .as_ref()
                         .map(|id| format!("Work from {}", id))
                         .unwrap_or_else(|| format!("Work from {}", workspace));
-                    steps.push(shell::crit_create_cmd(
+                    steps.push(shell::seal_create_cmd(
                         workspace,
                         "agent",
                         &title,
@@ -381,7 +381,7 @@ fn build_merge_steps(
     // 2. Mark review as merged (if review exists)
     if let Some(rid) = review_id {
         steps.push(format!(
-            "maw exec default -- crit reviews mark-merged {}",
+            "maw exec default -- seal reviews mark-merged {}",
             rid
         ));
     }
@@ -496,7 +496,7 @@ fn find_review_for_workspace(
 ) -> Option<(String, super::adapters::ReviewDetail)> {
     let output = std::process::Command::new("maw")
         .args([
-            "exec", workspace, "--", "crit", "reviews", "list", "--format", "json",
+            "exec", workspace, "--", "seal", "reviews", "list", "--format", "json",
         ])
         .output()
         .ok()?;
@@ -612,7 +612,7 @@ mod tests {
             guidance
                 .steps
                 .iter()
-                .any(|s| s.contains("crit reviews mark-merged cr-123"))
+                .any(|s| s.contains("seal reviews mark-merged cr-123"))
         );
         // br sync removed — bones is event-sourced
         assert!(guidance.steps.iter().any(|s| s.contains("maw push")));

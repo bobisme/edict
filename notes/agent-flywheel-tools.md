@@ -2,7 +2,7 @@
 
 Catalog of tools found on [agent-flywheel.com](https://agent-flywheel.com), with assessment of fit for the botbox ecosystem.
 
-**Botbox ecosystem context**: beads (issue tracking), maw (jj workspaces), botbus (messaging), crit (code review), vessel (agent runtime)
+**Botbox ecosystem context**: beads (issue tracking), maw (jj workspaces), botbus (messaging), seal (code review), vessel (agent runtime)
 
 ---
 
@@ -168,7 +168,7 @@ Catalog of tools found on [agent-flywheel.com](https://agent-flywheel.com), with
   - Pattern-based risk detection
   - SQLite persistence
 
-**Botbox fit**: **INTERESTING SAFETY CONCEPT**. Human-in-the-loop for dangerous operations. Could complement DCG. Our crit (code review) is similar but for code, not commands. **Worth exploring** for command approval workflow.
+**Botbox fit**: **INTERESTING SAFETY CONCEPT**. Human-in-the-loop for dangerous operations. Could complement DCG. Our seal (code review) is similar but for code, not commands. **Worth exploring** for command approval workflow.
 
 ---
 

@@ -13,7 +13,7 @@ Workflow docs are embedded in the `botbox` binary as templates in `src/templates
 | update.md | Post progress updates during work |
 | finish.md | Close bead, merge workspace, release claims, sync |
 | worker-loop.md | Full triage-start-work-finish lifecycle |
-| review-request.md | Request a code review via crit |
+| review-request.md | Request a code review via seal |
 | review-response.md | Handle reviewer feedback (fix/address/defer) and merge after LGTM |
 | review-loop.md | Reviewer agent loop until no pending reviews |
 | merge-check.md | Verify approval before merging |
@@ -24,7 +24,7 @@ Workflow docs are embedded in the `botbox` binary as templates in `src/templates
 ## When to Update Docs
 
 These docs define the protocol that every agent follows. Update them when:
-- A bus/maw/br/crit/vessel CLI changes its flags or behavior
+- A bus/maw/br/seal/vessel CLI changes its flags or behavior
 - You discover a missing step, ambiguity, or edge case during real agent runs
 - A new workflow is added (e.g., a new review strategy, a new teardown step)
 

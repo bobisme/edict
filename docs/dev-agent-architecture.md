@@ -8,7 +8,7 @@ The target architecture for a project-level dev agent (e.g., `terseid-dev`). Thi
 |-------|------|-------|-----------|
 | `<project>-dev` | Lead developer. Triages, grooms, dispatches, reviews, merges. | Opus or Sonnet | Long-running loop |
 | `<random-name>` | Worker. Claims one bead, implements, finishes. | Haiku (routine), Sonnet (moderate), Opus (complex) | Spawned per-task, exits when done |
-| `security-reviewer` | Reviews code for security issues via crit. | Opus | Spawned on demand via vessel |
+| `security-reviewer` | Reviews code for security issues via seal. | Opus | Spawned on demand via vessel |
 
 ### Model Selection
 
@@ -71,8 +71,8 @@ The dev agent doesn't wait — it continues its loop. On subsequent iterations i
 After work is complete (either by the dev agent or a worker), if review is enabled:
 
 **Request review:**
-1. Create a crit review: `crit reviews create --title "..." --change <jj-change-id>`
-2. Request reviewer: `crit reviews request <review-id> --reviewers security-reviewer`
+1. Create a seal review: `seal reviews create --title "..." --change <jj-change-id>`
+2. Request reviewer: `seal reviews request <review-id> --reviewers security-reviewer`
 3. Announce on botbus: `bus send --agent $AGENT $PROJECT "Review requested: <review-id> @security-reviewer" -L mesh -L review-request`
 
 **Ensure reviewer is running:**
@@ -83,12 +83,12 @@ After work is complete (either by the dev agent or a worker), if review is enabl
 The dev agent doesn't block. It continues its loop. Options:
 - Sleep briefly and check next iteration (simplest)
 - Use `bus wait --agent $AGENT -L review-done -t 120` for event-driven notification
-- Check `crit reviews list --agent $AGENT --status=open --format=json` each iteration for review status
+- Check `seal reviews list --agent $AGENT --status=open --format=json` each iteration for review status
 
 **Handle review response:**
 On the next iteration where a review response is visible:
 
-1. Read review: `crit review <review-id>`
+1. Read review: `seal review <review-id>`
 2. For each thread/comment:
    - **Fix**: Make the code change in a workspace, commit, comment "Fixed in <change>"
    - **Address**: Reply explaining why the current approach is correct (won't-fix with rationale)
@@ -97,7 +97,7 @@ On the next iteration where a review response is visible:
 4. Repeat until LGTM or all blockers resolved.
 
 **Merge:**
-1. Verify approval: `crit review <review-id>` — confirm LGTM, no blocks
+1. Verify approval: `seal review <review-id>` — confirm LGTM, no blocks
 2. Merge workspace: `maw ws merge $WS --destroy`
 3. Close bead, release claims, sync, announce
 
@@ -116,7 +116,7 @@ Agents coordinate through two channels:
 
 **botbus** — real-time messaging. Announcements, mentions, review requests. Agents check inbox each iteration. Labels (`-L review-request`, `-L task-done`, `-L review-done`) enable filtering.
 
-**beads + crit** — persistent state. Bead status (open/in_progress/closed), crit reviews (pending/approved/blocked), comments and threads. This is the source of truth; botbus messages are notifications.
+**beads + seal** — persistent state. Bead status (open/in_progress/closed), seal reviews (pending/approved/blocked), comments and threads. This is the source of truth; botbus messages are notifications.
 
 Claims (`bus claims stake`) prevent conflicts:
 - `agent://<name>` — agent lease (one instance at a time)

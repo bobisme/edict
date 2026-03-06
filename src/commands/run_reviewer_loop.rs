@@ -149,7 +149,7 @@ struct WorkspaceList {
     workspaces: Vec<WorkspaceInfo>,
 }
 
-/// Review information from crit inbox.
+/// Review information from seal inbox.
 #[derive(Debug, Deserialize)]
 struct ReviewInfo {
     #[serde(alias = "id")]
@@ -158,7 +158,7 @@ struct ReviewInfo {
     title: Option<String>,
 }
 
-/// Thread information from crit inbox.
+/// Thread information from seal inbox.
 #[derive(Debug, Deserialize)]
 struct ThreadInfo {
     #[serde(alias = "id")]
@@ -167,7 +167,7 @@ struct ThreadInfo {
     review_id: Option<String>,
 }
 
-/// crit inbox JSON output.
+/// seal inbox JSON output.
 #[derive(Debug, Deserialize)]
 struct CritInbox {
     #[serde(default)]
@@ -205,12 +205,12 @@ fn find_work(agent: &str) -> Result<Vec<WorkItem>> {
     let mut seen_threads = std::collections::HashSet::new();
 
     for ws in workspaces {
-        // Sync crit index to pick up newly created reviews (avoids race
-        // condition when reviewer spawns before crit has indexed a new review)
-        let _ = Tool::new("crit").in_workspace(&ws)?.args(&["sync"]).run();
+        // Sync seal index to pick up newly created reviews (avoids race
+        // condition when reviewer spawns before seal has indexed a new review)
+        let _ = Tool::new("seal").in_workspace(&ws)?.args(&["sync"]).run();
 
-        // Check crit inbox in this workspace
-        let result = Tool::new("crit")
+        // Check seal inbox in this workspace
+        let result = Tool::new("seal")
             .in_workspace(&ws)?
             .args(&["inbox", "--agent", agent, "--format", "json"])
             .run();
@@ -245,7 +245,7 @@ fn find_work(agent: &str) -> Result<Vec<WorkItem>> {
                 }
             }
         }
-        // Silently skip workspaces where crit fails (stale, no .crit, etc.)
+        // Silently skip workspaces where seal fails (stale, no .seal, etc.)
     }
 
     Ok(work_items)
@@ -294,7 +294,7 @@ fn build_prompt(
         let preamble = format!(
             "## WORKSPACE CONTEXT\n\
              All code for this review is in workspace **{ws}**.\n\
-             Use `maw exec {ws} -- ...` for ALL crit commands.\n\
+             Use `maw exec {ws} -- ...` for ALL seal commands.\n\
              Read source files from `ws/{ws}/...` — NOT `ws/default/`.\n\n",
         );
         base_prompt.insert_str(0, &preamble);
@@ -303,7 +303,7 @@ fn build_prompt(
     // Append workspace context
     if !work_items.is_empty() {
         base_prompt.push_str("\n\n## PENDING WORK (pre-discovered by reviewer-loop)\n\n");
-        base_prompt.push_str("The following reviews and threads need your attention. Workspace names are provided — use `maw exec <workspace> -- crit ...` to work in the correct workspace.\n\n");
+        base_prompt.push_str("The following reviews and threads need your attention. Workspace names are provided — use `maw exec <workspace> -- seal ...` to work in the correct workspace.\n\n");
 
         let reviews: Vec<_> = work_items.iter().filter(|w| !w.is_thread).collect();
         let threads: Vec<_> = work_items.iter().filter(|w| w.is_thread).collect();
@@ -317,7 +317,7 @@ fn build_prompt(
                     item.review_id, item.workspace, title
                 ));
                 base_prompt.push_str(&format!(
-                    "  → maw exec {} -- crit review {}\n",
+                    "  → maw exec {} -- seal review {}\n",
                     item.workspace, item.review_id
                 ));
             }
@@ -337,7 +337,7 @@ fn build_prompt(
                     thread_id, item.workspace, review_info
                 ));
                 base_prompt.push_str(&format!(
-                    "  → maw exec {} -- crit review {}\n",
+                    "  → maw exec {} -- seal review {}\n",
                     item.workspace, item.review_id
                 ));
             }
@@ -447,7 +447,7 @@ pub fn run_reviewer_loop(
         .or_else(|| config.project.default_agent.clone())
         .unwrap_or_else(|| config.default_agent());
 
-    // Set AGENT and BOTBUS_AGENT env so spawned tools (crit, bus) resolve identity correctly
+    // Set AGENT and BOTBUS_AGENT env so spawned tools (seal, bus) resolve identity correctly
     // SAFETY: single-threaded at this point in startup, before spawning any threads
     unsafe {
         env::set_var("AGENT", &agent);

@@ -104,7 +104,7 @@ fn load_config() -> anyhow::Result<Config> {
 
 /// Helper to run a tool and parse JSON output, returning None on failure
 fn run_json_tool(tool: &str, args: &[&str]) -> Option<String> {
-    if tool == "bn" || tool == "crit" {
+    if tool == "bn" || tool == "seal" {
         // These need to be run in the default workspace
         let mut output = Tool::new(tool);
         for arg in args {
@@ -206,7 +206,7 @@ pub fn run_iteration_start(agent_override: Option<&str>) -> anyhow::Result<()> {
 
     // 3. Pending reviews
     println!("{}", h2(&c, "Pending Reviews"));
-    let reviews_output = run_json_tool("crit", &["inbox", "--agent", agent]);
+    let reviews_output = run_json_tool("seal", &["inbox", "--agent", agent]);
     let mut has_reviews = false;
 
     if let Some(output) = reviews_output {
@@ -309,7 +309,7 @@ pub fn run_iteration_start(agent_override: Option<&str>) -> anyhow::Result<()> {
             hint(
                 &c,
                 &format!(
-                    "Start review: maw exec default -- crit inbox --agent {}",
+                    "Start review: maw exec default -- seal inbox --agent {}",
                     agent
                 )
             )

@@ -17,7 +17,7 @@ Setup, sync, and runtime for multi-agent workflows. Bootstraps projects with wor
 | **R4**     | Sonnet      | 95/95 (100%)  | Integration: full triage → work → review → merge lifecycle                                                               |
 | **R8**     | Opus        | 49/65 (75%)   | Adversarial review: multi-file security bugs requiring cross-file reasoning                                              |
 
-**Takeaway**: The full autonomous pipeline works. Agents spawn via hooks, coordinate across projects via bus channels, review each other's code via crit, and merge work through maw — all without human intervention. Friction comes from CLI typos, not protocol failures. See [evals/results/](evals/results/README.md) for all 32 runs and detailed findings.
+**Takeaway**: The full autonomous pipeline works. Agents spawn via hooks, coordinate across projects via bus channels, review each other's code via seal, and merge work through maw — all without human intervention. Friction comes from CLI typos, not protocol failures. See [evals/results/](evals/results/README.md) for all 32 runs and detailed findings.
 
 ## What is edict?
 
@@ -29,7 +29,7 @@ Setup, sync, and runtime for multi-agent workflows. Bootstraps projects with wor
 4. **Runs agent loops** as built-in subcommands (`dev-loop`, `worker-loop`, `reviewer-loop`, `responder`)
 5. **Provides protocol commands** that guide agents through state transitions (`protocol start`, `merge`, `finish`, etc.)
 
-It glues together 5 companion tools (bus, maw, br/bv, crit, vessel) into a cohesive workflow and provides the runtime that drives agent behavior.
+It glues together 5 companion tools (bus, maw, br/bv, seal, vessel) into a cohesive workflow and provides the runtime that drives agent behavior.
 
 ## Install
 
@@ -46,7 +46,7 @@ cargo install --path .
 edict init
 
 # Bootstrap with flags (for agents)
-edict init --name my-api --type api --tools bones,maw,crit,bus --reviewers security --no-interactive
+edict init --name my-api --type api --tools bones,maw,seal,bus --reviewers security --no-interactive
 
 # Sync workflow docs after edict upgrades
 edict sync
@@ -80,7 +80,7 @@ After `edict init`:
     update.md            # Post progress updates
     finish.md            # Close bead, merge workspace, release claims
     worker-loop.md       # Full triage-start-work-finish lifecycle
-    review-request.md    # Request code review via crit
+    review-request.md    # Request code review via seal
     review-response.md   # Handle reviewer feedback (fix/address/defer)
     review-loop.md       # Reviewer agent loop
     merge-check.md       # Verify approval before merge
@@ -124,7 +124,7 @@ Agent loops are built-in Rust subcommands of the `edict` binary:
 - **`edict run responder`** — Universal router. Routes `!dev`, `!q`, `!bead` prefixes; triages bare messages.
 - **`edict run dev-loop`** — Lead dev. Triages work, dispatches parallel workers, monitors progress, merges.
 - **`edict run worker-loop`** — Worker. Sequential: triage → start → work → review → finish.
-- **`edict run reviewer-loop`** — Reviewer. Processes crit reviews, votes LGTM or BLOCK.
+- **`edict run reviewer-loop`** — Reviewer. Processes seal reviews, votes LGTM or BLOCK.
 - **`edict run triage`** — Token-efficient triage. Wraps `bv --robot-triage` with scannable output.
 - **`edict run iteration-start`** — Combined status snapshot. Aggregates inbox, bones, reviews, claims.
 
@@ -139,7 +139,7 @@ Edict coordinates these specialized tools that work together to enable multi-age
 | **[botbus](https://github.com/bobisme/botbus)** | Communication, claims, presence  | `send`, `inbox`, `claim`, `release`, `agents` | Pub/sub messaging, resource locking, agent registry |
 | **[maw](https://github.com/bobisme/maw)**       | Isolated jj workspaces           | `ws create`, `ws merge`, `ws destroy`         | Concurrent work isolation with Jujutsu VCS          |
 | **[bones](https://github.com/bobisme/bones)**   | Issue tracking and triage (`bn`) | `create`, `next`, `do`, `done`, `triage`      | Event-sourced issue tracker with built-in triage    |
-| **[crit](https://github.com/bobisme/botcrit)**  | Code review                      | `review`, `comment`, `lgtm`, `block`          | Asynchronous code review workflow                   |
+| **[seal](https://github.com/bobisme/seal)**  | Code review                      | `review`, `comment`, `lgtm`, `block`          | Asynchronous code review workflow                   |
 | **[vessel](https://github.com/bobisme/vessel)**   | Agent runtime                    | `spawn`, `kill`, `tail`, `snapshot`           | Process management for AI agent loops               |
 
 ### How they work together
@@ -147,7 +147,7 @@ Edict coordinates these specialized tools that work together to enable multi-age
 1. **botbus** provides the communication layer: agents send messages, claim resources (bones, workspaces), and discover each other
 2. **bones** tracks work items and priorities, exposing a triage interface (`bn next`, `bn triage`)
 3. **maw** creates isolated workspaces so multiple agents can work concurrently without conflicts
-4. **crit** enables code review: agents request reviews, reviewers comment, and changes merge after approval
+4. **seal** enables code review: agents request reviews, reviewers comment, and changes merge after approval
 5. **vessel** spawns and manages agent processes, handling crashes and lifecycle
 
 **edict** configures projects to use these tools, keeps workflow docs synchronized, and runs the agent loops (`edict run dev-loop`, `edict run worker-loop`, etc.) that drive the entire workflow.

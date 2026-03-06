@@ -148,7 +148,7 @@ The agent reads the `status` field in stdout to decide what to do next. Exit 0 m
 Returned when the protocol command cannot produce valid guidance at all:
 
 - `.edict.toml (or legacy .botbox.toml) config not found
-- Companion tool missing or unavailable (bus, maw, br, crit)
+- Companion tool missing or unavailable (bus, maw, br, seal)
 - Subprocess output cannot be parsed
 - Command not yet implemented
 

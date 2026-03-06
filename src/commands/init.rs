@@ -14,7 +14,7 @@ use crate::subprocess::{Tool, run_command};
 use crate::template::render_agents_md;
 
 const PROJECT_TYPES: &[&str] = &["api", "cli", "frontend", "library", "monorepo", "tui"];
-const AVAILABLE_TOOLS: &[&str] = &["bones", "maw", "crit", "botbus", "vessel"];
+const AVAILABLE_TOOLS: &[&str] = &["bones", "maw", "seal", "botbus", "vessel"];
 const REVIEWER_ROLES: &[&str] = &["security"];
 const LANGUAGES: &[&str] = &["rust", "python", "node", "go", "typescript", "java"];
 const CONFIG_VERSION: &str = "1.0.16";
@@ -73,7 +73,7 @@ pub struct InitArgs {
     /// Project types (comma-separated: api, cli, frontend, library, monorepo, tui)
     #[arg(long, value_delimiter = ',')]
     pub r#type: Vec<String>,
-    /// Tools to enable (comma-separated: bones, maw, crit, botbus, vessel)
+    /// Tools to enable (comma-separated: bones, maw, seal, botbus, vessel)
     #[arg(long, value_delimiter = ',')]
     pub tools: Vec<String>,
     /// Reviewer roles (comma-separated: security)
@@ -216,30 +216,30 @@ impl InitArgs {
             }
         }
 
-        // Initialize crit
-        if choices.tools.contains(&"crit".to_string()) {
-            match run_command("crit", &["init"], Some(&project_dir)) {
-                Ok(_) => println!("Initialized crit"),
-                Err(_) => tracing::warn!("crit init failed (is crit installed?)"),
+        // Initialize seal
+        if choices.tools.contains(&"seal".to_string()) {
+            match run_command("seal", &["init"], Some(&project_dir)) {
+                Ok(_) => println!("Initialized seal"),
+                Err(_) => tracing::warn!("seal init failed (is seal installed?)"),
             }
 
-            // Create .critignore
-            let critignore_path = project_dir.join(".critignore");
-            if !critignore_path.exists() {
+            // Create .sealignore
+            let sealignore_path = project_dir.join(".sealignore");
+            if !sealignore_path.exists() {
                 fs::write(
-                    &critignore_path,
+                    &sealignore_path,
                     "# Ignore edict-managed files (prompts, scripts, hooks, journals)\n\
                      .agents/edict/\n\
                      \n\
                      # Ignore tool config and data files\n\
-                     .crit/\n\
+                     .seal/\n\
                      .maw.toml\n\
                      .edict.toml\n\
                      .botbox.json\n\
                      .claude/\n\
                      opencode.json\n",
                 )?;
-                println!("Created .critignore");
+                println!("Created .sealignore");
             }
         }
 
@@ -712,7 +712,7 @@ fn build_config(choices: &InitChoices) -> Config {
         tools: ToolsConfig {
             bones: choices.tools.contains(&"bones".to_string()),
             maw: choices.tools.contains(&"maw".to_string()),
-            crit: choices.tools.contains(&"crit".to_string()),
+            seal: choices.tools.contains(&"seal".to_string()),
             botbus: choices.tools.contains(&"botbus".to_string()),
             vessel: choices.tools.contains(&"vessel".to_string()),
         },
@@ -1119,11 +1119,11 @@ mod tests {
 
     #[test]
     fn test_detect_from_agents_md() {
-        let content = "# myproject\n\nProject type: cli, api\nTools: `bones`, `maw`, `crit`\nReviewer roles: security\n";
+        let content = "# myproject\n\nProject type: cli, api\nTools: `bones`, `maw`, `seal`\nReviewer roles: security\n";
         let detected = detect_from_agents_md(content);
         assert_eq!(detected.name, Some("myproject".to_string()));
         assert_eq!(detected.types, vec!["cli", "api"]);
-        assert_eq!(detected.tools, vec!["bones", "maw", "crit"]);
+        assert_eq!(detected.tools, vec!["bones", "maw", "seal"]);
         assert_eq!(detected.reviewers, vec!["security"]);
     }
 
@@ -1171,7 +1171,7 @@ mod tests {
         assert_eq!(config.project.channel, Some("test".to_string()));
         assert!(config.tools.bones);
         assert!(config.tools.maw);
-        assert!(!config.tools.crit);
+        assert!(!config.tools.seal);
         assert!(config.review.enabled);
         assert_eq!(config.review.reviewers, vec!["security"]);
         assert_eq!(

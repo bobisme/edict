@@ -122,7 +122,7 @@ impl DoctorArgs {
         let required_tools = vec![
             ("bones (bn)", config.tools.bones, "bn"),
             ("maw", config.tools.maw, "maw"),
-            ("crit", config.tools.crit, "crit"),
+            ("seal", config.tools.seal, "seal"),
             ("botbus (bus)", config.tools.botbus, "bus"),
             ("vessel", config.tools.vessel, "vessel"),
         ];

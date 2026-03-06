@@ -12,7 +12,7 @@ Edict orchestrates these companion projects (all ours):
 |---------|--------|---------|
 | **botbus** | `bus` | Channel-based messaging, claims (advisory locks), agent coordination |
 | **maw** | `maw` | Multi-agent workspaces — isolated Git worktrees for concurrent edits |
-| **botcrit** | `crit` | Distributed code review — threads, votes, LGTM/block workflow |
+| **seal** | `seal` | Distributed code review — threads, votes, LGTM/block workflow |
 | **vessel** | `vessel` | PTY-based agent runtime — spawn, manage, and communicate with agents |
 
 External (not ours, but used heavily):
@@ -120,33 +120,33 @@ Creates isolated Git worktrees so multiple agents can edit files concurrently wi
 
 **Critical rules:**
 - **Never merge or destroy the default workspace.** It is the main working copy — other workspaces merge INTO it.
-- Use `maw exec <ws> -- <command>` to run commands in workspace context (bn, crit, cargo, etc.)
+- Use `maw exec <ws> -- <command>` to run commands in workspace context (bn, seal, cargo, etc.)
 - Use `maw exec default -- bn ...` for bones commands (always in default workspace)
-- Use `maw exec <ws> -- crit ...` for review commands (always in the review's workspace)
+- Use `maw exec <ws> -- seal ...` for review commands (always in the review's workspace)
 - Workspace files are at `ws/<name>/` — use absolute paths for file operations
 - Never `cd` into a workspace directory and stay there — it breaks cleanup when the workspace is destroyed
 - Do not create git branches manually — `maw ws create` handles branching for you.
 
-### botcrit (`crit`) — Code Review
+### seal (`seal`) — Code Review
 
 Distributed code review system. Reviews are tied to workspace diffs, with file-line-based comment threads and LGTM/BLOCK voting.
 
 **Review lifecycle:**
 ```bash
-maw exec $WS -- crit reviews create --agent $AGENT --title "..." --reviewers <name>  # Create review + assign reviewer
-maw exec $WS -- crit reviews request <id> --reviewers <name> --agent $AGENT  # Re-assign reviewer (after fixes)
-maw exec $WS -- crit review <id> [--format json] [--since time]  # Show full review with threads
-maw exec $WS -- crit comment --file <path> --line <n> <review-id> "msg"  # Add line comment
-maw exec $WS -- crit reply <thread-id> "message"                 # Reply to existing thread
-maw exec $WS -- crit lgtm <review-id> [-m "message"]             # Approve
-maw exec $WS -- crit block <review-id> --reason "..."            # Block (request changes)
-maw exec default -- crit reviews mark-merged <review-id>          # Mark as merged after workspace merge
-maw exec $WS -- crit inbox --agent $AGENT                        # Show reviews/threads needing attention
+maw exec $WS -- seal reviews create --agent $AGENT --title "..." --reviewers <name>  # Create review + assign reviewer
+maw exec $WS -- seal reviews request <id> --reviewers <name> --agent $AGENT  # Re-assign reviewer (after fixes)
+maw exec $WS -- seal review <id> [--format json] [--since time]  # Show full review with threads
+maw exec $WS -- seal comment --file <path> --line <n> <review-id> "msg"  # Add line comment
+maw exec $WS -- seal reply <thread-id> "message"                 # Reply to existing thread
+maw exec $WS -- seal lgtm <review-id> [-m "message"]             # Approve
+maw exec $WS -- seal block <review-id> --reason "..."            # Block (request changes)
+maw exec default -- seal reviews mark-merged <review-id>          # Mark as merged after workspace merge
+maw exec $WS -- seal inbox --agent $AGENT                        # Show reviews/threads needing attention
 ```
 
 **Key details:**
-- Always run crit commands via `maw exec <ws> --` in the workspace context
-- Reviewers iterate workspaces via `maw ws list` + `maw exec $WS -- crit inbox` per workspace
+- Always run seal commands via `maw exec <ws> --` in the workspace context
+- Reviewers iterate workspaces via `maw ws list` + `maw exec $WS -- seal inbox` per workspace
 - Agent identity via `--agent` flag or `CRIT_AGENT`/`BOTBUS_AGENT` env vars
 - `--user` flag switches to human identity ($USER) for manual reviews
 
@@ -212,7 +212,7 @@ Sequential: one bone per iteration. Triage → start → work → review → fin
 3. Start: claim bone, create workspace, announce
 4. Work: implement in workspace using absolute paths
 5. Stuck check: 2 failed attempts = post and move on
-6. Review: `crit reviews create`, request reviewer, STOP and wait
+6. Review: `seal reviews create`, request reviewer, STOP and wait
 7. Finish: close bone, merge workspace (`maw ws merge --destroy`), release claims
 8. Release check: unreleased feat/fix → bump version
 
@@ -225,7 +225,7 @@ Processes reviews, votes LGTM or BLOCK, leaves severity-tagged comments.
 **Role detection:** Agent name suffix determines role (e.g., `myproject-security` → loads `reviewer-security.md` prompt). Falls back to generic `reviewer.md`.
 
 **Per iteration:**
-1. Iterate workspaces via `maw ws list`, check `maw exec $WS -- crit inbox` per workspace
+1. Iterate workspaces via `maw ws list`, check `maw exec $WS -- seal inbox` per workspace
 2. Read review diff and source files from workspace (`ws/$WS/...`)
 3. Comment with severity: CRITICAL, HIGH, MEDIUM, LOW, INFO
 4. Vote: BLOCK if CRITICAL/HIGH issues, LGTM otherwise
@@ -257,11 +257,11 @@ Subcommands require specific companion tools to be enabled in `.edict.toml`:
 
 | Subcommand | Requires |
 |------------|----------|
-| `worker-loop`, `dev-loop` | bones + maw + crit + botbus |
-| `reviewer-loop` | crit + botbus |
+| `worker-loop`, `dev-loop` | bones + maw + seal + botbus |
+| `reviewer-loop` | seal + botbus |
 | `responder` | botbus |
 | `triage` | bones |
-| `iteration-start` | bones + crit + botbus |
+| `iteration-start` | bones + seal + botbus |
 
 ## Claude Code Hooks
 
@@ -297,7 +297,7 @@ Migrations run automatically during `edict sync` when the config version is behi
 
 ### Init vs Sync
 
-**`edict init`** does everything: interactive config, creates `.agents/edict/`, copies all files, generates AGENTS.md + `.edict.toml`, initializes external tools (`bn init`, `maw init`, `crit init`), registers botbus hooks, seeds initial bones, creates .gitignore.
+**`edict init`** does everything: interactive config, creates `.agents/edict/`, copies all files, generates AGENTS.md + `.edict.toml`, initializes external tools (`bn init`, `maw init`, `seal init`), registers botbus hooks, seeds initial bones, creates .gitignore.
 
 **`edict sync`** is incremental: checks staleness, runs pending migrations, updates only changed components, preserves user edits outside managed markers. `--check` mode exits non-zero without changing anything (CI use).
 
@@ -313,7 +313,7 @@ Migrations run automatically during `edict sync` when the config version is behi
     "channel": "myproject",
     "installCommand": "just install"
   },
-  "tools": { "bones": true, "maw": true, "crit": true, "botbus": true, "vessel": true },
+  "tools": { "bones": true, "maw": true, "seal": true, "botbus": true, "vessel": true },
   "review": { "enabled": true, "reviewers": ["security"] },
   "pushMain": false,
   "agents": {
@@ -382,12 +382,12 @@ maw exec default -- just test       # cargo test
 **Manual testing**: ALWAYS use isolated data directories to avoid polluting actual project data:
 
 ```bash
-BOTBUS_DATA_DIR=/tmp/test-botbus edict init --name test --type cli --tools bones,maw,crit,botbus --no-interactive
+BOTBUS_DATA_DIR=/tmp/test-botbus edict init --name test --type cli --tools bones,maw,seal,botbus --no-interactive
 BOTBUS_DATA_DIR=/tmp/test-botbus bus hooks list
 rm -rf /tmp/test-botbus
 ```
 
-**Applies to**: Any manual testing with bus, vessel, crit, maw, or bn commands during development.
+**Applies to**: Any manual testing with bus, vessel, seal, maw, or bn commands during development.
 
 ## Conventions
 
@@ -425,7 +425,7 @@ Drop whatever you're doing and run the tail command. Analyze the output and repo
 4. Check workspace: `maw ws list` — is workspace still alive?
 
 ### Review not being picked up
-1. `maw exec $WS -- crit inbox --agent <reviewer>` — does it show the review? (check each workspace)
+1. `maw exec $WS -- seal inbox --agent <reviewer>` — does it show the review? (check each workspace)
 2. Verify the @mention: the bus message MUST contain `@<project>-<role>` (no @ prefix in hook registration, but @ in message)
 3. Check hook: `bus hooks list` — is there a mention hook for that reviewer?
 4. Verify reviewer workspace path: reviewer reads code from workspace, not project root
@@ -435,7 +435,7 @@ Drop whatever you're doing and run the tail command. Analyze the output and repo
 - **Re-review**: Reviewers must read from workspace path (`ws/$WS/`) to see fixed code, not main
 - **Duplicate bones**: Check existing bones before creating from inbox messages
 - **bn via maw exec**: Always use `maw exec default -- bn ...` — never run `bn` directly
-- **crit via maw exec**: Always use `maw exec $WS -- crit ...` — crit runs in workspace context
+- **seal via maw exec**: Always use `maw exec $WS -- seal ...` — seal runs in workspace context
 - **Mention format**: `--mention "agent-name"` in hook registration (no @), but `@agent-name` in bus messages
 
 ## Eval Framework
@@ -507,8 +507,8 @@ project-root/          ← bare repo (no source files here)
 - Agent workspaces (`ws/<name>/`) are isolated Git worktrees managed by maw
 - Use `maw exec <ws> -- <command>` to run commands in a workspace context
 - Use `maw exec default -- bn ...` for bones commands (always in default workspace)
-- Use `maw exec <ws> -- crit ...` for review commands (always in the review's workspace)
-- Never run `bn` or `crit` directly — always go through `maw exec`
+- Use `maw exec <ws> -- seal ...` for review commands (always in the review's workspace)
+- Never run `bn` or `seal` directly — always go through `maw exec`
 - Do not run `jj`; this workflow is Git + maw.
 
 ### Bones Quick Reference
@@ -610,7 +610,7 @@ bus claims release --agent $AGENT --all  # when done
 Use `@<project>-<role>` mentions to request reviews:
 
 ```bash
-maw exec $WS -- crit reviews request <review-id> --reviewers $PROJECT-security --agent $AGENT
+maw exec $WS -- seal reviews request <review-id> --reviewers $PROJECT-security --agent $AGENT
 bus send --agent $AGENT $PROJECT "Review requested: <review-id> @$PROJECT-security" -L review-request
 ```
 
@@ -630,7 +630,7 @@ Agents communicate via bus channels. You don't need to be expert on everything �
 
 **Conversations**: After sending a question, use `bus wait -c <channel> --mention -t <seconds>` to block until the other agent replies. This enables back-and-forth conversations across channels.
 
-**Project experts**: Each `<project>-dev` is the expert on their project. When stuck on a companion tool (bus, maw, crit, vessel, bn), post a question to its project channel instead of guessing.
+**Project experts**: Each `<project>-dev` is the expert on their project. When stuck on a companion tool (bus, maw, seal, vessel, bn), post a question to its project channel instead of guessing.
 
 ### Cross-Project Communication
 

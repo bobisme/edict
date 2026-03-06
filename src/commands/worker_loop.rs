@@ -262,7 +262,7 @@ then STOP. Do not start a second task — the outer loop handles iteration."#
          - Run: maw exec default -- bn comments <id> | grep "Review created:"
          - If found, extract <review-id> and skip to requesting review (don't create duplicate)
        Create review with reviewer assignment (only if none exists):
-         - maw exec $WS -- crit reviews create --agent {agent} --title "<id>: <title>" --description "<summary>" --reviewers {project}-security
+         - maw exec $WS -- seal reviews create --agent {agent} --title "<id>: <title>" --description "<summary>" --reviewers {project}-security
          - IMMEDIATELY record: maw exec default -- bn bone comment add <id> "Review created: <review-id> in workspace $WS"
        bus statuses set --agent {agent} "Review: <review-id>".
        Spawn reviewer via @mention: bus send --agent {agent} {project} "Review requested: <review-id> for <id> @{project}-security" -L review-request
@@ -321,7 +321,7 @@ then STOP. Do not start a second task — the outer loop handles iteration."#
    Read the output carefully. If status is Ready, run the suggested commands.
    If it fails (exit 1 = command unavailable), fall back to manual finish:
      If a review was conducted:
-       maw exec default -- crit reviews mark-merged <review-id> --agent {agent}.
+       maw exec default -- seal reviews mark-merged <review-id> --agent {agent}.
      RISK:CRITICAL CHECK — Before merging a risk:critical bone:
        Verify human approval exists: bus history {project} -n 50 -L review-request | look for approval message referencing this bone/review from an authorized approver.
        If no approval found, do NOT merge. Post: bus send --agent {agent} {project} "Waiting for human approval on risk:critical <id>" -L review-request. STOP.
@@ -347,13 +347,13 @@ then STOP. Do not start a second task — the outer loop handles iteration."#
         format!(
             r#"You are worker agent "{agent}" for project "{project}".
 
-IMPORTANT: Use --agent {agent} on ALL bus and crit commands. bn resolves agent identity from $AGENT/$BOTBUS_AGENT env automatically. Set EDICT_PROJECT={project}.
+IMPORTANT: Use --agent {agent} on ALL bus and seal commands. bn resolves agent identity from $AGENT/$BOTBUS_AGENT env automatically. Set EDICT_PROJECT={project}.
 
 CRITICAL - HUMAN MESSAGE PRIORITY: If you see a system reminder with "STOP:" showing unread bus messages, these are from humans or other agents trying to reach you. IMMEDIATELY check inbox and respond before continuing your current task. Human questions, clarifications, and redirects take priority over heads-down work.
 
-COMMAND PATTERN — maw exec: All bn commands run in the default workspace. All crit commands run in their workspace.
+COMMAND PATTERN — maw exec: All bn commands run in the default workspace. All seal commands run in their workspace.
   bn:   maw exec default -- bn <args>
-  crit: maw exec $WS -- crit <args>
+  seal: maw exec $WS -- seal <args>
   other: maw exec $WS -- <command>           (cargo test, etc.)
 
 VERSION CONTROL: This project uses Git + maw. Do NOT run jj commands.
@@ -374,16 +374,16 @@ At the end of your work, output exactly one of these completion signals:
      - Run: maw exec default -- bn comments <bone-id> to understand what was done before and what remains.
      - Look for workspace info in comments (workspace name and path).
      - If a "Review created: <review-id>" comment exists:
-       * Find the review: maw exec $WS -- crit review <review-id>
-       * Check review status: maw exec $WS -- crit review <review-id>
+       * Find the review: maw exec $WS -- seal review <review-id>
+       * Check review status: maw exec $WS -- seal review <review-id>
        * If LGTM (approved): proceed to FINISH (step 7) — merge the review and close the bone.
        * If BLOCKED (changes requested): fix the issues, then re-request review:
-         1. Read threads: maw exec $WS -- crit review <review-id> (threads show inline with comments)
+         1. Read threads: maw exec $WS -- seal review <review-id> (threads show inline with comments)
          2. For each unresolved thread with reviewer feedback:
             - Fix the code in the workspace (use absolute WS_PATH for file edits)
-            - Reply: maw exec $WS -- crit reply <thread-id> --agent {agent} "Fixed: <what you did>"
-            - Resolve: maw exec $WS -- crit threads resolve <thread-id> --agent {agent}
-         3. Re-request: maw exec $WS -- crit reviews request <review-id> --reviewers {project}-security --agent {agent}
+            - Reply: maw exec $WS -- seal reply <thread-id> --agent {agent} "Fixed: <what you did>"
+            - Resolve: maw exec $WS -- seal threads resolve <thread-id> --agent {agent}
+         3. Re-request: maw exec $WS -- seal reviews request <review-id> --reviewers {project}-security --agent {agent}
          5. Announce: bus send --agent {agent} {project} "Review updated: <review-id> — addressed feedback @{project}-security" -L review-response
          STOP this iteration — wait for re-review.
        * If PENDING (no votes yet): STOP this iteration. Wait for the reviewer.
@@ -487,10 +487,10 @@ Key rules:
 - Exactly one small task per cycle.
 - Always finish or release before stopping.
 - If claim denied, pick something else.
-- All bus and crit commands use --agent {agent}.
+- All bus and seal commands use --agent {agent}.
 - All file operations use the absolute workspace path from maw ws create output. Do NOT cd into the workspace and stay there.
 - All bn commands: maw exec default -- bn ...
-- All crit/git commands in a workspace: maw exec $WS -- crit/git ...
+- All seal/git commands in a workspace: maw exec $WS -- seal/git ...
 - If a tool behaves unexpectedly, report it: bus send --agent {agent} {project} "Tool issue: <details>" -L tool-issue.
 - STOP after completing one task or determining no work. Do not loop.
 - Always output <promise>COMPLETE</promise> or <promise>BLOCKED</promise> at the end.

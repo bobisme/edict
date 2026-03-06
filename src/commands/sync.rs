@@ -641,7 +641,7 @@ impl SyncArgs {
         let managed_paths: &[&str] = &[
             ".agents/botbox/",
             "AGENTS.md",
-            ".critignore",
+            ".sealignore",
             ".botbox.toml",
             ".botbox.json",
             ".gitignore",
@@ -1308,7 +1308,7 @@ fn migrate_vessel_hooks(config: &Config, project_root: &Path, config_path: &Path
     }
 }
 
-/// Migrate beads → bones: config key, data directory, .maw.toml, .critignore, .gitignore.
+/// Migrate beads → bones: config key, data directory, .maw.toml, .sealignore, .gitignore.
 ///
 /// This is idempotent — checks each step before acting.
 fn migrate_beads_to_bones(project_root: &Path, config_path: &Path) -> Result<()> {
@@ -1377,10 +1377,10 @@ fn migrate_beads_to_bones(project_root: &Path, config_path: &Path) -> Result<()>
         }
     }
 
-    // 4. Update .critignore: remove .beads/ line (bones handles its own critignore)
-    let critignore = project_root.join(".critignore");
-    if critignore.exists() {
-        let content = fs::read_to_string(&critignore)?;
+    // 4. Update .sealignore: remove .beads/ line (bones handles its own sealignore)
+    let sealignore = project_root.join(".sealignore");
+    if sealignore.exists() {
+        let content = fs::read_to_string(&sealignore)?;
         if content.contains(".beads/") {
             let updated: String = content
                 .lines()
@@ -1392,8 +1392,8 @@ fn migrate_beads_to_bones(project_root: &Path, config_path: &Path) -> Result<()>
             } else {
                 updated
             };
-            fs::write(&critignore, updated)?;
-            println!("Updated .critignore: removed .beads/ entry");
+            fs::write(&sealignore, updated)?;
+            println!("Updated .sealignore: removed .beads/ entry");
         }
     }
 

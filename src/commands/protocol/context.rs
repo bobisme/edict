@@ -147,16 +147,16 @@ impl ProtocolContext {
         Ok(bone)
     }
 
-    /// List reviews in a workspace by calling `maw exec <ws> -- crit reviews list --format json`.
+    /// List reviews in a workspace by calling `maw exec <ws> -- seal reviews list --format json`.
     ///
-    /// Returns empty list if no reviews exist or crit is not configured.
+    /// Returns empty list if no reviews exist or seal is not configured.
     pub fn reviews_in_workspace(
         &self,
         workspace: &str,
     ) -> Result<Vec<adapters::ReviewSummary>, ContextError> {
         Self::validate_workspace_name(workspace)?;
         let output = Self::run_subprocess(&[
-            "maw", "exec", workspace, "--", "crit", "reviews", "list", "--format", "json",
+            "maw", "exec", workspace, "--", "seal", "reviews", "list", "--format", "json",
         ]);
         match output {
             Ok(json) => {
@@ -166,13 +166,13 @@ impl ProtocolContext {
                 Ok(resp.reviews)
             }
             Err(_) => {
-                // crit may not be configured or workspace may not have reviews
+                // seal may not be configured or workspace may not have reviews
                 Ok(Vec::new())
             }
         }
     }
 
-    /// Fetch review status by calling `maw exec <ws> -- crit review <id> --format json`.
+    /// Fetch review status by calling `maw exec <ws> -- seal review <id> --format json`.
     pub fn review_status(
         &self,
         review_id: &str,
@@ -181,7 +181,7 @@ impl ProtocolContext {
         Self::validate_review_id(review_id)?;
         Self::validate_workspace_name(workspace)?;
         let output = Self::run_subprocess(&[
-            "maw", "exec", workspace, "--", "crit", "review", review_id, "--format", "json",
+            "maw", "exec", workspace, "--", "seal", "review", review_id, "--format", "json",
         ])?;
         let review_resp: ReviewDetailResponse = serde_json::from_str(&output)
             .map_err(|e| ContextError::ParseFailed(format!("review {review_id}: {e}")))?;

@@ -33,8 +33,8 @@ project-root/          ← bare repo (no source files here)
 - Agent workspaces (`ws/<name>/`) are isolated Git worktrees managed by maw
 - Use `maw exec <ws> -- <command>` to run commands in a workspace context
 - Use `maw exec default -- bn ...` for bones commands (always in default workspace)
-- Use `maw exec <ws> -- crit ...` for review commands (always in the review's workspace)
-- Never run `bn` or `crit` directly — always go through `maw exec`
+- Use `maw exec <ws> -- seal ...` for review commands (always in the review's workspace)
+- Never run `bn` or `seal` directly — always go through `maw exec`
 - Do not run `jj`; this workflow is Git + maw.
 
 ### Bones Quick Reference
@@ -136,7 +136,7 @@ bus claims release --agent $AGENT --all  # when done
 Use `@<project>-<role>` mentions to request reviews:
 
 ```bash
-maw exec $WS -- crit reviews request <review-id> --reviewers $PROJECT-security --agent $AGENT
+maw exec $WS -- seal reviews request <review-id> --reviewers $PROJECT-security --agent $AGENT
 bus send --agent $AGENT $PROJECT "Review requested: <review-id> @$PROJECT-security" -L review-request
 ```
 
@@ -156,7 +156,7 @@ Agents communicate via bus channels. You don't need to be expert on everything �
 
 **Conversations**: After sending a question, use `bus wait -c <channel> --mention -t <seconds>` to block until the other agent replies. This enables back-and-forth conversations across channels.
 
-**Project experts**: Each `<project>-dev` is the expert on their project. When stuck on a companion tool (bus, maw, crit, vessel, bn), post a question to its project channel instead of guessing.
+**Project experts**: Each `<project>-dev` is the expert on their project. When stuck on a companion tool (bus, maw, seal, vessel, bn), post a question to its project channel instead of guessing.
 
 ### Cross-Project Communication
 

@@ -354,8 +354,8 @@ pub fn ws_merge_cmd(workspace: &str, message: &str) -> String {
     )
 }
 
-/// Build: `maw exec <ws> -- crit reviews create --agent <agent> --title '<title>' --reviewers <reviewers>`
-pub fn crit_create_cmd(workspace: &str, agent: &str, title: &str, reviewers: &str) -> String {
+/// Build: `maw exec <ws> -- seal reviews create --agent <agent> --title '<title>' --reviewers <reviewers>`
+pub fn seal_create_cmd(workspace: &str, agent: &str, title: &str, reviewers: &str) -> String {
     validate_identifier("agent", agent).expect("invalid agent name");
     let agent_safe = safe_ident(agent);
 
@@ -373,7 +373,7 @@ pub fn crit_create_cmd(workspace: &str, agent: &str, title: &str, reviewers: &st
     };
 
     format!(
-        "maw exec {} -- crit reviews create --agent {} --title {} --reviewers {}",
+        "maw exec {} -- seal reviews create --agent {} --title {} --reviewers {}",
         workspace_safe,
         agent_safe,
         shell_escape(title),
@@ -381,8 +381,8 @@ pub fn crit_create_cmd(workspace: &str, agent: &str, title: &str, reviewers: &st
     )
 }
 
-/// Build: `maw exec <ws> -- crit reviews request <id> --reviewers <reviewers> --agent <agent>`
-pub fn crit_request_cmd(workspace: &str, review_id: &str, reviewers: &str, agent: &str) -> String {
+/// Build: `maw exec <ws> -- seal reviews request <id> --reviewers <reviewers> --agent <agent>`
+pub fn seal_request_cmd(workspace: &str, review_id: &str, reviewers: &str, agent: &str) -> String {
     validate_identifier("agent", agent).expect("invalid agent name");
     let agent_safe = safe_ident(agent);
 
@@ -406,13 +406,13 @@ pub fn crit_request_cmd(workspace: &str, review_id: &str, reviewers: &str, agent
     };
 
     format!(
-        "maw exec {} -- crit reviews request {} --reviewers {} --agent {}",
+        "maw exec {} -- seal reviews request {} --reviewers {} --agent {}",
         workspace_safe, review_id_safe, reviewers_safe, agent_safe
     )
 }
 
-/// Build: `maw exec <ws> -- crit review <id>`
-pub fn crit_show_cmd(workspace: &str, review_id: &str) -> String {
+/// Build: `maw exec <ws> -- seal review <id>`
+pub fn seal_show_cmd(workspace: &str, review_id: &str) -> String {
     // Validate workspace and review_id before use
     let workspace_safe = if validate_workspace_name(workspace).is_ok() {
         safe_ident(workspace)
@@ -427,7 +427,7 @@ pub fn crit_show_cmd(workspace: &str, review_id: &str) -> String {
     };
 
     format!(
-        "maw exec {} -- crit review {}",
+        "maw exec {} -- seal review {}",
         workspace_safe, review_id_safe
     )
 }
@@ -751,8 +751,8 @@ mod tests {
     }
 
     #[test]
-    fn crit_create_with_escaping() {
-        let cmd = crit_create_cmd(
+    fn seal_create_with_escaping() {
+        let cmd = seal_create_cmd(
             "frost-castle",
             "crimson-storm",
             "feat: add login",
@@ -760,13 +760,13 @@ mod tests {
         );
         assert_eq!(
             cmd,
-            "maw exec frost-castle -- crit reviews create --agent crimson-storm --title 'feat: add login' --reviewers myproject-security"
+            "maw exec frost-castle -- seal reviews create --agent crimson-storm --title 'feat: add login' --reviewers myproject-security"
         );
     }
 
     #[test]
-    fn crit_request_basic() {
-        let cmd = crit_request_cmd(
+    fn seal_request_basic() {
+        let cmd = seal_request_cmd(
             "frost-castle",
             "cr-123",
             "myproject-security",
@@ -774,14 +774,14 @@ mod tests {
         );
         assert_eq!(
             cmd,
-            "maw exec frost-castle -- crit reviews request cr-123 --reviewers myproject-security --agent crimson-storm"
+            "maw exec frost-castle -- seal reviews request cr-123 --reviewers myproject-security --agent crimson-storm"
         );
     }
 
     #[test]
-    fn crit_show_basic() {
-        let cmd = crit_show_cmd("frost-castle", "cr-123");
-        assert_eq!(cmd, "maw exec frost-castle -- crit review cr-123");
+    fn seal_show_basic() {
+        let cmd = seal_show_cmd("frost-castle", "cr-123");
+        assert_eq!(cmd, "maw exec frost-castle -- seal review cr-123");
     }
 
     // --- Deterministic output tests ---

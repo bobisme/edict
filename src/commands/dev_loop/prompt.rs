@@ -271,13 +271,13 @@ When all children are closed:
     format!(
         r#"You are lead dev agent "{agent}" for project "{project}".
 
-IMPORTANT: Use --agent {agent} on ALL bus and crit commands. bn resolves agent identity from $AGENT/$BOTBUS_AGENT env automatically. Set EDICT_PROJECT={project}. {review_instructions}.
+IMPORTANT: Use --agent {agent} on ALL bus and seal commands. bn resolves agent identity from $AGENT/$BOTBUS_AGENT env automatically. Set EDICT_PROJECT={project}. {review_instructions}.
 
 CRITICAL - HUMAN MESSAGE PRIORITY: If you see a system reminder with "STOP:" showing unread bus messages, these are from humans or other agents trying to reach you. IMMEDIATELY check inbox and respond before continuing your current task. Human questions, clarifications, and redirects take priority over heads-down work.
 
-COMMAND PATTERN — maw exec: All bn commands run in the default workspace. All crit commands run in their workspace.
+COMMAND PATTERN — maw exec: All bn commands run in the default workspace. All seal commands run in their workspace.
   bn:   maw exec default -- bn <args>
-  crit: maw exec $WS -- crit <args>
+  seal: maw exec $WS -- seal <args>
   git:  maw exec $WS -- git <args>
   other: maw exec $WS -- <command>           (cargo test, etc.)
 Inside `maw exec <ws>`, CWD is already `ws/<ws>/`. Use `maw exec default -- ls src/`, NOT `maw exec default -- ls ws/default/src/`
@@ -303,17 +303,17 @@ For EACH unfinished bone:
 2. Check if you still hold claims: bus claims list --agent {agent} --mine
 3. Determine state:
    - If "Review created: <review-id>" comment exists:
-     * Find the review: maw exec $WS -- crit review <review-id>
-     * Check review status: maw exec $WS -- crit review <review-id>
+     * Find the review: maw exec $WS -- seal review <review-id>
+     * Check review status: maw exec $WS -- seal review <review-id>
      * If LGTM (approved): Proceed to merge/finish (step 7 — use "Already reviewed and approved" path)
      * If BLOCKED (changes requested): fix the issues, then re-request review:
-       1. Read threads: maw exec $WS -- crit review <review-id> (threads show inline with comments)
+       1. Read threads: maw exec $WS -- seal review <review-id> (threads show inline with comments)
        2. For each unresolved thread with reviewer feedback:
           - Fix the code in the workspace (use absolute WS_PATH for file edits)
-          - Reply: maw exec $WS -- crit reply <thread-id> --agent {agent} "Fixed: <what you did>"
-          - Resolve: maw exec $WS -- crit threads resolve <thread-id> --agent {agent}
+          - Reply: maw exec $WS -- seal reply <thread-id> --agent {agent} "Fixed: <what you did>"
+          - Resolve: maw exec $WS -- seal threads resolve <thread-id> --agent {agent}
        3. Commit changes: maw exec $WS -- git add -A && maw exec $WS -- git commit -m "<id>: <summary> (addressed review feedback)"
-       4. Re-request: maw exec $WS -- crit reviews request <review-id> --reviewers {project}-security --agent {agent}
+       4. Re-request: maw exec $WS -- seal reviews request <review-id> --reviewers {project}-security --agent {agent}
        5. Announce: bus send --agent {agent} {project} "Review updated: <review-id> — addressed feedback @{project}-security" -L review-response
        STOP this iteration — wait for re-review
      * If PENDING (no votes yet): STOP this iteration — wait for reviewer
@@ -336,7 +336,7 @@ If it fails (exit 1 = command unavailable), fall back to manual resume check:
   Check CURRENT STATUS above for ACTIVE CLAIMS. If none listed, skip to step 3.
 
   If you hold any claims not covered by unfinished bones in step 1:
-  - bone:// claim with review comment: Check crit review status. If LGTM, proceed to merge/finish.
+  - bone:// claim with review comment: Check seal review status. If LGTM, proceed to merge/finish.
   - bone:// claim without review: Complete the work, then review or finish.
   - workspace:// claims: These are dispatched workers. Skip to step 7 (MONITOR).
 
@@ -447,7 +447,7 @@ RISK:MEDIUM — Standard review (if REVIEW is true):
   Read the output carefully. If status is Ready, run the suggested commands.
   If it fails (exit 1 = command unavailable), fall back to manual review:
     CHECK for existing review: maw exec default -- bn comments <id> | grep "Review created:"
-    Create review with reviewer (if none exists): maw exec $WS -- crit reviews create --agent {agent} --title "<id>: <title>" --description "<summary>" --reviewers {project}-security
+    Create review with reviewer (if none exists): maw exec $WS -- seal reviews create --agent {agent} --title "<id>: <title>" --description "<summary>" --reviewers {project}-security
     IMMEDIATELY record: maw exec default -- bn bone comment add <id> "Review created: <review-id> in workspace $WS"
     Spawn reviewer via @mention: bus send --agent {agent} {project} "Review requested: <review-id> for <id> @{project}-security" -L review-request
   STOP this iteration — wait for reviewer.
@@ -664,7 +664,7 @@ Every merge into default MUST follow this protocol to prevent concurrent merge c
 ### NeedsReview handling (protocol merge returned NeedsReview):
 
   CHECK for existing review: maw exec default -- bn comments <id> | grep "Review created:"
-  Create review (if none): maw exec $WS -- crit reviews create --agent {agent} --title "<id>: <title>" --description "<summary>" --reviewers {project}-security
+  Create review (if none): maw exec $WS -- seal reviews create --agent {agent} --title "<id>: <title>" --description "<summary>" --reviewers {project}-security
   Record: maw exec default -- bn bone comment add <id> "Review created: <review-id> in workspace <ws-name>"
   Announce: bus send --agent {agent} {project} "Review requested: <review-id> for <id> @{project}-security" -L review-request
   STOP — wait for reviewer
@@ -677,7 +677,7 @@ Every merge into default MUST follow this protocol to prevent concurrent merge c
   If it fails (exit 1 = command unavailable), fall back to the manual paths below.
 
   Already reviewed and approved (LGTM):
-    maw exec default -- crit reviews mark-merged <review-id> --agent {agent}
+    maw exec default -- seal reviews mark-merged <review-id> --agent {agent}
     Run MERGE PROTOCOL above for $WS
     maw exec default -- bn done <id> --reason="Completed"
     bus send --agent {agent} {project} "Completed <id>: <title>" -L task-done
@@ -691,7 +691,7 @@ Every merge into default MUST follow this protocol to prevent concurrent merge c
 
   Not yet reviewed — RISK:MEDIUM/HIGH/CRITICAL (REVIEW is true):
     CHECK for existing review: maw exec default -- bn comments <id> | grep "Review created:"
-    Create review (if none): maw exec $WS -- crit reviews create --agent {agent} --title "<id>: <title>" --description "<summary>" --reviewers {project}-security
+    Create review (if none): maw exec $WS -- seal reviews create --agent {agent} --title "<id>: <title>" --description "<summary>" --reviewers {project}-security
     Record: maw exec default -- bn bone comment add <id> "Review created: <review-id> in workspace <ws-name>"
     Announce: bus send --agent {agent} {project} "Review requested: <review-id> for <id> @{project}-security" -L review-request
     STOP — wait for reviewer. For risk:high add failure-mode checklist, for risk:critical add human approval request.
@@ -733,9 +733,9 @@ Output: <promise>END_OF_STORY</promise> if more bones remain, else <promise>COMP
 Key rules:
 - Triage first, then decide: sequential vs parallel
 - Monitor dispatched workers, merge when ready
-- All bus/crit commands use --agent {agent}
+- All bus/seal commands use --agent {agent}
 - All bn commands: maw exec default -- bn ...
-- All crit/git commands in a workspace: maw exec $WS -- crit/git ...
+- All seal/git commands in a workspace: maw exec $WS -- seal/git ...
 - For parallel dispatch, note limitations of this prompt-based approach
 - RISK LABELS: Always assess risk during grooming. risk:low (evals, docs, tests, config) skips security review entirely — self-review and merge directly. risk:medium gets standard review (when REVIEW is true). risk:high requires failure-mode checklist. risk:critical requires human approval.{mission_rules}{multi_lead_rules}
 - Output completion signal at end"#

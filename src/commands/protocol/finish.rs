@@ -154,8 +154,8 @@ pub fn execute(
 
                         // Output commands to check review feedback and re-request
                         let mut steps = Vec::new();
-                        steps.push(shell::crit_show_cmd(&workspace, &review_id));
-                        steps.push(shell::crit_request_cmd(
+                        steps.push(shell::seal_show_cmd(&workspace, &review_id));
+                        steps.push(shell::seal_request_cmd(
                             &workspace,
                             &review_id,
                             &required_reviewers.join(","),
@@ -189,10 +189,10 @@ pub fn execute(
                         }
 
                         let mut steps = Vec::new();
-                        steps.push(shell::crit_show_cmd(&workspace, &review_id));
+                        steps.push(shell::seal_show_cmd(&workspace, &review_id));
                         // Re-request from missing reviewers
                         if !decision.missing_approvals.is_empty() {
-                            steps.push(shell::crit_request_cmd(
+                            steps.push(shell::seal_request_cmd(
                                 &workspace,
                                 &review_id,
                                 &decision.missing_approvals.join(","),
@@ -224,7 +224,7 @@ pub fn execute(
                 guidance.diagnostic("No review found for this workspace.".to_string());
 
                 let mut steps = Vec::new();
-                steps.push(shell::crit_create_cmd(
+                steps.push(shell::seal_create_cmd(
                     &workspace,
                     "agent",
                     &bone_info.title,
@@ -323,7 +323,7 @@ fn build_finish_steps(
     // 4. Mark review as merged (if review exists)
     if let Some(rid) = review_id {
         steps.push(format!(
-            "maw exec default -- crit reviews mark-merged {}",
+            "maw exec default -- seal reviews mark-merged {}",
             rid
         ));
     }
@@ -353,10 +353,10 @@ fn find_review_for_workspace(
     ctx: &ProtocolContext,
     workspace: &str,
 ) -> Option<(String, super::adapters::ReviewDetail)> {
-    // List reviews in the workspace via crit reviews list
+    // List reviews in the workspace via seal reviews list
     let output = std::process::Command::new("maw")
         .args([
-            "exec", workspace, "--", "crit", "reviews", "list", "--format", "json",
+            "exec", workspace, "--", "seal", "reviews", "list", "--format", "json",
         ])
         .output()
         .ok()?;
@@ -464,7 +464,7 @@ mod tests {
             guidance
                 .steps
                 .iter()
-                .any(|s| s.contains("crit reviews mark-merged cr-123"))
+                .any(|s| s.contains("seal reviews mark-merged cr-123"))
         );
         // Should have bn done
         assert!(guidance.steps.iter().any(|s| s.contains("bn done")));

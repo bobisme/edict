@@ -260,7 +260,7 @@ For each feature bead, we track:
 
 **E2E/Workflow**:
 - ✓ Integration via worker-loop review request flow
-- ✓ Requires isolated crit + bus environment
+- ✓ Requires isolated seal + bus environment
 
 **Diagnostics**:
 - ✓ Exit code 0 for success

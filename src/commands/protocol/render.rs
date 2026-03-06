@@ -621,7 +621,7 @@ mod tests {
         });
         g.status = ProtocolStatus::NeedsReview;
         g.steps(vec![
-            "maw exec brave-tiger -- crit reviews request cr-123 --reviewers edict-security --agent crimson-storm".to_string(),
+            "maw exec brave-tiger -- seal reviews request cr-123 --reviewers edict-security --agent crimson-storm".to_string(),
             "bus send --agent crimson-storm edict 'Review requested: cr-123 @edict-security' -L review-request".to_string(),
         ]);
         g.advise("Review is open. Awaiting approval from edict-security.".to_string());
@@ -830,7 +830,7 @@ mod tests {
             status: "open".to_string(),
         });
         g.set_freshness(600, Some("edict protocol review".to_string()));
-        g.step("maw exec worker-1 -- crit reviews request cr-123 --reviewers edict-security --agent crimson-storm".to_string());
+        g.step("maw exec worker-1 -- seal reviews request cr-123 --reviewers edict-security --agent crimson-storm".to_string());
         g.diagnostic("awaiting review approval".to_string());
         g.advise("Review is pending.".to_string());
 

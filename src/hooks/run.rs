@@ -59,7 +59,7 @@ pub fn run_session_start() -> Result<()> {
     // 2. Agent identity + project channel (if edict project and agent set)
     if let Some(ref agent) = ctx.agent {
         if let Some(ref config) = ctx.edict_config {
-            println!("Agent ID for use with botbus/crit/bn: {agent}");
+            println!("Agent ID for use with botbus/seal/bn: {agent}");
             println!("Project channel: {}", config.channel());
         }
     }

@@ -15,7 +15,7 @@ install_command = "maw exec default -- just install"
 [tools]
 bones = true
 maw = true
-crit = true
+seal = true
 botbus = true
 vessel = true
 

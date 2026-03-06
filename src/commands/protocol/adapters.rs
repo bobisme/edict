@@ -1,6 +1,6 @@
 //! JSON adapters for companion tool output.
 //!
-//! Tolerant parsing for bus claims, maw workspaces, bn show, and crit review.
+//! Tolerant parsing for bus claims, maw workspaces, bn show, and seal review.
 //! Each adapter handles optional/new fields gracefully and produces clear
 //! parse errors. ProtocolContext consumes these instead of ad-hoc parsing.
 
@@ -120,9 +120,9 @@ pub fn parse_bone_show(json: &str) -> Result<BoneInfo, AdapterError> {
     })
 }
 
-// --- Botcrit Reviews ---
+// --- Seal Reviews ---
 
-/// Parsed output from `crit reviews list --format json`.
+/// Parsed output from `seal reviews list --format json`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ReviewsListResponse {
     #[serde(default)]
@@ -142,7 +142,7 @@ pub struct ReviewSummary {
     pub author: Option<String>,
 }
 
-/// Parsed output from `crit review <id> --format json`.
+/// Parsed output from `seal review <id> --format json`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ReviewDetailResponse {
     pub review: ReviewDetail,
@@ -247,18 +247,18 @@ pub fn parse_workspaces(json: &str) -> Result<WorkspacesResponse, AdapterError> 
     })
 }
 
-/// Parse `crit reviews list --format json`.
+/// Parse `seal reviews list --format json`.
 pub fn parse_reviews_list(json: &str) -> Result<ReviewsListResponse, AdapterError> {
     serde_json::from_str(json).map_err(|e| AdapterError::ParseFailed {
-        tool: "crit reviews list",
+        tool: "seal reviews list",
         detail: e.to_string(),
     })
 }
 
-/// Parse `crit review <id> --format json`.
+/// Parse `seal review <id> --format json`.
 pub fn parse_review_detail(json: &str) -> Result<ReviewDetailResponse, AdapterError> {
     serde_json::from_str(json).map_err(|e| AdapterError::ParseFailed {
-        tool: "crit review",
+        tool: "seal review",
         detail: e.to_string(),
     })
 }

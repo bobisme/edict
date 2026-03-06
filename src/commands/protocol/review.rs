@@ -129,14 +129,14 @@ pub fn execute(
         }
     }
 
-    // No review exists: output crit reviews create + bus announce commands
+    // No review exists: output seal reviews create + bus announce commands
     guidance.status = ProtocolStatus::NeedsReview;
 
     let reviewers_str = reviewer_names.join(",");
     let title = format!("{bone_id}: {}", bone_info.title);
 
     let mut steps = Vec::new();
-    steps.push(shell::crit_create_cmd(
+    steps.push(shell::seal_create_cmd(
         &workspace,
         agent,
         &title,
@@ -217,17 +217,17 @@ fn handle_existing_review(
             ));
         }
         ReviewGateStatus::Blocked => {
-            // Blocked — output crit review (read feedback) + re-request commands
+            // Blocked — output seal review (read feedback) + re-request commands
             guidance.status = ProtocolStatus::Blocked;
 
             let mut steps = Vec::new();
 
             // Step 1: Read review feedback
-            steps.push(shell::crit_show_cmd(workspace, review_id));
+            steps.push(shell::seal_show_cmd(workspace, review_id));
 
             // Step 2: After addressing feedback, re-request review
             let reviewers_str = reviewer_names.join(",");
-            steps.push(shell::crit_request_cmd(
+            steps.push(shell::seal_request_cmd(
                 workspace,
                 review_id,
                 &reviewers_str,
@@ -281,7 +281,7 @@ fn handle_existing_review(
 
                 // Re-request from missing reviewers
                 let missing_str = decision.missing_approvals.join(",");
-                steps.push(shell::crit_request_cmd(
+                steps.push(shell::seal_request_cmd(
                     workspace,
                     review_id,
                     &missing_str,

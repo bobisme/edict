@@ -260,7 +260,7 @@ mod tests {
             tools: ToolsConfig {
                 bones: true,
                 maw: true,
-                crit: true,
+                seal: true,
                 botbus: true,
                 vessel: true,
             },
@@ -277,7 +277,7 @@ mod tests {
         let result = render_agents_md(&config).unwrap();
 
         assert!(result.contains("# test-project"));
-        assert!(result.contains("Tools: `bones`, `maw`, `crit`, `botbus`, `vessel`"));
+        assert!(result.contains("Tools: `bones`, `maw`, `seal`, `botbus`, `vessel`"));
         assert!(result.contains("Reviewer roles: security"));
         assert!(result.contains(MANAGED_START));
         assert!(result.contains(MANAGED_END));
@@ -312,7 +312,7 @@ More custom content.
             tools: ToolsConfig {
                 bones: true,
                 maw: false,
-                crit: false,
+                seal: false,
                 botbus: false,
                 vessel: false,
             },
@@ -365,7 +365,7 @@ Old botbox-era managed content
             tools: ToolsConfig {
                 bones: true,
                 maw: false,
-                crit: false,
+                seal: false,
                 botbus: false,
                 vessel: false,
             },

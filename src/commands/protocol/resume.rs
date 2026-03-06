@@ -220,7 +220,7 @@ fn build_bone_guidance(
                 "# {} — review {} approved, ready to finish",
                 bead_id, review.review_id
             ));
-            guidance.step(shell::crit_show_cmd(ws_name, &review.review_id));
+            guidance.step(shell::seal_show_cmd(ws_name, &review.review_id));
             guidance.step(format!(
                 "edict protocol finish {} --project {}",
                 bead_id, project
@@ -233,11 +233,11 @@ fn build_bone_guidance(
                 "# {} — review {} blocked, address feedback",
                 bead_id, review.review_id
             ));
-            guidance.step(shell::crit_show_cmd(ws_name, &review.review_id));
+            guidance.step(shell::seal_show_cmd(ws_name, &review.review_id));
             guidance.step(format!(
                 "# Fix issues in ws/{ws_name}/, then re-request review:"
             ));
-            guidance.step(shell::crit_request_cmd(
+            guidance.step(shell::seal_request_cmd(
                 ws_name,
                 &review.review_id,
                 &format!("{project}-security"),
@@ -251,7 +251,7 @@ fn build_bone_guidance(
                 "# {} — review {} pending",
                 bead_id, review.review_id
             ));
-            guidance.step(shell::crit_show_cmd(ws_name, &review.review_id));
+            guidance.step(shell::seal_show_cmd(ws_name, &review.review_id));
         }
 
         // No review, has workspace → continue working
@@ -372,12 +372,12 @@ mod tests {
         build_bone_guidance(&mut guidance, &assessment, "test-agent", "myproject");
 
         assert!(guidance.steps.iter().any(|s| s.contains("blocked")));
-        assert!(guidance.steps.iter().any(|s| s.contains("crit review")));
+        assert!(guidance.steps.iter().any(|s| s.contains("seal review")));
         assert!(
             guidance
                 .steps
                 .iter()
-                .any(|s| s.contains("crit reviews request"))
+                .any(|s| s.contains("seal reviews request"))
         );
     }
 
@@ -399,7 +399,7 @@ mod tests {
         build_bone_guidance(&mut guidance, &assessment, "test-agent", "myproject");
 
         assert!(guidance.steps.iter().any(|s| s.contains("pending")));
-        assert!(guidance.steps.iter().any(|s| s.contains("crit review")));
+        assert!(guidance.steps.iter().any(|s| s.contains("seal review")));
     }
 
     #[test]

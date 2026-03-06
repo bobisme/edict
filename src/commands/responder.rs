@@ -529,7 +529,7 @@ impl Responder {
         let agent = agent.unwrap_or(default_agent);
 
         // Override AGENT/BOTBUS_AGENT env with the resolved identity so spawned tools
-        // (bus, crit, bn) use the responder's identity, not the message sender's.
+        // (bus, seal, bn) use the responder's identity, not the message sender's.
         // SAFETY: single-threaded at this point in startup, before spawning any threads
         unsafe {
             std::env::set_var("AGENT", &agent);

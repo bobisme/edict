@@ -29,7 +29,7 @@ cd "$WORKDIR" && jj git init
 botbox init \
   --name test-fresh \
   --type api \
-  --tools beads,maw,crit,botbus,vessel \
+  --tools beads,maw,seal,botbus,vessel \
   --reviewers security \
   --no-interactive
 
@@ -112,17 +112,17 @@ rm -rf "$WORKDIR"
 
 ## 3. Existing repo — clone and init
 
-Clone a real project and bootstrap it. Uses botcrit as the guinea pig since it's a known Rust project.
+Clone a real project and bootstrap it. Uses seal as the guinea pig since it's a known Rust project.
 
 ```bash
 WORKDIR=$(mktemp -d)
-cp -r ~/src/botcrit "$WORKDIR/botcrit"
-cd "$WORKDIR/botcrit"
+cp -r ~/src/seal "$WORKDIR/seal"
+cd "$WORKDIR/seal"
 
 botbox init \
-  --name botcrit \
+  --name seal \
   --type library \
-  --tools beads,maw,crit,botbus \
+  --tools beads,maw,seal,botbus \
   --no-interactive \
   --force
 ```
@@ -216,7 +216,7 @@ WORKDIR=$(mktemp -d)
 cd "$WORKDIR" && jj git init
 
 # Doctor before init — should fail
-botbox init --name doctor-test --type api --tools beads,maw,crit,botbus,vessel --no-interactive
+botbox init --name doctor-test --type api --tools beads,maw,seal,botbus,vessel --no-interactive
 botbox doctor && echo "PASS: healthy" || echo "FAIL"
 
 # Break things
@@ -224,7 +224,7 @@ rm -rf .agents/botbox
 botbox doctor 2>&1 && echo "FAIL: should detect missing dir" || echo "PASS: detected"
 
 # Partially break — remove symlink
-botbox init --name doctor-test --type api --tools beads,maw,crit,botbus,vessel --no-interactive --force
+botbox init --name doctor-test --type api --tools beads,maw,seal,botbus,vessel --no-interactive --force
 rm CLAUDE.md
 botbox doctor 2>&1  # should report missing CLAUDE.md
 ```

@@ -144,8 +144,8 @@ pub struct ToolsConfig {
     pub bones: bool,
     #[serde(default)]
     pub maw: bool,
-    #[serde(default)]
-    pub crit: bool,
+    #[serde(default, alias = "crit")]
+    pub seal: bool,
     #[serde(default)]
     pub botbus: bool,
     #[serde(default, alias = "botty")]
@@ -162,8 +162,8 @@ impl ToolsConfig {
         if self.maw {
             tools.push("maw".to_string());
         }
-        if self.crit {
-            tools.push("crit".to_string());
+        if self.seal {
+            tools.push("seal".to_string());
         }
         if self.botbus {
             tools.push("botbus".to_string());
@@ -662,7 +662,7 @@ default_agent = "myapp-dev"
 [tools]
 bones = true
 maw = true
-crit = true
+seal = true
 botbus = true
 vessel = true
 
@@ -723,7 +723,7 @@ timeout = 600
                 "checkCommand": "cargo clippy && cargo test",
                 "defaultAgent": "myapp-dev"
             },
-            "tools": { "bones": true, "maw": true, "crit": true, "botbus": true, "vessel": true },
+            "tools": { "bones": true, "maw": true, "seal": true, "botbus": true, "vessel": true },
             "review": { "enabled": true, "reviewers": ["security"] },
             "pushMain": false,
             "agents": {
@@ -983,7 +983,7 @@ install_command = "just install"
 [tools]
 bones = true
 maw = true
-crit = true
+seal = true
 botbus = true
 vessel = true
 "#;
