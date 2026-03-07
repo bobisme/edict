@@ -22,8 +22,10 @@ pub struct TemplateContext {
     pub tools: ToolsConfig,
     /// Review configuration
     pub review: ReviewConfig,
-    /// Install command (optional)
+    /// Install command (optional, legacy — use release_instructions instead)
     pub install_command: Option<String>,
+    /// Freeform release instructions block inserted into managed AGENTS.md
+    pub release_instructions: Option<String>,
     /// Check command run before merging (optional)
     pub check_command: Option<String>,
     /// Workflow docs with descriptions
@@ -62,6 +64,11 @@ impl TemplateContext {
             tools: config.tools.clone(),
             review: config.review.clone(),
             install_command: config.project.install_command.clone(),
+            release_instructions: config
+                .project
+                .release_instructions
+                .as_deref()
+                .map(dedent_and_trim),
             check_command: config.project.check_command.clone(),
             workflow_docs,
             design_docs,
@@ -239,6 +246,33 @@ pub fn update_managed_section(content: &str, ctx: &TemplateContext) -> anyhow::R
     Ok(format!("{}\n\n{}\n", cleaned, full_managed))
 }
 
+/// Dedent a multi-line string by stripping the common leading whitespace, then trim.
+///
+/// Handles TOML multi-line strings where indentation is relative to the config file.
+fn dedent_and_trim(s: &str) -> String {
+    let lines: Vec<&str> = s.lines().collect();
+    // Find minimum indentation among non-empty lines
+    let min_indent = lines
+        .iter()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| l.len() - l.trim_start().len())
+        .min()
+        .unwrap_or(0);
+    lines
+        .iter()
+        .map(|l| {
+            if l.len() >= min_indent {
+                &l[min_indent..]
+            } else {
+                l.trim()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -253,6 +287,7 @@ mod tests {
                 default_agent: Some("test-dev".to_string()),
                 channel: Some("test".to_string()),
                 install_command: Some("just install".to_string()),
+                release_instructions: None,
                 check_command: Some("true".to_string()),
                 languages: vec![],
                 critical_approvers: None,
@@ -305,6 +340,7 @@ More custom content.
                 default_agent: None,
                 channel: None,
                 install_command: None,
+                release_instructions: None,
                 check_command: None,
                 languages: vec![],
                 critical_approvers: None,
@@ -358,6 +394,7 @@ Old botbox-era managed content
                 default_agent: None,
                 channel: None,
                 install_command: None,
+                release_instructions: None,
                 check_command: None,
                 languages: vec![],
                 critical_approvers: None,

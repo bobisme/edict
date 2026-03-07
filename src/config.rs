@@ -132,6 +132,8 @@ pub struct ProjectConfig {
     pub channel: Option<String>,
     #[serde(default, alias = "installCommand")]
     pub install_command: Option<String>,
+    #[serde(default)]
+    pub release_instructions: Option<String>,
     #[serde(default, alias = "checkCommand")]
     pub check_command: Option<String>,
     #[serde(default, alias = "criticalApprovers")]

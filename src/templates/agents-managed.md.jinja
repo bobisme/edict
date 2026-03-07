@@ -115,8 +115,12 @@ All commands support JSON output with `--format json` for parsing. If a command 
 - **Run checks before committing**: {% if check_command %}`{{ check_command }}`{% else %}`just check` (or your project's build/test command){% endif %}. Fix any failures before proceeding.
 - After finishing a bone, follow [finish.md](.agents/edict/finish.md). **Workers: do NOT push** — the lead handles merges and pushes.
 {% if install_command %}- **Install locally** after releasing: `{{ install_command }}`
-{% endif %}
-### Identity
+{% endif %}{% if release_instructions %}
+### Release Instructions
+
+{{ release_instructions }}
+
+{% endif %}### Identity
 
 Your agent name is set by the hook or script that launched you. Use `$AGENT` in commands.
 For manual sessions, use `<project>-dev` (e.g., `myapp-dev`).

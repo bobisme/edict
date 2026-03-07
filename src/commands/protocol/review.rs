@@ -384,6 +384,7 @@ mod tests {
                 default_agent: Some("edict-dev".into()),
                 channel: Some("edict".into()),
                 install_command: None,
+                release_instructions: None,
                 check_command: None,
                 critical_approvers: None,
             },

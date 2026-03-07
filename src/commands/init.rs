@@ -706,6 +706,7 @@ fn build_config(choices: &InitChoices) -> Config {
             default_agent: Some(format!("{}-dev", choices.name)),
             channel: Some(choices.name.clone()),
             install_command: choices.install_command.clone(),
+            release_instructions: None,
             check_command: choices.check_command.clone(),
             critical_approvers: None,
         },
