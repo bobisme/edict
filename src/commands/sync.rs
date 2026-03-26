@@ -242,6 +242,16 @@ impl SyncArgs {
             migrate_vessel_hooks(&config, &project_root, &config_path);
         }
 
+        // Migrate BOTBUS_* → RITE_* env vars in hook commands
+        if !self.check {
+            migrate_botbus_env_hooks(&config, &project_root);
+        }
+
+        // Ensure reviewer hooks exist when review is enabled
+        if !self.check {
+            ensure_reviewer_hooks(&config, &project_root);
+        }
+
         // Migrate beads → bones (config, data, tooling files)
         if !self.check {
             migrate_beads_to_bones(&project_root, &config_path)?;
@@ -1217,14 +1227,30 @@ fn migrate_router_hook_claim(config: &Config, project_root: &Path) {
 ///
 /// Idempotent — skips steps already done.
 fn migrate_vessel_hooks(config: &Config, project_root: &Path, config_path: &Path) {
-    // 1. Update config TOML on disk: botty = true → vessel = true
+    // 1. Update config TOML on disk: botty → vessel, crit → seal, botbus → rite
     if let Ok(content) = fs::read_to_string(config_path) {
-        if content.contains("botty = ") {
-            let updated = content.replace("botty = ", "vessel = ");
+        let mut updated = content.clone();
+        let mut changed = false;
+
+        if updated.contains("botty = ") {
+            updated = updated.replace("botty = ", "vessel = ");
+            changed = true;
+            println!("Migrated config: tools.botty → tools.vessel");
+        }
+        if updated.contains("crit = ") {
+            updated = updated.replace("crit = ", "seal = ");
+            changed = true;
+            println!("Migrated config: tools.crit → tools.seal");
+        }
+        if updated.contains("botbus = ") {
+            updated = updated.replace("botbus = ", "rite = ");
+            changed = true;
+            println!("Migrated config: tools.botbus → tools.rite");
+        }
+
+        if changed {
             if let Err(e) = fs::write(config_path, updated) {
-                tracing::warn!("failed to update config botty→vessel: {e}");
-            } else {
-                println!("Migrated config: tools.botty → tools.vessel");
+                tracing::warn!("failed to update config tool renames: {e}");
             }
         }
     }
@@ -1304,6 +1330,174 @@ fn migrate_vessel_hooks(config: &Config, project_root: &Path, config_path: &Path
                 .and_then(|r| r.memory_limit.as_deref());
             super::init::register_reviewer_hook(&root_str, &root_str, name, &agent, &reviewer_agent, ml);
             println!("  Migrated reviewer hook {role}: vessel spawn (was botty)");
+        }
+    }
+}
+
+/// Ensure reviewer hooks exist when review is enabled in config.
+///
+/// `edict init` registers these, but they can be lost during migrations or
+/// if a project was initialized before reviewer hooks were added. This checks
+/// for each configured reviewer role and registers the hook if missing.
+fn ensure_reviewer_hooks(config: &Config, project_root: &Path) {
+    if !config.review.enabled {
+        return;
+    }
+
+    let output = match Tool::new("rite")
+        .args(&["hooks", "list", "--format", "json"])
+        .run()
+    {
+        Ok(o) if o.success() => o,
+        _ => return,
+    };
+
+    let parsed: serde_json::Value = match serde_json::from_str(&output.stdout) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+
+    let hooks = match parsed.get("hooks").and_then(|h| h.as_array()) {
+        Some(h) => h.to_vec(),
+        None => return,
+    };
+
+    let name = &config.project.name;
+    let agent = config.default_agent();
+
+    let bare_root = if project_root.ends_with("ws/default") {
+        project_root
+            .parent()
+            .and_then(Path::parent)
+            .filter(|r| r.join(".manifold").exists())
+    } else if project_root.join(".manifold").exists() {
+        Some(project_root)
+    } else {
+        None
+    };
+    let root_str = bare_root
+        .map(|r| r.display().to_string())
+        .unwrap_or_else(|| project_root.display().to_string());
+
+    let ml = config
+        .agents
+        .reviewer
+        .as_ref()
+        .and_then(|r| r.memory_limit.as_deref());
+
+    for role in &config.review.reviewers {
+        let description = format!("edict:{name}:reviewer-{role}");
+
+        // Check if hook already exists
+        let exists = hooks.iter().any(|h| {
+            h.get("description")
+                .and_then(|d| d.as_str())
+                .is_some_and(|d| d == description)
+        });
+
+        if !exists {
+            let reviewer_agent = format!("{name}-{role}");
+            super::init::register_reviewer_hook(
+                &root_str,
+                &root_str,
+                name,
+                &agent,
+                &reviewer_agent,
+                ml,
+            );
+            println!("  Registered missing reviewer hook: {role}");
+        }
+    }
+}
+
+/// Migrate hooks that still use BOTBUS_* env-inherit vars to RITE_*.
+///
+/// These hooks have correct `edict:` descriptions but were registered before
+/// rite was renamed from botbus, so their `--env-inherit` still references
+/// BOTBUS_CHANNEL, BOTBUS_MESSAGE_ID, etc.
+fn migrate_botbus_env_hooks(config: &Config, project_root: &Path) {
+    let output = match Tool::new("rite")
+        .args(&["hooks", "list", "--format", "json"])
+        .run()
+    {
+        Ok(o) if o.success() => o,
+        _ => return,
+    };
+
+    let parsed: serde_json::Value = match serde_json::from_str(&output.stdout) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+
+    let hooks = match parsed.get("hooks").and_then(|h| h.as_array()) {
+        Some(h) => h.to_vec(),
+        None => return,
+    };
+
+    let name = &config.project.name;
+
+    let bare_root = if project_root.ends_with("ws/default") {
+        project_root
+            .parent()
+            .and_then(Path::parent)
+            .filter(|r| r.join(".manifold").exists())
+    } else if project_root.join(".manifold").exists() {
+        Some(project_root)
+    } else {
+        None
+    };
+    let root_str = bare_root
+        .map(|r| r.display().to_string())
+        .unwrap_or_else(|| project_root.display().to_string());
+    let agent = config.default_agent();
+
+    for hook in &hooks {
+        // Only look at hooks that have BOTBUS_ in their env-inherit
+        let has_botbus_env = hook
+            .get("command")
+            .and_then(|c| c.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .any(|v| v.as_str().is_some_and(|s| s.contains("BOTBUS_")))
+            })
+            .unwrap_or(false);
+        if !has_botbus_env {
+            continue;
+        }
+
+        let desc = hook
+            .get("description")
+            .and_then(|d| d.as_str())
+            .unwrap_or("");
+
+        // Only migrate hooks for this project
+        if desc == format!("edict:{name}:responder") {
+            let ml = config
+                .agents
+                .responder
+                .as_ref()
+                .and_then(|r| r.memory_limit.as_deref());
+            super::init::register_router_hook(&root_str, &root_str, name, &agent, ml);
+            println!("  Migrated router hook: RITE_* env vars (was BOTBUS_*)");
+        } else if let Some(role) = desc
+            .strip_prefix(&format!("edict:{name}:reviewer-"))
+            .filter(|r| !r.is_empty())
+        {
+            let reviewer_agent = format!("{name}-{role}");
+            let ml = config
+                .agents
+                .reviewer
+                .as_ref()
+                .and_then(|r| r.memory_limit.as_deref());
+            super::init::register_reviewer_hook(
+                &root_str,
+                &root_str,
+                name,
+                &agent,
+                &reviewer_agent,
+                ml,
+            );
+            println!("  Migrated reviewer hook {role}: RITE_* env vars (was BOTBUS_*)");
         }
     }
 }
