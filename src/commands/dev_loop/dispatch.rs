@@ -6,27 +6,20 @@
 
 use crate::subprocess::Tool;
 
-/// Create a random workspace and return its name.
-pub fn create_workspace() -> anyhow::Result<String> {
-    let output = Tool::new("maw")
-        .args(&["ws", "create", "--random"])
+/// Create a workspace named after the bone and return its name.
+pub fn create_workspace(bone_id: &str, description: &str) -> anyhow::Result<String> {
+    Tool::new("maw")
+        .args(&[
+            "ws",
+            "create",
+            bone_id,
+            "--from",
+            "main",
+            "--description",
+            description,
+        ])
         .run_ok()?;
-    // Output typically includes "Created workspace: <name>" or just the name
-    let name = output
-        .stdout
-        .lines()
-        .find_map(|line| {
-            // Try to extract workspace name from various output formats
-            if line.contains("Created workspace:") {
-                line.split(':').next_back().map(|s| s.trim().to_string())
-            } else if !line.is_empty() && line.chars().all(|c| c.is_alphanumeric() || c == '-') {
-                Some(line.trim().to_string())
-            } else {
-                None
-            }
-        })
-        .unwrap_or_else(|| output.stdout.trim().to_string());
-    Ok(name)
+    Ok(bone_id.to_string())
 }
 
 /// Generate a random worker name suffix.

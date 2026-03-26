@@ -172,7 +172,7 @@ pub fn validate_guidance(guidance: &ProtocolGuidance) -> Result<(), ValidationEr
 ///
 /// Steps:
 /// 1. rite send --agent $AGENT edict 'Working...' -L task-claim
-/// 2. maw ws create --random --from main
+/// 2. maw ws create bd-3t1d --description 'shell-safe command renderer' --from main
 ///
 /// Advice: Create workspace and stake claims before starting implementation.
 /// ```
@@ -576,16 +576,16 @@ mod tests {
             "maw exec default -- bn do bd-3t1d".to_string(),
             "rite claims stake --agent crimson-storm 'bone://edict/bd-3t1d' -m 'bd-3t1d'"
                 .to_string(),
-            "maw ws create --random --from main".to_string(),
-            "rite claims stake --agent crimson-storm 'workspace://edict/brave-tiger' -m 'bd-3t1d'"
+            "maw ws create bd-3t1d --description 'shell-safe command renderer' --from main".to_string(),
+            "rite claims stake --agent crimson-storm 'workspace://edict/bd-3t1d' -m 'bd-3t1d'"
                 .to_string(),
         ]);
         g.advise("Workspace created. Implement render.rs with ProtocolGuidance, ProtocolStatus, and rendering functions.".to_string());
 
         let text = render_text(&g);
         assert!(text.contains("Command: start"));
-        assert!(text.contains("brave-tiger"));
-        assert!(text.contains("3. maw ws create --random --from main"));
+        assert!(text.contains("bd-3t1d"));
+        assert!(text.contains("maw ws create bd-3t1d"));
         assert!(text.contains("Advice:"));
     }
 

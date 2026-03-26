@@ -364,23 +364,19 @@ pub fn bn_done_cmd(bone_id: &str, reason: &str) -> String {
     cmd
 }
 
-/// Build: `maw ws create --random --from main`
-pub fn ws_create_cmd(source: WorkspaceSource<'_>) -> String {
-    let mut cmd = "maw ws create --random".to_string();
-    source.write_shell_args(&mut cmd);
-    cmd
-}
-
-/// Build: `maw ws create <name> --from main`
-#[allow(dead_code)]
-pub fn ws_create_named_cmd(name: &str, source: WorkspaceSource<'_>) -> String {
+/// Build: `maw ws create <name> --from main --description "..."`
+pub fn ws_create_cmd(name: &str, description: &str, source: WorkspaceSource<'_>) -> String {
     let workspace_safe = if validate_workspace_name(name).is_ok() {
         safe_ident(name)
     } else {
         std::borrow::Cow::Owned(shell_escape(name))
     };
 
-    let mut cmd = format!("maw ws create {}", workspace_safe);
+    let mut cmd = format!(
+        "maw ws create {} --description {}",
+        workspace_safe,
+        shell_escape(description)
+    );
     source.write_shell_args(&mut cmd);
     cmd
 }
@@ -810,15 +806,21 @@ mod tests {
     }
 
     #[test]
-    fn ws_create_random_from_main() {
-        let cmd = ws_create_cmd(WorkspaceSource::Main);
-        assert_eq!(cmd, "maw ws create --random --from main");
+    fn ws_create_from_main() {
+        let cmd = ws_create_cmd("bn-1abc", "Fix login bug", WorkspaceSource::Main);
+        assert_eq!(
+            cmd,
+            "maw ws create bn-1abc --description 'Fix login bug' --from main"
+        );
     }
 
     #[test]
-    fn ws_create_named_for_change() {
-        let cmd = ws_create_named_cmd("frost-castle", WorkspaceSource::Change("ch-123"));
-        assert_eq!(cmd, "maw ws create frost-castle --change ch-123");
+    fn ws_create_for_change() {
+        let cmd = ws_create_cmd("bn-2def", "Add OAuth", WorkspaceSource::Change("ch-123"));
+        assert_eq!(
+            cmd,
+            "maw ws create bn-2def --description 'Add OAuth' --change ch-123"
+        );
     }
 
     #[test]

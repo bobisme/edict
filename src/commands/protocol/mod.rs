@@ -398,26 +398,28 @@ impl ProtocolCommand {
             bone_id,
         ));
 
-        // 2. Create workspace
-        steps.push(shell::ws_create_cmd(shell::WorkspaceSource::Main));
+        // 2. Create workspace named after the bone
+        steps.push(shell::ws_create_cmd(
+            bone_id,
+            &bone_info.title,
+            shell::WorkspaceSource::Main,
+        ));
 
-        // 3. Capture workspace name (comment for human)
-        steps.push(
-            "# Capture workspace name from output above, then stake workspace claim:".to_string(),
-        );
-
-        // 4. Stake workspace claim (template with $WS placeholder - $WS is runtime-resolved)
+        // 3. Stake workspace claim
         steps.push(shell::claims_stake_cmd(
             &agent,
-            &format!("workspace://{}/$WS", project),
+            &format!("workspace://{}/{}", project, bone_id),
             bone_id,
         ));
 
         // 5. Update bone status
         steps.push(shell::bn_do_cmd(bone_id));
 
-        // 6. Comment bone with workspace info
-        steps.push(shell::bn_comment_cmd(bone_id, "Started in workspace $WS"));
+        // 5. Comment bone with workspace info
+        steps.push(shell::bn_comment_cmd(
+            bone_id,
+            &format!("Started in workspace {}", bone_id),
+        ));
 
         // 7. Announce on rite (unless --dispatched)
         if !dispatched {

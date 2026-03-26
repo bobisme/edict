@@ -447,10 +447,9 @@ At the end of your work, output exactly one of these completion signals:
    If it fails (exit 1 = command unavailable), fall back to manual start:
      maw exec default -- bn do <id>.
      rite claims stake --agent {agent} "bone://{project}/<id>" -m "<id>".
-     Create workspace: run maw ws create --random --from main. If this work is bound to an
-     existing change, use maw ws create --random --change <change-id> instead. Note the workspace name AND absolute path
-     from the output (e.g., name "frost-castle", path "/abs/path/ws/frost-castle").
-     Store the name as WS and the absolute path as WS_PATH.
+     Create workspace: run maw ws create <bone-id> --from main --description "<bone-title>". Use the bone ID as the
+     workspace name. If this work is bound to an existing change, use --change <change-id> instead of --from main.
+     Store the bone-id as WS and the absolute path as WS_PATH (e.g., WS="bn-1abc", WS_PATH="/abs/path/ws/bn-1abc").
      IMPORTANT: All file operations (Read, Write, Edit) must use the absolute WS_PATH.
      For commands in the workspace: maw exec $WS -- <command>.
      Do NOT cd into the workspace and stay there — the workspace is destroyed during finish.

@@ -422,7 +422,7 @@ Read the output carefully. If status is Ready, run the suggested commands.
 If it fails (exit 1 = command unavailable), fall back to manual start:
   1. maw exec default -- bn do <id>
   2. rite claims stake --agent {agent} "bone://{project}/<id>" -m "<id>"
-  3. maw ws create --random --from main — note workspace NAME and absolute PATH
+  3. maw ws create <bone-id> --from main --description "<bone-title>" — use bone ID as workspace name, note absolute PATH
   4. rite claims stake --agent {agent} "workspace://{project}/$WS" -m "<id>"
   5. maw exec default -- bn bone comment add <id> "Started in workspace $WS ($WS_PATH)"
   6. rite statuses set --agent {agent} "Working: <id>" --ttl 30m
@@ -483,12 +483,12 @@ IMPORTANT: Always pass the tier name (fast, balanced, strong) as `--model`, NOT 
 The worker resolves tier names to a provider pool at runtime for cross-provider load balancing.
 
 ### For each bone being dispatched:
-1. maw ws create --random --from main — note NAME and PATH
+1. maw ws create <bone-id> --from main --description "<bone-title>" — use bone ID as workspace name, note PATH
 2. rite generate-name — get a worker identity
 3. maw exec default -- bn do <id>
 4. rite claims stake --agent {agent} "bone://{project}/<id>" -m "dispatched to <worker-name>"
-5. rite claims stake --agent {agent} "workspace://{project}/$WS" -m "<id>"
-6. maw exec default -- bn bone comment add <id> "Dispatched worker <worker-name> (model: <model>) in workspace $WS ($WS_PATH)"
+5. rite claims stake --agent {agent} "workspace://{project}/<bone-id>" -m "<id>"
+6. maw exec default -- bn bone comment add <id> "Dispatched worker <worker-name> (model: <model>) in workspace <bone-id> ($WS_PATH)"
 7. rite statuses set --agent {agent} "Dispatch: <id>" --ttl 5m
 8. rite send --agent {agent} {project} "Dispatching <worker-name> for <id>: <title>" -L task-claim
 

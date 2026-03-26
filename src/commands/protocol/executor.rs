@@ -51,7 +51,7 @@ pub enum ExecutionError {
 /// from stdout and substitutes `$WS` in all subsequent steps.
 ///
 /// Example:
-/// - Step 1: `maw ws create --random --from main` outputs "Creating workspace 'frost-castle'"
+/// - Step 1: `maw ws create bd-abc --description 'Fix bug' --from main` outputs "Creating workspace 'frost-castle'"
 /// - Step 2: `rite claims stake --agent $AGENT "workspace://project/$WS"` becomes
 ///   `rite claims stake --agent $AGENT "workspace://project/frost-castle"`
 pub fn execute_steps(steps: &[String]) -> Result<ExecutionReport, ExecutionError> {
@@ -165,7 +165,7 @@ pub fn render_report(report: &ExecutionReport, format: OutputFormat) -> String {
 /// Format:
 /// ```text
 /// step 1/5  rite claims stake --agent $AGENT 'bone://edict/bd-abc'  ok
-/// step 2/5  maw ws create --random --from main  ok  ws=frost-castle
+/// step 2/5  maw ws create bd-abc --description 'Fix bug' --from main  ok  ws=frost-castle
 /// step 3/5  rite claims stake --agent $AGENT 'workspace://edict/$WS'  FAILED
 /// step 4/5  (not executed)
 /// step 5/5  (not executed)
@@ -408,7 +408,7 @@ mod tests {
     fn render_text_workspace_creation() {
         let report = ExecutionReport {
             results: vec![StepResult {
-                command: "maw ws create --random --from main".to_string(),
+                command: "maw ws create bd-abc --description 'Fix bug' --from main".to_string(),
                 success: true,
                 stdout: "Creating workspace 'amber-reef'\n".to_string(),
                 stderr: String::new(),
@@ -527,7 +527,7 @@ mod tests {
     fn ws_substitution_mock() {
         // Simulate what execute_steps does for $WS substitution
         let steps = vec![
-            "maw ws create --random --from main".to_string(),
+            "maw ws create bd-abc --description 'Fix bug' --from main".to_string(),
             "echo workspace is $WS".to_string(),
             "rite claims stake 'workspace://$WS'".to_string(),
         ];
