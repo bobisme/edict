@@ -35,7 +35,6 @@ project-root/          ← bare repo (no source files here)
 - Use `maw exec default -- bn ...` for bones commands (always in default workspace)
 - Use `maw exec <ws> -- seal ...` for review commands (always in the review's workspace)
 - Never run `bn` or `seal` directly — always go through `maw exec`
-- Do not run `jj`; this workflow is Git + maw.
 
 ### Bones Quick Reference
 
@@ -75,7 +74,7 @@ Identity resolved from `$AGENT` env. No flags needed in agent loops.
 | Search recovery snapshots | `maw ws recover --search <pattern>` |
 | Show file from snapshot | `maw ws recover <name> --show <path>` |
 
-**Inspecting a workspace (use git, not jj):**
+**Inspecting a workspace:**
 ```bash
 maw exec <name> -- git status             # what changed (unstaged)
 maw exec <name> -- git log --oneline -5   # recent commits
