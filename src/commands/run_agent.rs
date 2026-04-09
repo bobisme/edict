@@ -100,7 +100,38 @@ const TEXT_STYLE: Style = Style {
     checkmark: "+",
 };
 
+/// Determine the runner to use based on the model's provider prefix.
+///
+/// - `anthropic/...` → `"claude"` (use Claude Code)
+/// - anything else → `"pi"` (use Pi agent harness)
+fn runner_for_model(model: Option<&str>) -> &'static str {
+    match model {
+        Some(m) if m.starts_with("anthropic/") => "claude",
+        _ => "pi",
+    }
+}
+
+/// Parse a `provider/model-id:thinking` string into the format Claude Code expects.
+///
+/// Claude Code takes bare model names (e.g. `claude-sonnet-4-6`) or aliases (`sonnet`, `opus`).
+/// It does not understand provider prefixes or `:thinking` suffixes.
+fn parse_model_for_claude(model: &str) -> String {
+    // Strip provider prefix
+    let without_provider = model
+        .strip_prefix("anthropic/")
+        .unwrap_or(model);
+
+    // Strip :thinking suffix (e.g. ":low", ":medium", ":high")
+    match without_provider.rsplit_once(':') {
+        Some((base, _suffix)) => base.to_string(),
+        None => without_provider.to_string(),
+    }
+}
+
 /// Run an agent (pi or claude) with stream output parsing.
+///
+/// When `runner` is `"auto"`, the runner is derived from the model's provider prefix:
+/// `anthropic/...` uses Claude Code, everything else uses Pi.
 pub fn run_agent(
     runner: &str,
     prompt: &str,
@@ -115,13 +146,23 @@ pub fn run_agent(
         OutputFormat::Text => &TEXT_STYLE,
     };
 
-    let (mut child, tool_name) = match runner {
-        "claude" => (spawn_claude(prompt, model, skip_permissions)?, "claude"),
+    // Resolve "auto" runner based on model provider prefix
+    let effective_runner = match runner {
+        "auto" => runner_for_model(model),
+        other => other,
+    };
+
+    let (mut child, tool_name) = match effective_runner {
+        "claude" => {
+            // Translate model format for Claude Code
+            let claude_model = model.map(|m| parse_model_for_claude(m));
+            (spawn_claude(prompt, claude_model.as_deref(), skip_permissions)?, "claude")
+        }
         "pi" => (spawn_pi(prompt, model)?, "pi"),
         _ => {
             return Err(anyhow!(
-                "Unsupported runner: {}. Supported: 'pi', 'claude'.",
-                runner
+                "Unsupported runner: {}. Supported: 'auto', 'pi', 'claude'.",
+                effective_runner
             ));
         }
     };
@@ -147,7 +188,7 @@ pub fn run_agent(
         }
     });
 
-    let event_handler: &dyn Fn(&Value, &Style) -> bool = match runner {
+    let event_handler: &dyn Fn(&Value, &Style) -> bool = match effective_runner {
         "pi" => &handle_pi_event,
         _ => &handle_claude_event,
     };
@@ -1012,5 +1053,37 @@ mod tests {
         )
         .unwrap();
         assert!(!handle_pi_event(&event, &TEXT_STYLE));
+    }
+
+    #[test]
+    fn runner_for_model_anthropic_uses_claude() {
+        assert_eq!(runner_for_model(Some("anthropic/claude-opus-4-6:high")), "claude");
+        assert_eq!(runner_for_model(Some("anthropic/claude-sonnet-4-6:medium")), "claude");
+        assert_eq!(runner_for_model(Some("anthropic/claude-haiku-4-5:low")), "claude");
+    }
+
+    #[test]
+    fn runner_for_model_non_anthropic_uses_pi() {
+        assert_eq!(runner_for_model(Some("openai-codex/gpt-5.3-codex:medium")), "pi");
+        assert_eq!(runner_for_model(Some("google-gemini-cli/gemini-3-pro:medium")), "pi");
+        assert_eq!(runner_for_model(None), "pi");
+    }
+
+    #[test]
+    fn parse_model_for_claude_strips_provider_and_suffix() {
+        assert_eq!(parse_model_for_claude("anthropic/claude-opus-4-6:high"), "claude-opus-4-6");
+        assert_eq!(parse_model_for_claude("anthropic/claude-sonnet-4-6:medium"), "claude-sonnet-4-6");
+        assert_eq!(parse_model_for_claude("anthropic/claude-haiku-4-5:low"), "claude-haiku-4-5");
+    }
+
+    #[test]
+    fn parse_model_for_claude_no_suffix() {
+        assert_eq!(parse_model_for_claude("anthropic/claude-opus-4-6"), "claude-opus-4-6");
+    }
+
+    #[test]
+    fn parse_model_for_claude_no_provider() {
+        assert_eq!(parse_model_for_claude("claude-opus-4-6:high"), "claude-opus-4-6");
+        assert_eq!(parse_model_for_claude("claude-opus-4-6"), "claude-opus-4-6");
     }
 }

@@ -678,7 +678,7 @@ fn discover_sibling_leads(agent: &str) -> anyhow::Result<Vec<SiblingLead>> {
     Ok(siblings)
 }
 
-/// Run agent via `edict run agent` (Pi by default).
+/// Run agent via `edict run agent` (auto-selects runner based on model provider).
 fn run_agent_subprocess(prompt: &str, model: &str, timeout_secs: u64) -> anyhow::Result<String> {
     let mut args = vec!["run", "agent", prompt];
 

@@ -663,7 +663,7 @@ fn is_rate_limit_error(err: &str) -> bool {
         || lower.contains("resource_exhausted")
 }
 
-/// Run an agent via `edict run agent` (Pi by default).
+/// Run an agent via `edict run agent` (auto-selects runner based on model provider).
 ///
 /// Supports `provider/model:thinking` syntax for thinking levels.
 /// Echoes output to stderr for visibility in vessel while capturing stdout for parsing.

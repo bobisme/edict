@@ -46,8 +46,8 @@ fn run_agent_handles_claude_not_found() {
 }
 
 #[test]
-fn run_agent_defaults_to_pi_runner() {
-    // Verify default runner is "pi" (even if pi binary isn't installed)
+fn run_agent_defaults_to_auto_runner() {
+    // Verify default runner is "auto" — resolves to pi for non-anthropic models
     let mut cmd = Command::cargo_bin("edict").unwrap();
     cmd.arg("run")
         .arg("agent")
@@ -58,10 +58,10 @@ fn run_agent_defaults_to_pi_runner() {
     let output = cmd.output().unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    // Should NOT say "Unsupported runner" — pi is the default
+    // Should NOT say "Unsupported runner" — auto is the default
     assert!(
         !stderr.contains("Unsupported runner"),
-        "pi should be the default runner, got stderr: {}",
+        "auto should be the default runner, got stderr: {}",
         stderr
     );
 }

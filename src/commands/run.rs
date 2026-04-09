@@ -4,7 +4,7 @@ use clap::Subcommand;
 
 #[derive(Debug, Subcommand)]
 pub enum RunCommand {
-    /// Run an agent with stream output parsing (pi default, claude opt-in)
+    /// Run an agent with stream output parsing (auto-selects runner from model provider)
     Agent {
         /// Prompt to send to the agent
         prompt: String,
@@ -17,8 +17,8 @@ pub enum RunCommand {
         /// Output format (pretty or text)
         #[arg(long)]
         format: Option<String>,
-        /// Runtime: 'pi' (default) or 'claude'
-        #[arg(long, default_value = "pi")]
+        /// Runtime: 'auto' (default, picks runner from model provider), 'pi', or 'claude'
+        #[arg(long, default_value = "auto")]
         runner: String,
         /// Skip Claude Code permission checks (only for --runner claude)
         #[arg(long)]
