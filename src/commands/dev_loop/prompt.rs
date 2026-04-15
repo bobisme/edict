@@ -528,12 +528,14 @@ After dispatching all workers, skip to step 6 (MONITOR).
 IMPORTANT: Do NOT end the iteration early just to poll again. Ending the iteration and starting a new one
 burns a full Claude API call. Instead, WAIT for workers to finish using one of these approaches:
 
-**Preferred: vessel wait --exited** — blocks until any dispatched worker exits (success or crash):
+**Preferred: vessel wait --exited --any** — blocks until ANY dispatched worker exits (success or crash):
 
-  vessel wait --exited <worker-1> <worker-2> <worker-3> -t 300
+  vessel wait --exited --any <worker-1> <worker-2> <worker-3> -t 300
 
-This detects BOTH clean exits and silent crashes. Zero tokens consumed while waiting.
-When it returns, check which workers exited and whether they succeeded or died.
+This returns as soon as the first worker finishes, so you can merge/dispatch without
+waiting for the slowest worker. Detects BOTH clean exits and silent crashes. Zero tokens
+consumed while waiting. When it returns, check which worker exited and whether it
+succeeded or died, then loop back to wait again if others are still running.
 
 **Alternative: sleep** — if you want to check periodically:
 
