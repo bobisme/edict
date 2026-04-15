@@ -683,7 +683,7 @@ impl Responder {
         let timeout_str = self.claude_timeout.to_string();
         let start = crate::telemetry::metrics::time_start();
         let output = Tool::new("edict")
-            .args(&["run", "agent", prompt, "-m", model, "-t", &timeout_str])
+            .args(&["run", "agent", prompt, "-m", model, "-t", &timeout_str, "--skip-permissions"])
             .run_ok()?;
         crate::telemetry::metrics::time_record(
             "edict.responder.agent_run_duration_seconds",

@@ -620,15 +620,15 @@ pub fn run_reviewer_loop(
 
         let prompt = build_prompt(&agent, &project, &work_items, last_iter_ref)?;
 
-        // Run agent via Pi (default runtime)
+        // Run agent (auto-selects runner based on model provider)
         let reviewer_start = crate::telemetry::metrics::time_start();
         let run_agent_result = crate::commands::run_agent::run_agent(
-            "pi",
+            "auto",
             &prompt,
             Some(&model),
             timeout,
             None,
-            false,
+            true,
         );
         crate::telemetry::metrics::time_record(
             "edict.reviewer.agent_run_duration_seconds",

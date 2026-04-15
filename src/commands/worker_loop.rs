@@ -672,7 +672,7 @@ fn try_run_agent(prompt: &str, model: &str, timeout: u64) -> anyhow::Result<Stri
     use std::process::{Command, Stdio};
 
     let timeout_string = timeout.to_string();
-    let mut args = vec!["run", "agent", prompt, "-t", &timeout_string];
+    let mut args = vec!["run", "agent", prompt, "-t", &timeout_string, "--skip-permissions"];
 
     // Pass the full model string (e.g. "anthropic/claude-sonnet-4-6:medium") — Pi handles :suffix natively
     if !model.is_empty() {

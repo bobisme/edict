@@ -680,7 +680,7 @@ fn discover_sibling_leads(agent: &str) -> anyhow::Result<Vec<SiblingLead>> {
 
 /// Run agent via `edict run agent` (auto-selects runner based on model provider).
 fn run_agent_subprocess(prompt: &str, model: &str, timeout_secs: u64) -> anyhow::Result<String> {
-    let mut args = vec!["run", "agent", prompt];
+    let mut args = vec!["run", "agent", prompt, "--skip-permissions"];
 
     // Pass the full model string (e.g. "anthropic/claude-sonnet-4-6:medium") — Pi handles :suffix natively
     if !model.is_empty() {
