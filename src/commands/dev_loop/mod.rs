@@ -511,20 +511,31 @@ fn has_work(agent: &str, project: &str) -> anyhow::Result<bool> {
         }
     }
 
-    // Check ready bones
+    // Check ready bones. `bn next --json` may emit non-JSON warn lines before
+    // the JSON payload on stdout (e.g. "warn: skipping bn-xxx (..., XL) — needs
+    // decomposition..."), so parse tolerantly. A `decompose-first` response
+    // still counts as work — decomposing those bones is the dev-loop's job.
     if let Ok(output) = Tool::new("bn")
         .args(&["next", "--json"])
         .in_workspace("default")?
         .run()
         && output.success()
     {
-        let count = parse_ready_count(&output.stdout);
-        if count > 0 {
-            return Ok(true);
+        match parse_next_status(&output.stdout) {
+            NextStatus::Ready(n) if n > 0 => return Ok(true),
+            NextStatus::NeedsDecomposition => return Ok(true),
+            _ => {}
         }
     }
 
     Ok(false)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum NextStatus {
+    Ready(usize),
+    NeedsDecomposition,
+    None,
 }
 
 /// Parse inbox count from JSON response.
@@ -540,25 +551,34 @@ fn parse_inbox_count(json: &str) -> u64 {
     0
 }
 
-/// Parse ready bones count from JSON response.
+/// Parse `bn next --json` stdout into a coarse status.
 ///
-/// `bn next --json` returns `{"mode": "...", "assignments": [...]}` (bones v0.17.5+).
-fn parse_ready_count(json: &str) -> usize {
-    if let Ok(v) = serde_json::from_str::<serde_json::Value>(json) {
-        if let Some(arr) = v["assignments"].as_array() {
-            return arr.len();
-        }
-        if let Some(arr) = v.as_array() {
-            return arr.len();
-        }
-        if let Some(arr) = v["issues"].as_array() {
-            return arr.len();
-        }
-        if let Some(arr) = v["bones"].as_array() {
-            return arr.len();
+/// bones may prefix the JSON payload with `warn:` lines on stdout when
+/// skipping items (e.g. large bones without subtasks). Strip anything before
+/// the first `{` or `[` before parsing. A `{"message": "..decomposition.."}`
+/// envelope signals all unblocked items need breaking down — still work, just
+/// of a different kind.
+fn parse_next_status(stdout: &str) -> NextStatus {
+    let json = stdout
+        .find(|c: char| c == '{' || c == '[')
+        .map_or(stdout, |i| &stdout[i..]);
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else {
+        return NextStatus::None;
+    };
+    for key in ["assignments", "issues", "bones"] {
+        if let Some(arr) = v[key].as_array() {
+            return NextStatus::Ready(arr.len());
         }
     }
-    0
+    if let Some(arr) = v.as_array() {
+        return NextStatus::Ready(arr.len());
+    }
+    if let Some(msg) = v["message"].as_str()
+        && msg.to_ascii_lowercase().contains("decomposition")
+    {
+        return NextStatus::NeedsDecomposition;
+    }
+    NextStatus::None
 }
 
 /// Check if there's a pending review that should block running Claude.
@@ -875,25 +895,40 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_ready_count_assignments_envelope() {
+    fn parse_next_status_assignments_envelope() {
         // bn next --json format since bones v0.17.5
         let json = r#"{"mode": "balanced", "assignments": [{"agent_slot": 1, "id": "bn-3smm"}]}"#;
-        assert_eq!(parse_ready_count(json), 1);
+        assert_eq!(parse_next_status(json), NextStatus::Ready(1));
     }
 
     #[test]
-    fn parse_ready_count_assignments_multiple() {
+    fn parse_next_status_assignments_multiple() {
         let json = r#"{"mode": "balanced", "assignments": [{"agent_slot": 1, "id": "bn-abc"}, {"agent_slot": 2, "id": "bn-def"}]}"#;
-        assert_eq!(parse_ready_count(json), 2);
+        assert_eq!(parse_next_status(json), NextStatus::Ready(2));
     }
 
     #[test]
-    fn parse_ready_count_empty() {
-        assert_eq!(parse_ready_count(r#"{"mode": "balanced", "assignments": []}"#), 0);
-        assert_eq!(parse_ready_count("{}"), 0);
-        assert_eq!(parse_ready_count("[]"), 0);
-        assert_eq!(parse_ready_count(""), 0);
-        assert_eq!(parse_ready_count("null"), 0);
+    fn parse_next_status_warn_prefixed_decompose_first() {
+        // Actual shape of `bn next --json` stdout when all unblocked bones are
+        // L/XL without subtasks: warn line(s), then a {"message": "..."} JSON.
+        let stdout = "warn: skipping bn-jq4 (Huge Task, XL) — needs decomposition into subtasks before work can begin\n{\n  \"message\": \"All unblocked items need decomposition into subtasks before work can begin. Run `bn triage` to see which items need breaking down.\"\n}\n";
+        assert_eq!(parse_next_status(stdout), NextStatus::NeedsDecomposition);
+    }
+
+    #[test]
+    fn parse_next_status_warn_prefixed_ready() {
+        let stdout = "warn: skipping bn-xxx (Large, L) — needs decomposition\n{\"mode\":\"balanced\",\"assignments\":[{\"id\":\"bn-abc\"}]}";
+        assert_eq!(parse_next_status(stdout), NextStatus::Ready(1));
+    }
+
+    #[test]
+    fn parse_next_status_empty_and_none() {
+        assert_eq!(parse_next_status(""), NextStatus::None);
+        assert_eq!(parse_next_status("null"), NextStatus::None);
+        assert_eq!(parse_next_status("{}"), NextStatus::None);
+        assert_eq!(parse_next_status("[]"), NextStatus::Ready(0));
+        assert_eq!(parse_next_status(r#"{"mode":"balanced","assignments":[]}"#), NextStatus::Ready(0));
+        assert_eq!(parse_next_status(r#"{"message":"no unblocked items"}"#), NextStatus::None);
     }
 
     #[test]
