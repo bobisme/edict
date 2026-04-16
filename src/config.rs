@@ -213,23 +213,23 @@ impl Default for ModelsConfig {
 fn default_tier_fast() -> Vec<String> {
     vec![
         "anthropic/claude-haiku-4-5:low".into(),
-        "google-gemini-cli/gemini-3-flash-preview:low".into(),
-        "openai-codex/gpt-5.3-codex-spark:low".into(),
+        "google-gemini-cli/gemini-3-flash-preview".into(),
+        "openai-codex/gpt-5.3-codex-spark:medium".into(),
     ]
 }
 
 fn default_tier_balanced() -> Vec<String> {
     vec![
         "anthropic/claude-sonnet-4-6:medium".into(),
-        "google-gemini-cli/gemini-3-pro-preview:medium".into(),
-        "openai-codex/gpt-5.3-codex:medium".into(),
+        "google-gemini-cli/gemini-3.1-pro-preview".into(),
+        "openai-codex/gpt-5.4:medium".into(),
     ]
 }
 
 fn default_tier_strong() -> Vec<String> {
     vec![
         "anthropic/claude-opus-4-6:high".into(),
-        "openai-codex/gpt-5.3-codex:xhigh".into(),
+        "openai-codex/gpt-5.3-codex:high".into(),
     ]
 }
 
