@@ -294,8 +294,16 @@ pub fn run(
                 };
 
                 if signal_region.contains("<promise>COMPLETE</promise>") {
-                    eprintln!("\u{2713} Dev cycle complete - no more work");
-                    break;
+                    // Re-verify: agent's view of "no work" can be narrower than bn triage
+                    // (e.g., framed around a phase/mission). Trust the queue, not the claim.
+                    if has_work(&agent, &project)? {
+                        eprintln!(
+                            "Agent signaled COMPLETE but bones remain — continuing loop"
+                        );
+                    } else {
+                        eprintln!("\u{2713} Dev cycle complete - no more work");
+                        break;
+                    }
                 } else if signal_region.contains("<promise>END_OF_STORY</promise>") {
                     eprintln!("\u{2713} Iteration complete - more work remains");
                     // Verify work actually remains
