@@ -712,6 +712,21 @@ Run cleanup to release orphaned resources before signaling completion:
   edict protocol cleanup --agent {agent}
 If it fails (exit 1 = command unavailable), skip — the startup cleanup (step 2.5) will catch it next iteration.
 
+## 7.6. RE-CHECK QUEUE (CRITICAL — before signaling COMPLETE)
+
+Completing a bone often unblocks its children. The `bn next` you saw at triage may be
+stale. Always re-query before deciding the cycle is done:
+
+  maw exec default -- bn next 3
+
+- If ANY bones are returned: output <promise>END_OF_STORY</promise> and stop. Do NOT emit
+  COMPLETE. The next iteration will pick them up.
+- If the list is empty AND your inbox is empty: proceed to step 8 and emit COMPLETE.
+
+This check is mandatory because blocked_hub patterns (one bone gating many) are common:
+finishing the hub flips several children to ready, and a narrow view of "my phase is done"
+causes the loop to exit prematurely while real work remains.
+
 ## 8. RELEASE CHECK (before signaling COMPLETE)
 
 Before outputting COMPLETE, check if a release is needed:
