@@ -260,6 +260,9 @@ fn build_prompt(
 ) -> Result<String> {
     let role = derive_role_from_agent_name(agent);
     let prompt_name = get_reviewer_prompt_name(role.as_deref());
+    // Reviewer prompts are authored in bare form; rewrite_prompt() below adapts
+    // trunk command prefixes and workspace paths for the root layout.
+    let layout = crate::layout::Layout::detect(&std::env::current_dir().unwrap_or_default());
 
     // Find prompts directory (handle maw v2 bare repo layout)
     let mut prompts_dir = PathBuf::from(".agents/edict/prompts");
@@ -271,31 +274,31 @@ fn build_prompt(
     let target_workspace = work_items.first().map(|w| w.workspace.as_str());
 
     // Try to load specialized prompt, fall back to base reviewer if not found
-    let mut base_prompt = match load_prompt(
-        &prompt_name,
-        agent,
-        project,
-        &prompts_dir,
-        target_workspace,
-    ) {
-        Ok(p) => p,
-        Err(_) if role.is_some() => {
-            eprintln!(
-                "Warning: {}.md not found, using base reviewer prompt",
-                prompt_name
-            );
-            load_prompt("reviewer", agent, project, &prompts_dir, target_workspace)?
-        }
-        Err(e) => return Err(e),
-    };
+    let mut base_prompt =
+        match load_prompt(&prompt_name, agent, project, &prompts_dir, target_workspace) {
+            Ok(p) => p,
+            Err(_) if role.is_some() => {
+                eprintln!(
+                    "Warning: {}.md not found, using base reviewer prompt",
+                    prompt_name
+                );
+                load_prompt("reviewer", agent, project, &prompts_dir, target_workspace)?
+            }
+            Err(e) => return Err(e),
+        };
 
     // Prepend workspace preamble so the agent sees it before any steps
     if let Some(ws) = target_workspace {
+        let ws_src = layout.ws_path(ws);
+        let not_trunk = match layout {
+            crate::layout::Layout::Root => "the repo root".to_string(),
+            crate::layout::Layout::Bare => "`ws/default/`".to_string(),
+        };
         let preamble = format!(
             "## WORKSPACE CONTEXT\n\
              All code for this review is in workspace **{ws}**.\n\
              Use `maw exec {ws} -- ...` for ALL seal commands.\n\
-             Read source files from `ws/{ws}/...` — NOT `ws/default/`.\n\n",
+             Read source files from `{ws_src}/...` — NOT {not_trunk}.\n\n",
         );
         base_prompt.insert_str(0, &preamble);
     }
@@ -352,7 +355,7 @@ fn build_prompt(
         ));
     }
 
-    Ok(base_prompt)
+    Ok(layout.rewrite_prompt(base_prompt))
 }
 
 /// Read the last iteration from the journal.

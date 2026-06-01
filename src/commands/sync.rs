@@ -7,8 +7,9 @@ use sha2::{Digest, Sha256};
 
 use crate::config::Config;
 use crate::error::ExitError;
+use crate::layout::Layout;
 use crate::subprocess::{Tool, run_command};
-use crate::template::{TemplateContext, update_managed_section};
+use crate::template::{TemplateContext, render_workflow_doc, update_managed_section};
 
 #[derive(Debug, Args)]
 pub struct SyncArgs {
@@ -102,6 +103,11 @@ impl SyncArgs {
             return self.handle_bare_repo(&project_root);
         }
 
+        // Detect the on-disk workspace layout (bare ws/ vs root .maw/workspaces).
+        // When reached via handle_bare_repo's `maw exec default -- edict sync`,
+        // project_root is the bare trunk (…/ws/default), which detect() recognizes.
+        let layout = Layout::detect(&project_root);
+
         // Check for agents dir — accept new (.agents/edict/) or legacy (.agents/botbox/)
         let agents_dir_edict = project_root.join(".agents/edict");
         let agents_dir_legacy = project_root.join(".agents/botbox");
@@ -113,9 +119,8 @@ impl SyncArgs {
         }
 
         // Load config (.edict.toml preferred, legacy names as fallback)
-        let config_path = crate::config::find_config(&project_root).ok_or_else(|| {
-            ExitError::Config("No .edict.toml or .botbox.toml found".to_string())
-        })?;
+        let config_path = crate::config::find_config(&project_root)
+            .ok_or_else(|| ExitError::Config("No .edict.toml or .botbox.toml found".to_string()))?;
         let config = Config::load(&config_path)
             .with_context(|| format!("Failed to parse {}", config_path.display()))?;
 
@@ -162,12 +167,11 @@ impl SyncArgs {
 
         // Check staleness for each component
         let docs_stale = self.check_docs_staleness(&agents_dir)?;
-        let managed_stale = self.check_managed_section_staleness(&project_root, &config)?;
+        let managed_stale = self.check_managed_section_staleness(&project_root, &config, layout)?;
         let prompts_stale = self.check_prompts_staleness(&agents_dir)?;
         let design_docs_stale = self.check_design_docs_staleness(&agents_dir)?;
 
-        let any_stale =
-            docs_stale || managed_stale || prompts_stale || design_docs_stale;
+        let any_stale = docs_stale || managed_stale || prompts_stale || design_docs_stale;
 
         if self.check {
             if any_stale {
@@ -199,13 +203,13 @@ impl SyncArgs {
         let mut changed_files = Vec::new();
 
         if docs_stale {
-            self.sync_workflow_docs(&agents_dir)?;
+            self.sync_workflow_docs(&agents_dir, layout)?;
             changed_files.push(".agents/edict/*.md");
             println!("Updated workflow docs");
         }
 
         if managed_stale {
-            self.sync_managed_section(&project_root, &config)?;
+            self.sync_managed_section(&project_root, &config, layout)?;
             changed_files.push("AGENTS.md");
             println!("Updated AGENTS.md managed section");
         }
@@ -300,11 +304,16 @@ impl SyncArgs {
         //
         // Only remove when ws/default has a config, ensuring the authoritative config is in place.
         let ws_has_config = crate::config::find_config(&project_root.join("ws/default")).is_some();
-        for stale_name in &[crate::config::CONFIG_JSON, crate::config::CONFIG_TOML_LEGACY] {
+        for stale_name in &[
+            crate::config::CONFIG_JSON,
+            crate::config::CONFIG_TOML_LEGACY,
+        ] {
             let stale_path = project_root.join(stale_name);
             if stale_path.exists() && ws_has_config {
                 if self.check {
-                    tracing::warn!("stale {stale_name} at bare repo root (will be removed on sync)");
+                    tracing::warn!(
+                        "stale {stale_name} at bare repo root (will be removed on sync)"
+                    );
                     return Err(
                         ExitError::new(1, format!("Stale {stale_name} at bare repo root")).into(),
                     );
@@ -450,6 +459,7 @@ impl SyncArgs {
         &self,
         project_root: &Path,
         config: &Config,
+        layout: Layout,
     ) -> Result<bool> {
         let agents_md = project_root.join("AGENTS.md");
         if !agents_md.exists() {
@@ -457,7 +467,7 @@ impl SyncArgs {
         }
 
         let content = fs::read_to_string(&agents_md)?;
-        let ctx = TemplateContext::from_config(config);
+        let ctx = TemplateContext::from_config(config, layout);
         let updated = update_managed_section(&content, &ctx)?;
 
         Ok(content != updated)
@@ -493,23 +503,21 @@ impl SyncArgs {
                         if let Some(arr) = entries.as_array_mut() {
                             let before = arr.len();
                             arr.retain(|entry| {
-                                !entry["hooks"]
-                                    .as_array()
-                                    .is_some_and(|hooks| {
-                                        hooks.iter().any(|h| {
-                                            let cmd = &h["command"];
-                                            if let Some(s) = cmd.as_str() {
-                                                s.contains("botbox hooks run")
-                                            } else if let Some(a) = cmd.as_array() {
-                                                a.len() >= 3
-                                                    && a[0].as_str() == Some("botbox")
-                                                    && a[1].as_str() == Some("hooks")
-                                                    && a[2].as_str() == Some("run")
-                                            } else {
-                                                false
-                                            }
-                                        })
+                                !entry["hooks"].as_array().is_some_and(|hooks| {
+                                    hooks.iter().any(|h| {
+                                        let cmd = &h["command"];
+                                        if let Some(s) = cmd.as_str() {
+                                            s.contains("botbox hooks run")
+                                        } else if let Some(a) = cmd.as_array() {
+                                            a.len() >= 3
+                                                && a[0].as_str() == Some("botbox")
+                                                && a[1].as_str() == Some("hooks")
+                                                && a[2].as_str() == Some("run")
+                                        } else {
+                                            false
+                                        }
                                     })
+                                })
                             });
                             if arr.len() != before {
                                 changed = true;
@@ -517,9 +525,7 @@ impl SyncArgs {
                         }
                     }
                     // Remove empty event arrays
-                    hooks.retain(|_, v| {
-                        v.as_array().map(|a| !a.is_empty()).unwrap_or(true)
-                    });
+                    hooks.retain(|_, v| v.as_array().map(|a| !a.is_empty()).unwrap_or(true));
                 }
 
                 if changed {
@@ -543,7 +549,9 @@ impl SyncArgs {
                     } else {
                         fs::write(&settings_path, serde_json::to_string_pretty(&settings)?)?;
                     }
-                    println!("Cleaned up per-repo botbox hooks from .claude/settings.json (now managed globally via `botbox hooks install`)");
+                    println!(
+                        "Cleaned up per-repo botbox hooks from .claude/settings.json (now managed globally via `botbox hooks install`)"
+                    );
                 }
             }
         }
@@ -561,7 +569,9 @@ impl SyncArgs {
             if pi_dir.exists() && fs::read_dir(&pi_dir)?.next().is_none() {
                 fs::remove_dir(&pi_dir)?;
             }
-            println!("Cleaned up per-repo Pi extension (now managed globally via `botbox hooks install`)");
+            println!(
+                "Cleaned up per-repo Pi extension (now managed globally via `botbox hooks install`)"
+            );
         }
 
         Ok(())
@@ -579,10 +589,12 @@ impl SyncArgs {
         Ok(installed != current)
     }
 
-    fn sync_workflow_docs(&self, agents_dir: &Path) -> Result<()> {
+    fn sync_workflow_docs(&self, agents_dir: &Path, layout: Layout) -> Result<()> {
         for (name, content) in WORKFLOW_DOCS {
             let path = agents_dir.join(name);
-            fs::write(&path, content)
+            let rendered = render_workflow_doc(content, layout)
+                .with_context(|| format!("Failed to render {}", name))?;
+            fs::write(&path, rendered)
                 .with_context(|| format!("Failed to write {}", path.display()))?;
         }
 
@@ -592,14 +604,19 @@ impl SyncArgs {
         Ok(())
     }
 
-    fn sync_managed_section(&self, project_root: &Path, config: &Config) -> Result<()> {
+    fn sync_managed_section(
+        &self,
+        project_root: &Path,
+        config: &Config,
+        layout: Layout,
+    ) -> Result<()> {
         let agents_md = project_root.join("AGENTS.md");
         if !agents_md.exists() {
             return Ok(()); // Skip if no AGENTS.md
         }
 
         let content = fs::read_to_string(&agents_md)?;
-        let ctx = TemplateContext::from_config(config);
+        let ctx = TemplateContext::from_config(config, layout);
         let updated = update_managed_section(&content, &ctx)?;
 
         fs::write(&agents_md, updated)?;
@@ -691,11 +708,8 @@ impl SyncArgs {
                 run_command("git", &args, Some(project_root))?;
 
                 // Only commit if there are staged changes
-                let status = run_command(
-                    "git",
-                    &["diff", "--cached", "--quiet"],
-                    Some(project_root),
-                );
+                let status =
+                    run_command("git", &["diff", "--cached", "--quiet"], Some(project_root));
                 if status.is_err() {
                     // diff --cached --quiet exits 1 when there are staged changes
                     run_command("git", &["commit", "-m", &message], Some(project_root))?;
@@ -1007,7 +1021,9 @@ fn migrate_rite_hooks(config: &Config) {
                 Ok(_) => println!(
                     "  Migrated reviewer hook {id} → edict run reviewer-loop --agent {reviewer_agent}"
                 ),
-                Err(e) => tracing::warn!(agent = %reviewer_agent, "failed to re-register reviewer hook: {e}"),
+                Err(e) => {
+                    tracing::warn!(agent = %reviewer_agent, "failed to re-register reviewer hook: {e}")
+                }
             }
         }
     }
@@ -1033,11 +1049,7 @@ fn migrate_hook_cwd(config: &Config, project_root: &Path) {
         _ => return,
     };
 
-    let ws_default_str = bare_root
-        .join("ws")
-        .join("default")
-        .display()
-        .to_string();
+    let ws_default_str = bare_root.join("ws").join("default").display().to_string();
     let root_str = bare_root.display().to_string();
 
     let output = match Tool::new("rite")
@@ -1127,7 +1139,12 @@ fn migrate_hook_cwd(config: &Config, project_root: &Path) {
             for reviewer in &reviewers {
                 if desc.contains(&reviewer.replace(&format!("{name}-"), "")) {
                     super::init::register_reviewer_hook(
-                        &root_str, &root_str, name, &agent, reviewer, reviewer_ml,
+                        &root_str,
+                        &root_str,
+                        name,
+                        &agent,
+                        reviewer,
+                        reviewer_ml,
                     );
                     println!("  Fixed hook --cwd: {desc} → repo root");
                     break;
@@ -1328,7 +1345,14 @@ fn migrate_vessel_hooks(config: &Config, project_root: &Path, config_path: &Path
                 .reviewer
                 .as_ref()
                 .and_then(|r| r.memory_limit.as_deref());
-            super::init::register_reviewer_hook(&root_str, &root_str, name, &agent, &reviewer_agent, ml);
+            super::init::register_reviewer_hook(
+                &root_str,
+                &root_str,
+                name,
+                &agent,
+                &reviewer_agent,
+                ml,
+            );
             println!("  Migrated reviewer hook {role}: vessel spawn (was botty)");
         }
     }
@@ -1631,10 +1655,7 @@ fn detect_vcs(project_root: &Path) -> Vcs {
         return Vcs::Jj;
     }
     // Check for .git file (worktree/maw) or .git directory (regular repo)
-    if project_root
-        .ancestors()
-        .any(|p| p.join(".git").exists())
-    {
+    if project_root.ancestors().any(|p| p.join(".git").exists()) {
         return Vcs::Git;
     }
     Vcs::None

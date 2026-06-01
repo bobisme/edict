@@ -10,6 +10,7 @@ use crate::config::{
     ReviewerAgentConfig, ToolsConfig, WorkerAgentConfig,
 };
 use crate::error::ExitError;
+use crate::layout::Layout;
 use crate::subprocess::{Tool, run_command};
 use crate::template::render_agents_md;
 
@@ -143,6 +144,11 @@ impl InitArgs {
         let agents_md_path = project_dir.join("AGENTS.md");
         let is_reinit = agents_dir.exists();
 
+        // Detect the on-disk workspace layout. In the bare path this runs inside
+        // ws/default (via handle_bare_repo) and detect() recognizes the trunk; in
+        // the root layout there is no ws/default and detect() returns Root.
+        let layout = Layout::detect(&project_dir);
+
         // Detect existing config from AGENTS.md on re-init
         let detected = if is_reinit && agents_md_path.exists() {
             let content = fs::read_to_string(&agents_md_path)?;
@@ -171,7 +177,7 @@ impl InitArgs {
         }
 
         // Copy workflow docs (reuse sync logic)
-        sync_workflow_docs(&agents_dir)?;
+        sync_workflow_docs(&agents_dir, layout)?;
         println!("Copied workflow docs");
 
         // Copy prompt templates
@@ -195,7 +201,7 @@ impl InitArgs {
                 "AGENTS.md already exists. Use --force to overwrite, or run `edict sync` to update."
             );
         } else {
-            let content = render_agents_md(&config)?;
+            let content = render_agents_md(&config, layout)?;
             fs::write(&agents_md_path, content)?;
             println!("Generated AGENTS.md");
         }
@@ -773,10 +779,12 @@ fn build_default_env(languages: &[String]) -> std::collections::HashMap<String, 
 // Re-embed the same workflow docs as sync.rs
 use crate::commands::sync::{DESIGN_DOCS, REVIEWER_PROMPTS, WORKFLOW_DOCS};
 
-fn sync_workflow_docs(agents_dir: &Path) -> Result<()> {
+fn sync_workflow_docs(agents_dir: &Path, layout: Layout) -> Result<()> {
     for (name, content) in WORKFLOW_DOCS {
         let path = agents_dir.join(name);
-        fs::write(&path, content).with_context(|| format!("writing {}", path.display()))?;
+        let rendered = crate::template::render_workflow_doc(content, layout)
+            .with_context(|| format!("rendering {}", name))?;
+        fs::write(&path, rendered).with_context(|| format!("writing {}", path.display()))?;
     }
 
     // Write version marker
@@ -868,7 +876,14 @@ fn register_spawn_hooks(project_dir: &Path, name: &str, reviewers: &[String], co
         .and_then(|r| r.memory_limit.as_deref());
     for role in reviewers {
         let reviewer_agent = format!("{name}-{role}");
-        register_reviewer_hook(&hook_cwd, &spawn_cwd, name, &agent, &reviewer_agent, reviewer_memory_limit);
+        register_reviewer_hook(
+            &hook_cwd,
+            &spawn_cwd,
+            name,
+            &agent,
+            &reviewer_agent,
+            reviewer_memory_limit,
+        );
     }
 }
 

@@ -683,7 +683,16 @@ impl Responder {
         let timeout_str = self.claude_timeout.to_string();
         let start = crate::telemetry::metrics::time_start();
         let output = Tool::new("edict")
-            .args(&["run", "agent", prompt, "-m", model, "-t", &timeout_str, "--skip-permissions"])
+            .args(&[
+                "run",
+                "agent",
+                prompt,
+                "-m",
+                model,
+                "-t",
+                &timeout_str,
+                "--skip-permissions",
+            ])
             .run_ok()?;
         crate::telemetry::metrics::time_record(
             "edict.responder.agent_run_duration_seconds",
@@ -1114,11 +1123,8 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
                         "--agent".into(),
                         lead_name.clone(),
                     ]);
-                    let spawn_arg_refs: Vec<&str> =
-                        spawn_args.iter().map(|s| s.as_str()).collect();
-                    let spawn_result = Tool::new("vessel")
-                        .args(&spawn_arg_refs)
-                        .run();
+                    let spawn_arg_refs: Vec<&str> = spawn_args.iter().map(|s| s.as_str()).collect();
+                    let spawn_result = Tool::new("vessel").args(&spawn_arg_refs).run();
 
                     match spawn_result {
                         Ok(out) if out.success() => {
@@ -1215,10 +1221,8 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
                     eprintln!("Triage → work: \"{reason}\"");
                     match self.bn_create(&reason, &reason, None) {
                         Ok(bone_id) => {
-                            let _ = self.rite_send(
-                                &format!("Filed {bone_id}: {reason}"),
-                                Some("feedback"),
-                            );
+                            let _ = self
+                                .rite_send(&format!("Filed {bone_id}: {reason}"), Some("feedback"));
                             self.handle_dev("", Some(&bone_id))?;
                         }
                         Err(e) => {

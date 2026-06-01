@@ -117,9 +117,7 @@ fn runner_for_model(model: Option<&str>) -> &'static str {
 /// It does not understand provider prefixes or `:thinking` suffixes.
 fn parse_model_for_claude(model: &str) -> String {
     // Strip provider prefix
-    let without_provider = model
-        .strip_prefix("anthropic/")
-        .unwrap_or(model);
+    let without_provider = model.strip_prefix("anthropic/").unwrap_or(model);
 
     // Strip :thinking suffix (e.g. ":low", ":medium", ":high")
     match without_provider.rsplit_once(':') {
@@ -156,7 +154,10 @@ pub fn run_agent(
         "claude" => {
             // Translate model format for Claude Code
             let claude_model = model.map(|m| parse_model_for_claude(m));
-            (spawn_claude(prompt, claude_model.as_deref(), skip_permissions)?, "claude")
+            (
+                spawn_claude(prompt, claude_model.as_deref(), skip_permissions)?,
+                "claude",
+            )
         }
         "pi" => (spawn_pi(prompt, model)?, "pi"),
         _ => {
@@ -668,13 +669,7 @@ fn print_tool_args(name: &str, args: &Value, style: &Style) {
                 if let Some(lim) = args.get("limit").and_then(|l| l.as_u64()) {
                     extra.push(format!("+{lim}"));
                 }
-                println!(
-                    "  {}{}{}{}",
-                    style.dim,
-                    short,
-                    extra.join(""),
-                    style.reset
-                );
+                println!("  {}{}{}{}", style.dim, short, extra.join(""), style.reset);
             }
         }
         "write" | "Write" => {
@@ -1057,33 +1052,63 @@ mod tests {
 
     #[test]
     fn runner_for_model_anthropic_uses_claude() {
-        assert_eq!(runner_for_model(Some("anthropic/claude-opus-4-6:high")), "claude");
-        assert_eq!(runner_for_model(Some("anthropic/claude-sonnet-4-6:medium")), "claude");
-        assert_eq!(runner_for_model(Some("anthropic/claude-haiku-4-5:low")), "claude");
+        assert_eq!(
+            runner_for_model(Some("anthropic/claude-opus-4-6:high")),
+            "claude"
+        );
+        assert_eq!(
+            runner_for_model(Some("anthropic/claude-sonnet-4-6:medium")),
+            "claude"
+        );
+        assert_eq!(
+            runner_for_model(Some("anthropic/claude-haiku-4-5:low")),
+            "claude"
+        );
     }
 
     #[test]
     fn runner_for_model_non_anthropic_uses_pi() {
-        assert_eq!(runner_for_model(Some("openai-codex/gpt-5.3-codex:medium")), "pi");
-        assert_eq!(runner_for_model(Some("google-gemini-cli/gemini-3-pro:medium")), "pi");
+        assert_eq!(
+            runner_for_model(Some("openai-codex/gpt-5.3-codex:medium")),
+            "pi"
+        );
+        assert_eq!(
+            runner_for_model(Some("google-gemini-cli/gemini-3-pro:medium")),
+            "pi"
+        );
         assert_eq!(runner_for_model(None), "pi");
     }
 
     #[test]
     fn parse_model_for_claude_strips_provider_and_suffix() {
-        assert_eq!(parse_model_for_claude("anthropic/claude-opus-4-6:high"), "claude-opus-4-6");
-        assert_eq!(parse_model_for_claude("anthropic/claude-sonnet-4-6:medium"), "claude-sonnet-4-6");
-        assert_eq!(parse_model_for_claude("anthropic/claude-haiku-4-5:low"), "claude-haiku-4-5");
+        assert_eq!(
+            parse_model_for_claude("anthropic/claude-opus-4-6:high"),
+            "claude-opus-4-6"
+        );
+        assert_eq!(
+            parse_model_for_claude("anthropic/claude-sonnet-4-6:medium"),
+            "claude-sonnet-4-6"
+        );
+        assert_eq!(
+            parse_model_for_claude("anthropic/claude-haiku-4-5:low"),
+            "claude-haiku-4-5"
+        );
     }
 
     #[test]
     fn parse_model_for_claude_no_suffix() {
-        assert_eq!(parse_model_for_claude("anthropic/claude-opus-4-6"), "claude-opus-4-6");
+        assert_eq!(
+            parse_model_for_claude("anthropic/claude-opus-4-6"),
+            "claude-opus-4-6"
+        );
     }
 
     #[test]
     fn parse_model_for_claude_no_provider() {
-        assert_eq!(parse_model_for_claude("claude-opus-4-6:high"), "claude-opus-4-6");
+        assert_eq!(
+            parse_model_for_claude("claude-opus-4-6:high"),
+            "claude-opus-4-6"
+        );
         assert_eq!(parse_model_for_claude("claude-opus-4-6"), "claude-opus-4-6");
     }
 }

@@ -56,9 +56,7 @@ impl HooksCommand {
                 format,
             } => audit_hooks(project_root.as_deref(), *format),
             HooksCommand::Run {
-                hook_name,
-                release,
-                ..
+                hook_name, release, ..
             } => run_hook(hook_name, *release),
         }
     }
@@ -113,9 +111,7 @@ fn uninstall_hooks() -> Result<()> {
                 }
             }
             // Remove empty event arrays
-            hooks.retain(|_, v| {
-                v.as_array().map(|a| !a.is_empty()).unwrap_or(true)
-            });
+            hooks.retain(|_, v| v.as_array().map(|a| !a.is_empty()).unwrap_or(true));
         }
 
         // Remove hooks key entirely if empty
@@ -163,7 +159,9 @@ fn audit_hooks(project_root: Option<&Path>, format: super::doctor::OutputFormat)
                     .is_some_and(|arr| {
                         arr.iter().any(|entry| {
                             entry["hooks"].as_array().is_some_and(|hooks| {
-                                hooks.iter().any(|h| is_botbox_hook_command(h, hook_entry.name))
+                                hooks
+                                    .iter()
+                                    .any(|h| is_botbox_hook_command(h, hook_entry.name))
                             })
                         })
                     })
@@ -341,24 +339,22 @@ fn install_pi_extension(path: &Path) -> Result<()> {
 
 /// Check if a hook entry is edict-managed (current or legacy botbox)
 fn is_botbox_hook_entry(entry: &serde_json::Value) -> bool {
-    entry["hooks"]
-        .as_array()
-        .is_some_and(|hooks| {
-            hooks.iter().any(|h| {
-                let cmd = &h["command"];
-                if let Some(cmd_str) = cmd.as_str() {
-                    cmd_str.contains("edict hooks run") || cmd_str.contains("botbox hooks run")
-                } else if let Some(cmd_arr) = cmd.as_array() {
-                    cmd_arr.len() >= 3
-                        && (cmd_arr[0].as_str() == Some("edict")
-                            || cmd_arr[0].as_str() == Some("botbox"))
-                        && cmd_arr[1].as_str() == Some("hooks")
-                        && cmd_arr[2].as_str() == Some("run")
-                } else {
-                    false
-                }
-            })
+    entry["hooks"].as_array().is_some_and(|hooks| {
+        hooks.iter().any(|h| {
+            let cmd = &h["command"];
+            if let Some(cmd_str) = cmd.as_str() {
+                cmd_str.contains("edict hooks run") || cmd_str.contains("botbox hooks run")
+            } else if let Some(cmd_arr) = cmd.as_array() {
+                cmd_arr.len() >= 3
+                    && (cmd_arr[0].as_str() == Some("edict")
+                        || cmd_arr[0].as_str() == Some("botbox"))
+                    && cmd_arr[1].as_str() == Some("hooks")
+                    && cmd_arr[2].as_str() == Some("run")
+            } else {
+                false
+            }
         })
+    })
 }
 
 /// Check if a specific hook command matches a hook name (edict or legacy botbox)
@@ -547,9 +543,7 @@ fn check_rite_hooks(root: &Path, config: &Config, issues: &mut Vec<String>) -> R
     });
 
     if !has_router {
-        issues.push(format!(
-            "Missing rite router hook (claim: {router_claim})"
-        ));
+        issues.push(format!("Missing rite router hook (claim: {router_claim})"));
     }
 
     for reviewer in &config.review.reviewers {

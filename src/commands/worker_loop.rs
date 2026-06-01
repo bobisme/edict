@@ -177,6 +177,9 @@ impl WorkerLoop {
 
     /// Build the worker loop prompt.
     fn build_prompt(&self) -> String {
+        // Prompt is authored in bare form (`maw exec default -- bn ...`); for the
+        // root layout, rewrite_prompt() strips the trunk prefix at the end.
+        let layout = crate::layout::Layout::detect(&self.project_root);
         let dispatched_section = if let (Some(bone), Some(ws)) =
             (&self.dispatched_bone, &self.dispatched_workspace)
         {
@@ -206,7 +209,7 @@ impl WorkerLoop {
                 String::new()
             };
 
-            let ws_path = self.project_root.join("ws").join(ws);
+            let ws_path = self.project_root.join(layout.ws_path(ws));
 
             format!(
                 r#"## DISPATCHED WORKER — FAST PATH
@@ -344,7 +347,7 @@ then STOP. Do not start a second task — the outer loop handles iteration."#
             "Review is disabled. Skip review and proceed to FINISH after describing commit."
         };
 
-        format!(
+        let prompt = format!(
             r#"You are worker agent "{agent}" for project "{project}".
 
 IMPORTANT: Use --agent {agent} on ALL rite and seal commands. bn resolves agent identity from $AGENT/$RITE_AGENT env automatically. Set EDICT_PROJECT={project}.
@@ -503,7 +506,8 @@ Key rules:
             finish_step = finish_step_7,
             review_status = review_status_str,
             review_note = review_note,
-        )
+        );
+        layout.rewrite_prompt(prompt)
     }
 }
 
@@ -672,7 +676,14 @@ fn try_run_agent(prompt: &str, model: &str, timeout: u64) -> anyhow::Result<Stri
     use std::process::{Command, Stdio};
 
     let timeout_string = timeout.to_string();
-    let mut args = vec!["run", "agent", prompt, "-t", &timeout_string, "--skip-permissions"];
+    let mut args = vec![
+        "run",
+        "agent",
+        prompt,
+        "-t",
+        &timeout_string,
+        "--skip-permissions",
+    ];
 
     // Pass the full model string (e.g. "anthropic/claude-sonnet-4-6:medium") — Pi handles :suffix natively
     if !model.is_empty() {

@@ -358,11 +358,19 @@ pub fn render(guidance: &ProtocolGuidance, format: OutputFormat) -> Result<Strin
     // Validate before rendering
     validate_guidance(guidance).map_err(|e| e.to_string())?;
 
-    Ok(match format {
+    let output = match format {
         OutputFormat::Json => render_json(guidance).map_err(|e| e.to_string())?,
         OutputFormat::Pretty => render_pretty(guidance),
         OutputFormat::Text => render_text(guidance),
-    })
+    };
+
+    // Guidance steps are authored in bare form (`maw exec default -- bn ...`).
+    // Protocol commands run from the project root, so detect the layout from the
+    // cwd and adapt the rendered command strings for the root layout (a no-op for
+    // bare). The lower-level render_* fns are left untouched so golden tests stay
+    // layout-independent.
+    let layout = crate::layout::Layout::detect(&std::env::current_dir().unwrap_or_default());
+    Ok(layout.rewrite_prompt(output))
 }
 
 #[cfg(test)]
@@ -576,7 +584,8 @@ mod tests {
             "maw exec default -- bn do bd-3t1d".to_string(),
             "rite claims stake --agent crimson-storm 'bone://edict/bd-3t1d' -m 'bd-3t1d'"
                 .to_string(),
-            "maw ws create bd-3t1d --description 'shell-safe command renderer' --from main".to_string(),
+            "maw ws create bd-3t1d --description 'shell-safe command renderer' --from main"
+                .to_string(),
             "rite claims stake --agent crimson-storm 'workspace://edict/bd-3t1d' -m 'bd-3t1d'"
                 .to_string(),
         ]);

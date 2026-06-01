@@ -5,7 +5,6 @@ use anyhow::Result;
 use crate::config::Config;
 use crate::subprocess::run_command;
 
-
 /// Detected runtime context for hooks.
 struct HookContext {
     /// If in a maw repo, the path containing .manifold
@@ -25,10 +24,12 @@ impl HookContext {
             .ok()
             .filter(|a| validate_agent_name(a));
 
-        let maw_root = find_ancestor_with(&cwd, ".manifold");
+        // Bare layout keeps maw metadata in a top-level `.manifold/`; the root
+        // layout keeps it under `.maw/`. Recognize both.
+        let maw_root =
+            find_ancestor_with(&cwd, ".manifold").or_else(|| find_ancestor_with(&cwd, ".maw"));
 
-        let edict_config = find_edict_config(&cwd)
-            .and_then(|p| Config::load(&p).ok());
+        let edict_config = find_edict_config(&cwd).and_then(|p| Config::load(&p).ok());
 
         Self {
             maw_root,
@@ -46,14 +47,24 @@ impl HookContext {
 pub fn run_session_start() -> Result<()> {
     let ctx = HookContext::detect();
 
-    // 1. Maw repo guidance
-    if ctx.maw_root.is_some() {
-        println!(
-            "This project uses Git + maw for version control. \
-            Source files live in workspaces under ws/, not at the project root. \
-            Use `maw exec <workspace> -- <command>` to run commands. \
-            Run `maw --help` for more info. Do NOT run jj commands."
-        );
+    // 1. Maw repo guidance (layout-aware)
+    if let Some(ref maw_root) = ctx.maw_root {
+        match crate::layout::Layout::detect(maw_root) {
+            crate::layout::Layout::Root => println!(
+                "This project uses Git + maw for version control. \
+                Source files live at the repo root; extra agent workspaces are in \
+                .maw/workspaces/<workspace>. Run bn, seal, cargo, etc. directly at the \
+                root — no prefix needed. Use `maw exec <workspace> -- <command>` only to \
+                run commands inside another workspace. \
+                Run `maw --help` for more info. Do NOT run jj commands."
+            ),
+            crate::layout::Layout::Bare => println!(
+                "This project uses Git + maw for version control. \
+                Source files live in workspaces under ws/, not at the project root. \
+                Use `maw exec <workspace> -- <command>` to run commands. \
+                Run `maw --help` for more info. Do NOT run jj commands."
+            ),
+        }
     }
 
     // 2. Agent identity + project channel (if edict project and agent set)
@@ -215,7 +226,8 @@ fn check_rite_inbox(ctx: &HookContext, agent: &str, _hook_input: Option<&str>) -
 
     let messages = parse_inbox_previews(&inbox_json, Some(agent));
 
-    let mark_read_cmd = format!("rite inbox --agent {agent} --mentions --channels {channel} --mark-read");
+    let mark_read_cmd =
+        format!("rite inbox --agent {agent} --mentions --channels {channel} --mark-read");
 
     let context = format!(
         "STOP: You have {count} unread rite message(s) in #{channel}. Check if any need a response:\n{messages}\n\nTo read and respond: `{mark_read_cmd}`"
@@ -388,10 +400,7 @@ mod tests {
         fs::create_dir_all(tmp.path().join("ws/default")).unwrap();
         fs::write(tmp.path().join("ws/default/.edict.toml"), "").unwrap();
         let result = find_edict_config(tmp.path());
-        assert_eq!(
-            result,
-            Some(tmp.path().join("ws/default/.edict.toml"))
-        );
+        assert_eq!(result, Some(tmp.path().join("ws/default/.edict.toml")));
     }
 
     #[test]

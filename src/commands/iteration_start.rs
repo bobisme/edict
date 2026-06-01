@@ -143,6 +143,7 @@ pub fn run_iteration_start(agent_override: Option<&str>) -> anyhow::Result<()> {
     let agent = agent_override.unwrap_or(default_agent.as_str());
     let project = config.channel();
     let c = Colors::detect();
+    let layout = crate::layout::Layout::detect(&std::env::current_dir().unwrap_or_default());
 
     println!("{}", h1(&c, &format!("Iteration Start: {}", agent)));
     println!();
@@ -308,10 +309,10 @@ pub fn run_iteration_start(agent_override: Option<&str>) -> anyhow::Result<()> {
             "{}",
             hint(
                 &c,
-                &format!(
+                &layout.rewrite_prompt(format!(
                     "Start review: maw exec default -- seal inbox --agent {}",
                     agent
-                )
+                ))
             )
         );
     } else {

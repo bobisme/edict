@@ -4,6 +4,7 @@ use minijinja::Environment;
 use serde::Serialize;
 
 use crate::config::{Config, ReviewConfig, ToolsConfig};
+use crate::layout::Layout;
 
 const MANAGED_START: &str = "<!-- edict:managed-start -->";
 const MANAGED_END: &str = "<!-- edict:managed-end -->";
@@ -32,6 +33,54 @@ pub struct TemplateContext {
     pub workflow_docs: Vec<DocEntry>,
     /// Design docs with descriptions (filtered by project type)
     pub design_docs: Vec<DocEntry>,
+    /// Layout-dependent paths and command prefixes (flattened into the context
+    /// so templates can reference `bn`, `trunk_path`, `is_root_layout`, etc.).
+    #[serde(flatten)]
+    pub layout: LayoutVars,
+}
+
+/// Layout-dependent template variables shared by the managed-section template and
+/// the workflow docs. See [`crate::layout::Layout`] for the underlying semantics.
+#[derive(Debug, Serialize, Clone)]
+pub struct LayoutVars {
+    /// True for the new root layout (trunk == repo root).
+    pub is_root_layout: bool,
+    /// `bn` invocation against the trunk (`bn`, or `maw exec default -- bn`).
+    pub bn: String,
+    /// `seal` invocation against the trunk (`seal`, or `maw exec default -- seal`).
+    pub seal_default: String,
+    /// Trunk working-copy path (`.` or `ws/default`).
+    pub trunk_path: String,
+    /// Workspace path prefix with trailing slash (`.maw/workspaces/` or `ws/`).
+    pub ws_prefix: String,
+    /// Trunk command prefix incl. trailing space (`` or `maw exec default -- `).
+    pub default_prefix: String,
+}
+
+impl LayoutVars {
+    pub fn new(layout: Layout) -> Self {
+        Self {
+            is_root_layout: layout.is_root(),
+            bn: layout.bn_cmd().to_string(),
+            seal_default: layout.seal_default_cmd().to_string(),
+            trunk_path: layout.trunk_path().to_string(),
+            ws_prefix: layout.ws_prefix().to_string(),
+            default_prefix: layout.default_prefix().to_string(),
+        }
+    }
+}
+
+/// Render a single workflow doc through minijinja with layout-dependent variables.
+///
+/// Workflow docs are plain Markdown that may contain `{{ bn }}`, `{{ ws_prefix }}`,
+/// `{% if is_root_layout %}` and the other [`LayoutVars`] fields. Docs with no
+/// directives render unchanged.
+pub fn render_workflow_doc(content: &str, layout: Layout) -> anyhow::Result<String> {
+    let mut env = Environment::new();
+    // Preserve the doc's trailing newline (minijinja strips it by default), so
+    // bare rendering stays byte-identical to the docs that ship today.
+    env.set_keep_trailing_newline(true);
+    Ok(env.render_str(content, LayoutVars::new(layout))?)
 }
 
 #[derive(Debug, Serialize)]
@@ -49,12 +98,13 @@ pub struct DocEntry {
 }
 
 impl TemplateContext {
-    /// Build template context from project config
-    pub fn from_config(config: &Config) -> Self {
+    /// Build template context from project config and detected layout.
+    pub fn from_config(config: &Config, layout: Layout) -> Self {
         let workflow_docs = list_workflow_docs();
         let design_docs = list_design_docs(&config.project.project_type);
 
         Self {
+            layout: LayoutVars::new(layout),
             project: ProjectInfo {
                 name: config.project.name.clone(),
                 project_type: config.project.project_type.clone(),
@@ -176,8 +226,8 @@ pub fn render_managed_section(ctx: &TemplateContext) -> anyhow::Result<String> {
 }
 
 /// Render a complete AGENTS.md file for a new project
-pub fn render_agents_md(config: &Config) -> anyhow::Result<String> {
-    let ctx = TemplateContext::from_config(config);
+pub fn render_agents_md(config: &Config, layout: Layout) -> anyhow::Result<String> {
+    let ctx = TemplateContext::from_config(config, layout);
 
     let tool_list = config
         .tools
@@ -276,6 +326,117 @@ fn dedent_and_trim(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::sync::WORKFLOW_DOCS;
+
+    /// Every workflow doc must render cleanly in both layouts with all jinja
+    /// directives resolved, and must not leak the *other* layout's conventions.
+    #[test]
+    fn all_workflow_docs_render_in_both_layouts() {
+        for (name, content) in WORKFLOW_DOCS {
+            let bare = render_workflow_doc(content, Layout::Bare)
+                .unwrap_or_else(|e| panic!("{name} failed to render (bare): {e}"));
+            let root = render_workflow_doc(content, Layout::Root)
+                .unwrap_or_else(|e| panic!("{name} failed to render (root): {e}"));
+
+            // No unresolved jinja in either rendering.
+            for (label, out) in [("bare", &bare), ("root", &root)] {
+                assert!(
+                    !out.contains("{{") && !out.contains("{%"),
+                    "{name} ({label}) has unresolved jinja"
+                );
+            }
+
+            // Root layout must not carry bare-only conventions, and vice versa.
+            assert!(
+                !root.contains("maw exec default -- bn"),
+                "{name} (root) still prefixes bn with `maw exec default --`"
+            );
+            assert!(
+                !root.contains("ws/$WS"),
+                "{name} (root) still uses bare `ws/$WS` paths"
+            );
+            if bare.contains(".maw/workspaces") {
+                panic!("{name} (bare) leaked root-layout `.maw/workspaces` path");
+            }
+        }
+    }
+
+    /// Bare rendering of each templated doc must be byte-identical to the
+    /// committed `.agents/edict/*.md` in this (bare-layout) repo — guaranteeing
+    /// the layout templating did not change the bare output that ships today.
+    #[test]
+    fn bare_render_matches_committed_docs() {
+        use std::path::Path;
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(".agents/edict");
+        let mut checked = 0;
+        for (name, content) in WORKFLOW_DOCS {
+            let path = dir.join(name);
+            if !path.exists() {
+                continue;
+            }
+            let committed = std::fs::read_to_string(&path).unwrap();
+            let bare = render_workflow_doc(content, Layout::Bare).unwrap();
+            assert_eq!(
+                bare, committed,
+                "bare render of {name} differs from committed .agents/edict/{name}"
+            );
+            checked += 1;
+        }
+        assert!(
+            checked > 10,
+            "expected to check >10 docs, checked {checked}"
+        );
+    }
+
+    /// The bare-layout managed section must still contain the bare-only
+    /// conventions (the trunk lives at `ws/default/`, bones go through
+    /// `maw exec default --`), while the root rendering must not.
+    #[test]
+    fn managed_section_respects_layout() {
+        let config = Config {
+            version: "1.0.0".into(),
+            project: crate::config::ProjectConfig {
+                name: "demo".into(),
+                project_type: vec!["cli".into()],
+                default_agent: Some("demo-dev".into()),
+                channel: Some("demo".into()),
+                install_command: None,
+                release_instructions: None,
+                check_command: None,
+                languages: vec![],
+                critical_approvers: None,
+            },
+            tools: ToolsConfig {
+                bones: true,
+                maw: true,
+                seal: true,
+                rite: true,
+                vessel: true,
+            },
+            review: ReviewConfig {
+                enabled: false,
+                reviewers: vec![],
+            },
+            push_main: false,
+            agents: Default::default(),
+            models: Default::default(),
+            env: Default::default(),
+        };
+
+        let bare =
+            render_managed_section(&TemplateContext::from_config(&config, Layout::Bare)).unwrap();
+        assert!(bare.contains("bare repo"));
+        assert!(bare.contains("maw exec default -- bn triage"));
+        assert!(bare.contains("never in `ws/default/`"));
+        assert!(!bare.contains(".maw/workspaces"));
+
+        let root =
+            render_managed_section(&TemplateContext::from_config(&config, Layout::Root)).unwrap();
+        assert!(root.contains(".maw/workspaces"));
+        assert!(root.contains("| Triage (scores) | `bn triage` |"));
+        assert!(!root.contains("maw exec default -- bn"));
+        assert!(!root.contains("bare repo"));
+    }
 
     #[test]
     fn test_render_agents_md() {
@@ -309,7 +470,7 @@ mod tests {
             env: Default::default(),
         };
 
-        let result = render_agents_md(&config).unwrap();
+        let result = render_agents_md(&config, Layout::Bare).unwrap();
 
         assert!(result.contains("# test-project"));
         assert!(result.contains("Tools: `bones`, `maw`, `seal`, `rite`, `vessel`"));
@@ -362,7 +523,7 @@ More custom content.
             env: Default::default(),
         };
 
-        let ctx = TemplateContext::from_config(&config);
+        let ctx = TemplateContext::from_config(&config, Layout::Bare);
         let result = update_managed_section(original, &ctx).unwrap();
 
         assert!(result.contains("# My Project"));
@@ -416,7 +577,7 @@ Old botbox-era managed content
             env: Default::default(),
         };
 
-        let ctx = TemplateContext::from_config(&config);
+        let ctx = TemplateContext::from_config(&config, Layout::Bare);
         let result = update_managed_section(original, &ctx).unwrap();
 
         assert!(result.contains("# My Project"));

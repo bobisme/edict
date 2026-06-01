@@ -414,7 +414,10 @@ impl StatusArgs {
                     "{} ready bone(s) available → run triage",
                     report.ready_bones.count
                 ),
-                command: Some("maw exec default -- bn next".to_string()),
+                command: Some(
+                    crate::layout::Layout::detect(&std::env::current_dir().unwrap_or_default())
+                        .rewrite_prompt("maw exec default -- bn next".to_string()),
+                ),
             });
         }
 

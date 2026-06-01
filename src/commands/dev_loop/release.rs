@@ -30,14 +30,11 @@ pub fn has_unreleased_changes() -> bool {
         .and_then(|t| t.run().ok());
 
     match output {
-        Some(o) if o.success() => o
-            .stdout
-            .lines()
-            .any(|line| {
-                // git log --oneline: "<hash> <message>"
-                let msg = line.split_once(' ').map_or(line, |(_, m)| m);
-                msg.starts_with("feat:") || msg.starts_with("fix:")
-            }),
+        Some(o) if o.success() => o.stdout.lines().any(|line| {
+            // git log --oneline: "<hash> <message>"
+            let msg = line.split_once(' ').map_or(line, |(_, m)| m);
+            msg.starts_with("feat:") || msg.starts_with("fix:")
+        }),
         _ => false,
     }
 }

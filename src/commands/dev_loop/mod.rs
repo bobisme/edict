@@ -297,9 +297,7 @@ pub fn run(
                     // Re-verify: agent's view of "no work" can be narrower than bn triage
                     // (e.g., framed around a phase/mission). Trust the queue, not the claim.
                     if has_work(&agent, &project)? {
-                        eprintln!(
-                            "Agent signaled COMPLETE but bones remain — continuing loop"
-                        );
+                        eprintln!("Agent signaled COMPLETE but bones remain — continuing loop");
                     } else {
                         eprintln!("\u{2713} Dev cycle complete - no more work");
                         break;
@@ -868,7 +866,9 @@ fn is_systemd_dbus_available() -> bool {
 
 /// Kill child workers spawned by this dev-loop (hierarchical name pattern: AGENT/suffix).
 fn kill_child_workers(agent: &str) {
-    let output = Tool::new("vessel").args(&["list", "--format", "json"]).run();
+    let output = Tool::new("vessel")
+        .args(&["list", "--format", "json"])
+        .run();
 
     let output = match output {
         Ok(o) if o.success() => o,
@@ -927,8 +927,14 @@ mod tests {
         assert_eq!(parse_next_status("null"), NextStatus::None);
         assert_eq!(parse_next_status("{}"), NextStatus::None);
         assert_eq!(parse_next_status("[]"), NextStatus::Ready(0));
-        assert_eq!(parse_next_status(r#"{"mode":"balanced","assignments":[]}"#), NextStatus::Ready(0));
-        assert_eq!(parse_next_status(r#"{"message":"no unblocked items"}"#), NextStatus::None);
+        assert_eq!(
+            parse_next_status(r#"{"mode":"balanced","assignments":[]}"#),
+            NextStatus::Ready(0)
+        );
+        assert_eq!(
+            parse_next_status(r#"{"message":"no unblocked items"}"#),
+            NextStatus::None
+        );
     }
 
     #[test]

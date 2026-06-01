@@ -62,7 +62,9 @@ pub fn init() -> TelemetryGuard {
         Some(_) => init_otlp(),
         #[cfg(not(feature = "otel"))]
         Some(_) => {
-            eprintln!("warning: OTEL_EXPORTER_OTLP_ENDPOINT set but edict built without 'otel' feature");
+            eprintln!(
+                "warning: OTEL_EXPORTER_OTLP_ENDPOINT set but edict built without 'otel' feature"
+            );
             init_noop()
         }
     }
@@ -155,9 +157,8 @@ fn init_otlp() -> TelemetryGuard {
         .with_resource(resource.clone())
         .build();
 
-    let log_layer = opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge::new(
-        &log_provider,
-    );
+    let log_layer =
+        opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge::new(&log_provider);
 
     // --- Metrics ---
     let metric_exporter = match opentelemetry_otlp::MetricExporter::builder()

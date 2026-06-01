@@ -1,5 +1,4 @@
 pub mod dev_loop;
-pub mod schema;
 pub mod doctor;
 pub mod hooks;
 pub mod init;
@@ -9,6 +8,7 @@ pub mod responder;
 pub mod run;
 pub mod run_agent;
 pub mod run_reviewer_loop;
+pub mod schema;
 pub mod status;
 pub mod sync;
 pub mod triage;

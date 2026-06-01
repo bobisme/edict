@@ -2,6 +2,7 @@ mod commands;
 mod config;
 mod error;
 mod hooks;
+mod layout;
 mod subprocess;
 mod telemetry;
 mod template;

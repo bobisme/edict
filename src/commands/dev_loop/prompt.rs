@@ -268,20 +268,37 @@ When all children are closed:
 
     let check_command = ctx.check_command.as_deref().unwrap_or("just check");
 
-    format!(
+    // The prompt is authored in bare form; rewrite_prompt() below adapts the
+    // trunk command prefixes and workspace paths for the root layout. The
+    // COMMAND PATTERN explainer is the one block that can't be mechanically
+    // rewritten (it contrasts trunk vs workspace), so it is layout-specific here.
+    let layout = crate::layout::Layout::detect(std::path::Path::new(project_dir.as_str()));
+    let command_pattern = if layout.is_root() {
+        "COMMAND PATTERN: bn runs against the trunk at the repo root; seal runs in its workspace.\n  \
+         bn:   bn <args>                              (directly at the repo root, no prefix)\n  \
+         seal: maw exec $WS -- seal <args>\n  \
+         git:  maw exec $WS -- git <args>\n  \
+         other: maw exec $WS -- <command>           (cargo test, etc.)\n\
+         Inside `maw exec <ws>`, CWD is already `.maw/workspaces/<ws>/`. At the repo root, run `bn`, `cargo`, etc. directly.\n\
+         For file reads/edits in a workspace, use the full path: `.maw/workspaces/<ws>/src/...`; trunk files are at the repo root (`src/...`)."
+    } else {
+        "COMMAND PATTERN — maw exec: All bn commands run in the default workspace. All seal commands run in their workspace.\n  \
+         bn:   maw exec default -- bn <args>\n  \
+         seal: maw exec $WS -- seal <args>\n  \
+         git:  maw exec $WS -- git <args>\n  \
+         other: maw exec $WS -- <command>           (cargo test, etc.)\n\
+         Inside `maw exec <ws>`, CWD is already `ws/<ws>/`. Use `maw exec default -- ls src/`, NOT `maw exec default -- ls ws/default/src/`\n\
+         For file reads/edits outside maw exec, use the full absolute path: `ws/<ws>/src/...`"
+    };
+
+    let prompt = format!(
         r#"You are lead dev agent "{agent}" for project "{project}".
 
 IMPORTANT: Use --agent {agent} on ALL rite and seal commands. bn resolves agent identity from $AGENT/$RITE_AGENT env automatically. Set EDICT_PROJECT={project}. {review_instructions}.
 
 CRITICAL - HUMAN MESSAGE PRIORITY: If you see a system reminder with "STOP:" showing unread rite messages, these are from humans or other agents trying to reach you. IMMEDIATELY check inbox and respond before continuing your current task. Human questions, clarifications, and redirects take priority over heads-down work.
 
-COMMAND PATTERN — maw exec: All bn commands run in the default workspace. All seal commands run in their workspace.
-  bn:   maw exec default -- bn <args>
-  seal: maw exec $WS -- seal <args>
-  git:  maw exec $WS -- git <args>
-  other: maw exec $WS -- <command>           (cargo test, etc.)
-Inside `maw exec <ws>`, CWD is already `ws/<ws>/`. Use `maw exec default -- ls src/`, NOT `maw exec default -- ls ws/default/src/`
-For file reads/edits outside maw exec, use the full absolute path: `ws/<ws>/src/...`
+{command_pattern}
 VERSION CONTROL: This project uses Git + maw. Do NOT run jj commands.
 {previous_context}{status_section}{sibling_section}Execute exactly ONE dev cycle. Triage inbox, assess ready bones, either work on one yourself
 or dispatch multiple workers in parallel, monitor progress, merge results. Then STOP.
@@ -756,7 +773,8 @@ Key rules:
 - For parallel dispatch, note limitations of this prompt-based approach
 - RISK LABELS: Always assess risk during grooming. risk:low (evals, docs, tests, config) skips security review entirely — self-review and merge directly. risk:medium gets standard review (when REVIEW is true). risk:high requires failure-mode checklist. risk:critical requires human approval.{mission_rules}{multi_lead_rules}
 - Output completion signal at end"#
-    )
+    );
+    layout.rewrite_prompt(prompt)
 }
 
 #[cfg(test)]
