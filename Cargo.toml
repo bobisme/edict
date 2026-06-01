@@ -1,6 +1,6 @@
 [package]
 name = "edict-cli"
-version = "0.24.5"
+version = "0.24.6"
 edition = "2024"
 description = "Setup, sync, and runtime for multi-agent AI coding workflows"
 license = "MIT"
