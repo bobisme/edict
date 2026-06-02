@@ -39,7 +39,9 @@ impl HookContext {
     }
 
     fn channel(&self) -> Option<String> {
-        self.edict_config.as_ref().map(super::super::config::Config::channel)
+        self.edict_config
+            .as_ref()
+            .map(super::super::config::Config::channel)
     }
 }
 
@@ -69,10 +71,11 @@ pub fn run_session_start() -> Result<()> {
 
     // 2. Agent identity + project channel (if edict project and agent set)
     if let Some(ref agent) = ctx.agent
-        && let Some(ref config) = ctx.edict_config {
-            println!("Agent ID for use with rite/seal/bn: {agent}");
-            println!("Project channel: {}", config.channel());
-        }
+        && let Some(ref config) = ctx.edict_config
+    {
+        println!("Agent ID for use with rite/seal/bn: {agent}");
+        println!("Project channel: {}", config.channel());
+    }
 
     // 3. Stake claim (if agent set)
     if let Some(ref agent) = ctx.agent {

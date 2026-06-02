@@ -8,7 +8,7 @@ pub enum HookEvent {
 }
 
 impl HookEvent {
-    #[must_use] 
+    #[must_use]
     pub const fn as_str(&self) -> &'static str {
         match self {
             Self::SessionStart => "SessionStart",
@@ -34,7 +34,7 @@ pub struct HookRegistry;
 
 impl HookRegistry {
     /// Get all registered hooks
-    #[must_use] 
+    #[must_use]
     pub fn all() -> Vec<HookEntry> {
         vec![
             HookEntry {

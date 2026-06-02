@@ -757,7 +757,10 @@ fn migrate_botbox_rite_hooks_to_edict(config: &Config, project_root: &Path) {
     } else {
         None
     };
-    let root_str = bare_root.map_or_else(|| project_root.display().to_string(), |r| r.display().to_string());
+    let root_str = bare_root.map_or_else(
+        || project_root.display().to_string(),
+        |r| r.display().to_string(),
+    );
 
     for hook in hooks {
         let desc = hook
@@ -1222,7 +1225,10 @@ fn migrate_router_hook_claim(config: &Config, project_root: &Path) {
         } else {
             None
         };
-        let root_str = bare_root.map_or_else(|| project_root.display().to_string(), |r| r.display().to_string());
+        let root_str = bare_root.map_or_else(
+            || project_root.display().to_string(),
+            |r| r.display().to_string(),
+        );
         let responder_ml = config
             .agents
             .responder
@@ -1258,10 +1264,9 @@ fn migrate_vessel_hooks(config: &Config, project_root: &Path, config_path: &Path
             println!("Migrated config: tools.botbus → tools.rite");
         }
 
-        if changed
-            && let Err(e) = fs::write(config_path, updated) {
-                tracing::warn!("failed to update config tool renames: {e}");
-            }
+        if changed && let Err(e) = fs::write(config_path, updated) {
+            tracing::warn!("failed to update config tool renames: {e}");
+        }
     }
 
     // 2. Re-register edict hooks that still call `botty spawn` with `vessel spawn`.
@@ -1298,7 +1303,10 @@ fn migrate_vessel_hooks(config: &Config, project_root: &Path, config_path: &Path
     } else {
         None
     };
-    let root_str = bare_root.map_or_else(|| project_root.display().to_string(), |r| r.display().to_string());
+    let root_str = bare_root.map_or_else(
+        || project_root.display().to_string(),
+        |r| r.display().to_string(),
+    );
     let agent = config.default_agent();
 
     for hook in &hooks {
@@ -1388,7 +1396,10 @@ fn ensure_reviewer_hooks(config: &Config, project_root: &Path) {
     } else {
         None
     };
-    let root_str = bare_root.map_or_else(|| project_root.display().to_string(), |r| r.display().to_string());
+    let root_str = bare_root.map_or_else(
+        || project_root.display().to_string(),
+        |r| r.display().to_string(),
+    );
 
     let ml = config
         .agents
@@ -1457,7 +1468,10 @@ fn migrate_botbus_env_hooks(config: &Config, project_root: &Path) {
     } else {
         None
     };
-    let root_str = bare_root.map_or_else(|| project_root.display().to_string(), |r| r.display().to_string());
+    let root_str = bare_root.map_or_else(
+        || project_root.display().to_string(),
+        |r| r.display().to_string(),
+    );
     let agent = config.default_agent();
 
     for hook in &hooks {

@@ -21,7 +21,7 @@ pub struct RunOutput {
 
 impl RunOutput {
     /// Returns true if the process exited successfully.
-    #[must_use] 
+    #[must_use]
     pub const fn success(&self) -> bool {
         self.exit_code == 0
     }
@@ -47,7 +47,7 @@ pub struct Tool {
 
 impl Tool {
     /// Create a new tool invocation.
-    #[must_use] 
+    #[must_use]
     pub fn new(program: &str) -> Self {
         Self {
             program: program.to_string(),
@@ -63,29 +63,30 @@ impl Tool {
     /// (e.g. `rite claims release`) that are spawned from a signal handler.
     ///
     /// On non-Unix platforms this is a no-op (the flag is ignored).
-    #[must_use] 
+    #[must_use]
     pub const fn new_process_group(mut self) -> Self {
         self.new_process_group = true;
         self
     }
 
     /// Add a single argument.
-    #[must_use] 
+    #[must_use]
     pub fn arg(mut self, arg: &str) -> Self {
         self.args.push(arg.to_string());
         self
     }
 
     /// Add multiple arguments.
-    #[must_use] 
+    #[must_use]
     pub fn args(mut self, args: &[&str]) -> Self {
-        self.args.extend(args.iter().map(std::string::ToString::to_string));
+        self.args
+            .extend(args.iter().map(std::string::ToString::to_string));
         self
     }
 
     /// Set a timeout for the subprocess.
     #[allow(dead_code)]
-    #[must_use] 
+    #[must_use]
     pub const fn timeout(mut self, duration: Duration) -> Self {
         self.timeout = Some(duration);
         self
@@ -278,17 +279,19 @@ pub fn ensure_rite_hook(description: &str, add_args: &[&str]) -> anyhow::Result<
     let mut removed = false;
     if let Ok(output) = existing
         && output.success()
-            && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&output.stdout)
-                && let Some(hooks) = parsed.get("hooks").and_then(|h| h.as_array()) {
-                    for hook in hooks {
-                        let desc = hook.get("description").and_then(|d| d.as_str());
-                        if desc == Some(description)
-                            && let Some(id) = hook.get("id").and_then(|i| i.as_str()) {
-                                let _ = Tool::new("rite").args(&["hooks", "remove", id]).run();
-                                removed = true;
-                            }
-                    }
-                }
+        && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&output.stdout)
+        && let Some(hooks) = parsed.get("hooks").and_then(|h| h.as_array())
+    {
+        for hook in hooks {
+            let desc = hook.get("description").and_then(|d| d.as_str());
+            if desc == Some(description)
+                && let Some(id) = hook.get("id").and_then(|i| i.as_str())
+            {
+                let _ = Tool::new("rite").args(&["hooks", "remove", id]).run();
+                removed = true;
+            }
+        }
+    }
 
     // Add with --description
     let mut args = vec!["hooks", "add", "--description", description];

@@ -35,7 +35,9 @@ pub fn execute(
     };
 
     // Fetch bone info
-    let bone_info = if let Ok(bone) = ctx.bone_status(bone_id) { bone } else {
+    let bone_info = if let Ok(bone) = ctx.bone_status(bone_id) {
+        bone
+    } else {
         let mut guidance = ProtocolGuidance::new("finish");
         guidance.blocked(format!(
             "bone {bone_id} not found. Check the ID with: maw exec default -- bn show {bone_id}"
@@ -72,7 +74,9 @@ pub fn execute(
     }
 
     // Resolve workspace from claims
-    let workspace = if let Some(ws) = ctx.workspace_for_bone(bone_id) { ws.to_string() } else {
+    let workspace = if let Some(ws) = ctx.workspace_for_bone(bone_id) {
+        ws.to_string()
+    } else {
         guidance.blocked(format!(
             "no workspace claim found for bone {bone_id}. \
              Cannot determine which workspace to merge."
@@ -99,8 +103,7 @@ pub fn execute(
     if review_enabled && !force {
         // Try to find a review for this workspace
         if let Some((review_id, review_detail)) = find_review_for_workspace(&ctx, &workspace) {
-            let decision =
-                review_gate::evaluate_review_gate(&review_detail, &required_reviewers);
+            let decision = review_gate::evaluate_review_gate(&review_detail, &required_reviewers);
             if merge_target.is_none() {
                 merge_target = review_detail.change_id.clone();
             }
@@ -223,10 +226,8 @@ pub fn execute(
                 &bone_info.title,
                 &required_reviewers.join(","),
             ));
-            let mentions: Vec<String> = required_reviewers
-                .iter()
-                .map(|r| format!("@{r}"))
-                .collect();
+            let mentions: Vec<String> =
+                required_reviewers.iter().map(|r| format!("@{r}")).collect();
             steps.push(shell::rite_send_cmd(
                 "agent",
                 project,
@@ -308,8 +309,7 @@ fn build_finish_steps(
     if !no_merge {
         // Use a conventional commit message derived from the bone title
         let merge_msg = format!("feat: {bead_title}");
-        let target = merge_target
-            .map_or(shell::MergeTarget::Default, shell::MergeTarget::Change);
+        let target = merge_target.map_or(shell::MergeTarget::Default, shell::MergeTarget::Change);
         steps.push(shell::ws_merge_cmd(workspace, target, &merge_msg));
     }
 

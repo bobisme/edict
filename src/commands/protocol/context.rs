@@ -51,7 +51,7 @@ impl ProtocolContext {
     }
 
     /// Get all held bone claims as (`bone_id`, pattern) tuples.
-    #[must_use] 
+    #[must_use]
     pub fn held_bone_claims(&self) -> Vec<(&str, &str)> {
         let mut result = Vec::new();
         for claim in &self.claims {
@@ -70,7 +70,7 @@ impl ProtocolContext {
     }
 
     /// Get all held workspace claims as (`workspace_name`, pattern) tuples.
-    #[must_use] 
+    #[must_use]
     pub fn held_workspace_claims(&self) -> Vec<(&str, &str)> {
         let mut result = Vec::new();
         for claim in &self.claims {
@@ -90,7 +90,7 @@ impl ProtocolContext {
 
     /// Find a workspace by name.
     #[allow(dead_code)]
-    #[must_use] 
+    #[must_use]
     pub fn find_workspace(&self, name: &str) -> Option<&Workspace> {
         self.workspaces.iter().find(|ws| ws.name == name)
     }
@@ -101,22 +101,23 @@ impl ProtocolContext {
     /// finding any non-default workspace claim from this agent. The fallback
     /// is needed because `rite claims list --format json` currently omits the
     /// memo field, making memo-based lookup fail.
-    #[must_use] 
+    #[must_use]
     pub fn workspace_for_bone(&self, bone_id: &str) -> Option<&str> {
         // First pass: memo-based correlation (precise, works when rite includes memo)
         for claim in &self.claims {
             if claim.agent == self.agent
                 && let Some(memo) = &claim.memo
-                    && memo == bone_id {
-                        for pattern in &claim.patterns {
-                            if let Some(ws_name) = pattern
-                                .strip_prefix("workspace://")
-                                .and_then(|rest| rest.split('/').nth(1))
-                            {
-                                return Some(ws_name);
-                            }
-                        }
+                && memo == bone_id
+            {
+                for pattern in &claim.patterns {
+                    if let Some(ws_name) = pattern
+                        .strip_prefix("workspace://")
+                        .and_then(|rest| rest.split('/').nth(1))
+                    {
+                        return Some(ws_name);
                     }
+                }
+            }
         }
 
         // Fallback: find any non-default workspace claim from this agent.
@@ -127,9 +128,10 @@ impl ProtocolContext {
                     if let Some(ws_name) = pattern
                         .strip_prefix("workspace://")
                         .and_then(|rest| rest.split('/').nth(1))
-                        && ws_name != "default" {
-                            return Some(ws_name);
-                        }
+                        && ws_name != "default"
+                    {
+                        return Some(ws_name);
+                    }
                 }
             }
         }
@@ -202,9 +204,10 @@ impl ProtocolContext {
                     if let Some(id) = pattern
                         .strip_prefix("bone://")
                         .and_then(|rest| rest.split('/').nth(1))
-                        && id == bone_id {
-                            return Ok(Some(claim.agent.clone()));
-                        }
+                        && id == bone_id
+                    {
+                        return Ok(Some(claim.agent.clone()));
+                    }
                 }
             }
         }
@@ -283,25 +286,25 @@ impl ProtocolContext {
     }
 
     #[allow(dead_code)]
-    #[must_use] 
+    #[must_use]
     pub fn project(&self) -> &str {
         &self.project
     }
 
     #[allow(dead_code)]
-    #[must_use] 
+    #[must_use]
     pub fn agent(&self) -> &str {
         &self.agent
     }
 
     #[allow(dead_code)]
-    #[must_use] 
+    #[must_use]
     pub fn claims(&self) -> &[Claim] {
         &self.claims
     }
 
     #[allow(dead_code)]
-    #[must_use] 
+    #[must_use]
     pub fn workspaces(&self) -> &[Workspace] {
         &self.workspaces
     }

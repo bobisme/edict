@@ -61,7 +61,9 @@ pub fn execute(
     }
 
     // Resolve workspace from claims
-    let workspace = if let Some(ws) = ctx.workspace_for_bone(bone_id) { ws.to_string() } else {
+    let workspace = if let Some(ws) = ctx.workspace_for_bone(bone_id) {
+        ws.to_string()
+    } else {
         guidance.blocked(format!(
             "no workspace claim found for bone {bone_id}. \
              Create workspace and stake claim first."
@@ -388,7 +390,10 @@ mod tests {
             tools: Default::default(),
             review: crate::config::ReviewConfig {
                 enabled: true,
-                reviewers: reviewers.into_iter().map(std::string::ToString::to_string).collect(),
+                reviewers: reviewers
+                    .into_iter()
+                    .map(std::string::ToString::to_string)
+                    .collect(),
             },
             push_main: false,
             agents: Default::default(),

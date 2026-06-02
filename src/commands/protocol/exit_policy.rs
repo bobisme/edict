@@ -62,7 +62,7 @@ impl ProtocolExitError {
     }
 
     /// Convert to an `ExitError` for main.rs error handling.
-    #[must_use] 
+    #[must_use]
     pub fn into_exit_error(self) -> crate::error::ExitError {
         crate::error::ExitError::new(self.code as u8, self.to_string())
     }
@@ -81,7 +81,7 @@ pub struct ProtocolResult {
 impl ProtocolResult {
     /// Command succeeded — guidance is ready to render.
     #[allow(dead_code)]
-    #[must_use] 
+    #[must_use]
     pub const fn success(guidance: ProtocolGuidance) -> Self {
         Self {
             exit_code: ProtocolExitCode::Success,
@@ -92,7 +92,7 @@ impl ProtocolResult {
     /// Operational error — no guidance produced.
     /// The error message will be written to stderr by the caller.
     #[allow(dead_code)]
-    #[must_use] 
+    #[must_use]
     pub const fn operational_error() -> Self {
         Self {
             exit_code: ProtocolExitCode::OperationalError,
@@ -107,7 +107,7 @@ impl ProtocolResult {
 /// valid guidance states, not errors. The agent reads the status field
 /// in stdout to decide what to do next.
 #[allow(dead_code)]
-#[must_use] 
+#[must_use]
 pub const fn exit_code_for_status(_status: ProtocolStatus) -> ProtocolExitCode {
     // Every status is a successful guidance output.
     // Agents branch on the status field, not the exit code.

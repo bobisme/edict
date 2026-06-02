@@ -45,7 +45,7 @@ impl Layout {
     ///   root two levels up carries maw's `.manifold` metadata dir.
     /// - Everything else (a fresh checkout, or a root-layout repo with
     ///   `.maw/workspaces/`) is the root layout.
-    #[must_use] 
+    #[must_use]
     pub fn detect(project_root: &Path) -> Self {
         // Standing at a maw bare repo root: ws/default is the trunk worktree.
         if project_root.join("ws/default").is_dir() {
@@ -66,7 +66,7 @@ impl Layout {
     }
 
     /// True for the new root layout.
-    #[must_use] 
+    #[must_use]
     pub const fn is_root(self) -> bool {
         matches!(self, Self::Root)
     }
@@ -75,7 +75,7 @@ impl Layout {
     /// context, including a trailing space when non-empty.
     ///
     /// Bare needs `maw exec default -- `; Root runs at the root with no prefix.
-    #[must_use] 
+    #[must_use]
     pub const fn default_prefix(self) -> &'static str {
         match self {
             Self::Bare => "maw exec default -- ",
@@ -84,7 +84,7 @@ impl Layout {
     }
 
     /// `bn` invocation for the trunk context (`bn` always runs against the trunk).
-    #[must_use] 
+    #[must_use]
     pub const fn bn_cmd(self) -> &'static str {
         match self {
             Self::Bare => "maw exec default -- bn",
@@ -94,7 +94,7 @@ impl Layout {
 
     /// `seal` invocation for the trunk context (e.g. `seal reviews mark-merged`,
     /// which the lead runs against the trunk after a merge).
-    #[must_use] 
+    #[must_use]
     pub const fn seal_default_cmd(self) -> &'static str {
         match self {
             Self::Bare => "maw exec default -- seal",
@@ -104,7 +104,7 @@ impl Layout {
 
     /// Filesystem path to the trunk / default working copy, relative to the
     /// project root.
-    #[must_use] 
+    #[must_use]
     pub const fn trunk_path(self) -> &'static str {
         match self {
             Self::Bare => "ws/default",
@@ -115,7 +115,7 @@ impl Layout {
     /// Path prefix under which agent workspaces live, with a trailing slash:
     /// `ws/` (bare) or `.maw/workspaces/` (root). Compose with a workspace name,
     /// e.g. `format!("{}{}", layout.ws_prefix(), name)`.
-    #[must_use] 
+    #[must_use]
     pub const fn ws_prefix(self) -> &'static str {
         match self {
             Self::Bare => "ws/",
@@ -125,7 +125,7 @@ impl Layout {
 
     /// Filesystem path to a named workspace's working directory, relative to the
     /// project root. The trunk (`default`) maps to [`trunk_path`](Self::trunk_path).
-    #[must_use] 
+    #[must_use]
     pub fn ws_path(self, name: &str) -> String {
         if name == "default" {
             return self.trunk_path().to_string();
@@ -147,7 +147,7 @@ impl Layout {
     /// prefix so the command name is preserved rather than left with a leading
     /// space, and rewrite the named-workspace tokens before the `ws/default/`
     /// trunk token.
-    #[must_use] 
+    #[must_use]
     pub fn rewrite_prompt(self, s: String) -> String {
         match self {
             Self::Bare => s,

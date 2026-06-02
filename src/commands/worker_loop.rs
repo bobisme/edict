@@ -601,9 +601,7 @@ fn run_agent_with_fallback(
         match try_run_agent(prompt, model, timeout) {
             Ok(output) => {
                 if is_rate_limit_output(&output) {
-                    eprintln!(
-                        "Rate limited on {model} (detected in output), trying next model..."
-                    );
+                    eprintln!("Rate limited on {model} (detected in output), trying next model...");
                     crate::telemetry::metrics::counter(
                         "edict.worker.rate_limit_retries_total",
                         1,

@@ -30,12 +30,12 @@ pub enum ExitError {
 }
 
 impl ExitError {
-    #[must_use] 
+    #[must_use]
     pub const fn new(code: u8, message: String) -> Self {
         Self::WithCode { code, message }
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn exit_code(&self) -> ExitCode {
         match self {
             Self::Config(_) => ExitCode::from(2),

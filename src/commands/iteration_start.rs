@@ -62,7 +62,7 @@ pub struct Colors {
 }
 
 impl Colors {
-    #[must_use] 
+    #[must_use]
     pub fn detect() -> Self {
         if std::io::stdout().is_terminal() {
             Self {
@@ -84,17 +84,17 @@ impl Colors {
     }
 }
 
-#[must_use] 
+#[must_use]
 pub fn h1(c: &Colors, s: &str) -> String {
     format!("{}{}# {}{}", c.bold, c.cyan, s, c.reset)
 }
 
-#[must_use] 
+#[must_use]
 pub fn h2(c: &Colors, s: &str) -> String {
     format!("{}{}## {}{}", c.bold, c.green, s, c.reset)
 }
 
-#[must_use] 
+#[must_use]
 pub fn hint(c: &Colors, s: &str) -> String {
     format!("{}> {}{}", c.dim, s, c.reset)
 }

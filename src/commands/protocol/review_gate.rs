@@ -37,7 +37,7 @@ pub enum ReviewGateStatus {
 
 impl ReviewGateDecision {
     /// Convert status to string for output.
-    #[must_use] 
+    #[must_use]
     pub const fn status_str(&self) -> &'static str {
         match self.status {
             ReviewGateStatus::Approved => "approved",
@@ -59,7 +59,7 @@ impl ReviewGateDecision {
 /// 3. If any required reviewer's latest vote is "block" → Blocked, add to `newer_block_after_lgtm`
 /// 4. If all required reviewers have voted lgtm and no blocks → Approved
 /// 5. Otherwise → `NeedsReview`
-#[must_use] 
+#[must_use]
 pub fn evaluate_review_gate(
     review: &ReviewDetail,
     required_reviewers: &[String],
@@ -87,9 +87,10 @@ pub fn evaluate_review_gate(
                 // Lexicographic string comparison works correctly for ISO 8601/RFC3339 timestamps
                 if let (Some(existing_voted_at), Some(new_voted_at)) =
                     (&existing.voted_at, &vote.voted_at)
-                    && new_voted_at > existing_voted_at {
-                        *existing = vote;
-                    }
+                    && new_voted_at > existing_voted_at
+                {
+                    *existing = vote;
+                }
             })
             .or_insert(vote);
     }

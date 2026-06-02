@@ -253,7 +253,10 @@ fn spawn_claude(
 }
 
 fn home_dir() -> std::path::PathBuf {
-    std::env::var("HOME").map_or_else(|_| std::path::PathBuf::from("/root"), std::path::PathBuf::from)
+    std::env::var("HOME").map_or_else(
+        |_| std::path::PathBuf::from("/root"),
+        std::path::PathBuf::from,
+    )
 }
 
 /// Spawn Pi agent with JSON mode output.
@@ -358,9 +361,10 @@ fn process_output(
                         continue;
                     }
                     if let Ok(event) = serde_json::from_str::<Value>(&line)
-                        && event_handler(&event, style) {
-                            result_received = true;
-                        }
+                        && event_handler(&event, style)
+                    {
+                        result_received = true;
+                    }
                 }
 
                 if result_received || status.success() {
@@ -394,10 +398,11 @@ fn process_output(
                 continue;
             }
             if let Ok(event) = serde_json::from_str::<Value>(&line)
-                && event_handler(&event, style) {
-                    result_received = true;
-                    result_time = Some(Instant::now());
-                }
+                && event_handler(&event, style)
+            {
+                result_received = true;
+                result_time = Some(Instant::now());
+            }
         }
 
         // Process stderr
@@ -596,12 +601,13 @@ fn print_pi_toolcall_start(ae: &Value, style: &Style) {
     {
         for item in content {
             if item.get("type").and_then(|t| t.as_str()) == Some("toolCall")
-                && let Some(name) = item.get("name").and_then(|n| n.as_str()) {
-                    println!(
-                        "\n{} {}{}{}",
-                        style.tool_arrow, style.bold_bright, name, style.reset
-                    );
-                }
+                && let Some(name) = item.get("name").and_then(|n| n.as_str())
+            {
+                println!(
+                    "\n{} {}{}{}",
+                    style.tool_arrow, style.bold_bright, name, style.reset
+                );
+            }
         }
     }
 }

@@ -16,7 +16,7 @@ pub const CONFIG_JSON: &str = ".botbox.json";
 
 /// Find the config file path, preferring the current name over legacy names.
 /// Returns None if none exist.
-#[must_use] 
+#[must_use]
 pub fn find_config(dir: &Path) -> Option<PathBuf> {
     // Current name
     let toml_path = dir.join(CONFIG_TOML);
@@ -157,7 +157,7 @@ pub struct ToolsConfig {
 
 impl ToolsConfig {
     /// Returns a list of enabled tool names
-    #[must_use] 
+    #[must_use]
     pub fn enabled_tools(&self) -> Vec<String> {
         let mut tools = Vec::new();
         if self.bones {
@@ -470,9 +470,10 @@ impl Config {
         // Add comments before section headers using item decor
         fn set_table_comment(doc: &mut toml_edit::DocumentMut, key: &str, comment: &str) {
             if let Some(item) = doc.get_mut(key)
-                && let Some(tbl) = item.as_table_mut() {
-                    tbl.decor_mut().set_prefix(comment);
-                }
+                && let Some(tbl) = item.as_table_mut()
+            {
+                tbl.decor_mut().set_prefix(comment);
+            }
         }
 
         set_table_comment(&mut doc, "tools", "\n# Companion tools to enable\n");
@@ -497,7 +498,7 @@ impl Config {
     }
 
     /// Returns the effective agent name (`project.default_agent` or "{name}-dev").
-    #[must_use] 
+    #[must_use]
     pub fn default_agent(&self) -> String {
         self.project
             .default_agent
@@ -506,7 +507,7 @@ impl Config {
     }
 
     /// Returns the effective channel name (project.channel or project.name).
-    #[must_use] 
+    #[must_use]
     pub fn channel(&self) -> String {
         self.project
             .channel
@@ -518,7 +519,7 @@ impl Config {
     ///
     /// Also propagates `OTEL_EXPORTER_OTLP_ENDPOINT` from the process environment if set and
     /// not already defined in the config, so telemetry flows through to spawned agents.
-    #[must_use] 
+    #[must_use]
     pub fn resolved_env(&self) -> HashMap<String, String> {
         let mut env: HashMap<String, String> = self
             .env
@@ -528,9 +529,10 @@ impl Config {
 
         // Auto-propagate telemetry endpoint to child agents
         if !env.contains_key("OTEL_EXPORTER_OTLP_ENDPOINT")
-            && let Ok(val) = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT") {
-                env.insert("OTEL_EXPORTER_OTLP_ENDPOINT".into(), val);
-            }
+            && let Ok(val) = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
+        {
+            env.insert("OTEL_EXPORTER_OTLP_ENDPOINT".into(), val);
+        }
 
         env
     }
@@ -538,7 +540,7 @@ impl Config {
     /// Resolve a model string to the full pool of models for that tier.
     /// Tier names (fast/balanced/strong) return a shuffled Vec of all models in the pool.
     /// Legacy short names (opus/sonnet/haiku) and explicit model strings return a single-element Vec.
-    #[must_use] 
+    #[must_use]
     pub fn resolve_model_pool(&self, model: &str) -> Vec<String> {
         // Legacy short names -> specific Anthropic models (no fallback pool)
         match model {
@@ -567,7 +569,7 @@ impl Config {
 
     /// Resolve a model string: if it matches a tier name (fast/balanced/strong),
     /// randomly pick from that tier's pool. Otherwise pass through as-is.
-    #[must_use] 
+    #[must_use]
     pub fn resolve_model(&self, model: &str) -> String {
         // Legacy short names -> specific Anthropic models (deterministic)
         match model {

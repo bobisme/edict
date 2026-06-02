@@ -41,7 +41,7 @@ pub struct Route {
 /// Parse a message body and return a Route describing how to handle it.
 ///
 /// Supports ! prefix commands (new convention) and legacy colon prefixes.
-#[must_use] 
+#[must_use]
 pub fn route_message(body: &str) -> Route {
     let trimmed = body.trim();
 
@@ -490,7 +490,10 @@ impl Responder {
             .ok()
             .and_then(|(p, _)| Config::load(&p).ok());
 
-        let project = config.as_ref().map(super::super::config::Config::channel).unwrap_or_default();
+        let project = config
+            .as_ref()
+            .map(super::super::config::Config::channel)
+            .unwrap_or_default();
         let default_agent = config
             .as_ref()
             .map(super::super::config::Config::default_agent)
@@ -500,11 +503,10 @@ impl Responder {
 
         let default_model = model.unwrap_or_else(|| {
             responder_config
-                .as_ref().map_or_else(|| "sonnet".into(), |r| r.model.clone())
+                .as_ref()
+                .map_or_else(|| "sonnet".into(), |r| r.model.clone())
         });
-        let wait_timeout = responder_config
-            .as_ref()
-            .map_or(300, |r| r.wait_timeout);
+        let wait_timeout = responder_config.as_ref().map_or(300, |r| r.wait_timeout);
         let claude_timeout = responder_config.as_ref().map_or(300, |r| r.timeout);
         let max_conversations = responder_config
             .as_ref()
@@ -514,9 +516,7 @@ impl Responder {
             .as_ref()
             .and_then(|c| c.agents.dev.as_ref())
             .and_then(|d| d.multi_lead.clone());
-        let multi_lead_enabled = multi_lead_config
-            .as_ref()
-            .is_some_and(|m| m.enabled);
+        let multi_lead_enabled = multi_lead_config.as_ref().is_some_and(|m| m.enabled);
         let multi_lead_max_leads = multi_lead_config.as_ref().map_or(3, |m| m.max_leads);
 
         // Resolve agent name: CLI flag > config default
@@ -667,7 +667,8 @@ impl Responder {
     /// Resolve a model string through config tiers, falling through to passthrough.
     fn resolve_model(&self, model: &str) -> String {
         self.config
-            .as_ref().map_or_else(|| model.to_string(), |c| c.resolve_model(model))
+            .as_ref()
+            .map_or_else(|| model.to_string(), |c| c.resolve_model(model))
     }
 
     // --- Run agent ---
@@ -911,7 +912,9 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
             let ttl = format!("{}s", self.wait_timeout + 60);
             self.rite_set_status("Waiting for follow-up", &ttl);
 
-            let follow_up = if let Some(msg) = self.wait_for_follow_up() { msg } else {
+            let follow_up = if let Some(msg) = self.wait_for_follow_up() {
+                msg
+            } else {
                 eprintln!("No follow-up received, ending conversation");
                 break;
             };
@@ -1113,7 +1116,8 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
                         "--agent".into(),
                         lead_name.clone(),
                     ]);
-                    let spawn_arg_refs: Vec<&str> = spawn_args.iter().map(std::string::String::as_str).collect();
+                    let spawn_arg_refs: Vec<&str> =
+                        spawn_args.iter().map(std::string::String::as_str).collect();
                     let spawn_result = Tool::new("vessel").args(&spawn_arg_refs).run();
 
                     match spawn_result {
@@ -1258,7 +1262,9 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
             let ttl = format!("{}s", self.wait_timeout + 60);
             self.rite_set_status("Waiting for follow-up", &ttl);
 
-            let follow_up = if let Some(msg) = self.wait_for_follow_up() { msg } else {
+            let follow_up = if let Some(msg) = self.wait_for_follow_up() {
+                msg
+            } else {
                 eprintln!("No follow-up received, ending conversation");
                 break;
             };
@@ -1958,7 +1964,11 @@ mod tests {
         // Should match project agents
         assert!("edict-dev".to_string().starts_with(&project_prefix));
         assert!("edict-security".to_string().starts_with(&project_prefix));
-        assert!("edict-dev/worker-suffix".to_string().starts_with(&project_prefix));
+        assert!(
+            "edict-dev/worker-suffix"
+                .to_string()
+                .starts_with(&project_prefix)
+        );
 
         // Should not match external agents
         assert!(!"alice".to_string().starts_with(&project_prefix));

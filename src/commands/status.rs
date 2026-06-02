@@ -119,19 +119,25 @@ impl StatusArgs {
             .agent
             .clone()
             .or_else(|| std::env::var("EDICT_AGENT").ok())
-            .or_else(|| config.as_ref().map(super::super::config::Config::default_agent))
+            .or_else(|| {
+                config
+                    .as_ref()
+                    .map(super::super::config::Config::default_agent)
+            })
             .unwrap_or_else(|| format!("{project}-dev"));
 
         // Get required reviewers from config (format: ["security"] → ["<project>-security"])
-        let required_reviewers: Vec<String> = config
-            .as_ref()
-            .filter(|c| c.review.enabled).map_or_else(|| vec![format!("{project}-security")], |c| {
-                c.review
-                    .reviewers
-                    .iter()
-                    .map(|r| format!("{project}-{r}"))
-                    .collect()
-            });
+        let required_reviewers: Vec<String> =
+            config.as_ref().filter(|c| c.review.enabled).map_or_else(
+                || vec![format!("{project}-security")],
+                |c| {
+                    c.review
+                        .reviewers
+                        .iter()
+                        .map(|r| format!("{project}-{r}"))
+                        .collect()
+                },
+            );
 
         let mut report = StatusReport {
             ready_bones: ReadyBones {
@@ -279,15 +285,16 @@ impl StatusArgs {
                 continue; // Skip malformed claim URIs
             }
             if let Ok(bone) = ctx.bone_status(bone_id)
-                && (bone.state == "done" || bone.state == "archived") {
-                    report.advice.push(Advice {
+                && (bone.state == "done" || bone.state == "archived")
+            {
+                report.advice.push(Advice {
                         severity: "CRITICAL".to_string(),
                         message: format!(
                             "Orphaned claim: bone {bone_id} is closed but claim still active → cleanup required"
                         ),
                         command: Some(format!("edict protocol cleanup {bone_id}")),
                     });
-                }
+            }
         }
 
         // Priority 2: HIGH - LGTM review with no finish action
@@ -296,29 +303,27 @@ impl StatusArgs {
                 continue;
             }
             if let Some(ws_name) = ctx.workspace_for_bone(bone_id)
-                && let Ok(reviews) = ctx.reviews_in_workspace(ws_name) {
-                    for review_summary in reviews {
-                        if let Ok(review_detail) =
-                            ctx.review_status(&review_summary.review_id, ws_name)
-                        {
-                            let gate = review_gate::evaluate_review_gate(
-                                &review_detail,
-                                required_reviewers,
-                            );
+                && let Ok(reviews) = ctx.reviews_in_workspace(ws_name)
+            {
+                for review_summary in reviews {
+                    if let Ok(review_detail) = ctx.review_status(&review_summary.review_id, ws_name)
+                    {
+                        let gate =
+                            review_gate::evaluate_review_gate(&review_detail, required_reviewers);
 
-                            if gate.status == review_gate::ReviewGateStatus::Approved {
-                                report.advice.push(Advice {
-                                    severity: "HIGH".to_string(),
-                                    message: format!(
-                                        "Review {} approved (LGTM) → ready to finish bone {}",
-                                        review_detail.review_id, bone_id
-                                    ),
-                                    command: Some(format!("edict protocol finish {bone_id}")),
-                                });
-                            }
+                        if gate.status == review_gate::ReviewGateStatus::Approved {
+                            report.advice.push(Advice {
+                                severity: "HIGH".to_string(),
+                                message: format!(
+                                    "Review {} approved (LGTM) → ready to finish bone {}",
+                                    review_detail.review_id, bone_id
+                                ),
+                                command: Some(format!("edict protocol finish {bone_id}")),
+                            });
                         }
                     }
                 }
+            }
         }
 
         // Priority 3: HIGH - BLOCK review needing response
@@ -327,30 +332,28 @@ impl StatusArgs {
                 continue;
             }
             if let Some(ws_name) = ctx.workspace_for_bone(bone_id)
-                && let Ok(reviews) = ctx.reviews_in_workspace(ws_name) {
-                    for review_summary in reviews {
-                        if let Ok(review_detail) =
-                            ctx.review_status(&review_summary.review_id, ws_name)
-                        {
-                            let gate = review_gate::evaluate_review_gate(
-                                &review_detail,
-                                required_reviewers,
-                            );
+                && let Ok(reviews) = ctx.reviews_in_workspace(ws_name)
+            {
+                for review_summary in reviews {
+                    if let Ok(review_detail) = ctx.review_status(&review_summary.review_id, ws_name)
+                    {
+                        let gate =
+                            review_gate::evaluate_review_gate(&review_detail, required_reviewers);
 
-                            if gate.status == review_gate::ReviewGateStatus::Blocked {
-                                let blocked_by = gate.blocked_by.join(", ");
-                                report.advice.push(Advice {
-                                    severity: "HIGH".to_string(),
-                                    message: format!(
-                                        "Review {} blocked by {} → address feedback on bone {}",
-                                        review_detail.review_id, blocked_by, bone_id
-                                    ),
-                                    command: Some(format!("bn show {bone_id}")),
-                                });
-                            }
+                        if gate.status == review_gate::ReviewGateStatus::Blocked {
+                            let blocked_by = gate.blocked_by.join(", ");
+                            report.advice.push(Advice {
+                                severity: "HIGH".to_string(),
+                                message: format!(
+                                    "Review {} blocked by {} → address feedback on bone {}",
+                                    review_detail.review_id, blocked_by, bone_id
+                                ),
+                                command: Some(format!("bn show {bone_id}")),
+                            });
                         }
                     }
                 }
+            }
         }
 
         // Priority 4: MEDIUM - in-progress bone with no workspace
@@ -359,15 +362,17 @@ impl StatusArgs {
                 continue;
             }
             if let Ok(bone) = ctx.bone_status(bone_id)
-                && bone.state == "doing" && ctx.workspace_for_bone(bone_id).is_none() {
-                    report.advice.push(Advice {
+                && bone.state == "doing"
+                && ctx.workspace_for_bone(bone_id).is_none()
+            {
+                report.advice.push(Advice {
                         severity: "MEDIUM".to_string(),
                         message: format!(
                             "In-progress bone {bone_id} has no workspace → possible crash recovery needed"
                         ),
                         command: Some(format!("bn show {bone_id}")),
                     });
-                }
+            }
         }
 
         // Priority 5: MEDIUM - workspace with no bone claim

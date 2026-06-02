@@ -208,17 +208,29 @@ impl InitArgs {
 
         // Initialize bones
         if choices.init_bones && choices.tools.contains(&"bones".to_string()) {
-            if let Ok(_) = run_command("bn", &["init"], Some(&project_dir)) { println!("Initialized bones") } else { tracing::warn!("bn init failed (is bones installed?)") }
+            if let Ok(_) = run_command("bn", &["init"], Some(&project_dir)) {
+                println!("Initialized bones")
+            } else {
+                tracing::warn!("bn init failed (is bones installed?)")
+            }
         }
 
         // Initialize maw
         if choices.tools.contains(&"maw".to_string()) {
-            if let Ok(_) = run_command("maw", &["init"], Some(&project_dir)) { println!("Initialized maw") } else { tracing::warn!("maw init failed (is maw installed?)") }
+            if let Ok(_) = run_command("maw", &["init"], Some(&project_dir)) {
+                println!("Initialized maw")
+            } else {
+                tracing::warn!("maw init failed (is maw installed?)")
+            }
         }
 
         // Initialize seal
         if choices.tools.contains(&"seal".to_string()) {
-            if let Ok(_) = run_command("seal", &["init"], Some(&project_dir)) { println!("Initialized seal") } else { tracing::warn!("seal init failed (is seal installed?)") }
+            if let Ok(_) = run_command("seal", &["init"], Some(&project_dir)) {
+                println!("Initialized seal")
+            } else {
+                tracing::warn!("seal init failed (is seal installed?)")
+            }
 
             // Create .sealignore
             let sealignore_path = project_dir.join(".sealignore");
@@ -493,7 +505,10 @@ impl InitArgs {
                 .collect();
             prompt_multi_select("Tools to enable", AVAILABLE_TOOLS, &defaults)?
         } else if detected.tools.is_empty() {
-            AVAILABLE_TOOLS.iter().map(std::string::ToString::to_string).collect()
+            AVAILABLE_TOOLS
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect()
         } else {
             detected.tools.clone()
         };

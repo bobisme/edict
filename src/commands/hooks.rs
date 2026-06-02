@@ -11,8 +11,7 @@ use crate::error::ExitError;
 use crate::hooks::HookRegistry;
 use crate::subprocess::run_command;
 
-pub const PI_EDICT_HOOKS_EXTENSION: &str =
-    include_str!("../templates/extensions/edict-hooks.ts");
+pub const PI_EDICT_HOOKS_EXTENSION: &str = include_str!("../templates/extensions/edict-hooks.ts");
 
 #[derive(Debug, Subcommand)]
 pub enum HooksCommand {
@@ -83,9 +82,10 @@ fn install_hooks(project_root: Option<&Path>) -> Result<()> {
         let config = load_config(&root)?;
         register_rite_hooks(&root, &config)?;
     } else if let Ok(root) = resolve_project_root(None)
-        && let Ok(config) = load_config(&root) {
-            register_rite_hooks(&root, &config)?;
-        }
+        && let Ok(config) = load_config(&root)
+    {
+        register_rite_hooks(&root, &config)?;
+    }
 
     println!("Hooks installed successfully");
     Ok(())
@@ -180,9 +180,10 @@ fn audit_hooks(project_root: Option<&Path>, format: super::doctor::OutputFormat)
         .and_then(|p| resolve_project_root(Some(p)).ok())
         .or_else(|| resolve_project_root(None).ok())
         && let Ok(config) = load_config(&root)
-            && config.tools.rite {
-                check_rite_hooks(&root, &config, &mut issues)?;
-            }
+        && config.tools.rite
+    {
+        check_rite_hooks(&root, &config, &mut issues)?;
+    }
 
     match format {
         super::doctor::OutputFormat::Json => {
@@ -240,7 +241,10 @@ fn run_hook(hook_name: &str, release: bool) -> Result<()> {
 // --- Helper functions ---
 
 fn resolve_project_root(project_root: Option<&Path>) -> Result<PathBuf> {
-    let path = project_root.map_or_else(|| std::env::current_dir().expect("get cwd"), std::path::Path::to_path_buf);
+    let path = project_root.map_or_else(
+        || std::env::current_dir().expect("get cwd"),
+        std::path::Path::to_path_buf,
+    );
     let canonical = path
         .canonicalize()
         .with_context(|| format!("resolving project root: {}", path.display()))?;

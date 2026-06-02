@@ -54,23 +54,23 @@ pub fn build(
         .unwrap_or_default();
 
     let sibling_section = if sibling_leads.is_empty() {
-            String::new()
-        } else {
-            let leads_list: String = sibling_leads
-                .iter()
-                .map(|s| {
-                    let memo = if s.memo.is_empty() {
-                        String::new()
-                    } else {
-                        format!(" ({})", s.memo)
-                    };
-                    format!("- {}{memo}", s.name)
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
+        String::new()
+    } else {
+        let leads_list: String = sibling_leads
+            .iter()
+            .map(|s| {
+                let memo = if s.memo.is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({})", s.memo)
+                };
+                format!("- {}{memo}", s.name)
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
 
-            format!(
-                r"
+        format!(
+            r"
     ## SIBLING LEADS (multi-lead mode active)
 
     Other lead agents are currently active on this project. Coordinate through claims — do NOT duplicate work.
@@ -83,8 +83,8 @@ pub fn build(
       Look for `bone://{project}/<id>` — if claimed by another agent, SKIP that bone and pick the next one.
       Only work on bones you can successfully claim.
     "
-            )
-        };
+        )
+    };
 
     let edict_mission_env = std::env::var("EDICT_MISSION").ok();
 

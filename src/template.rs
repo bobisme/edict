@@ -58,7 +58,7 @@ pub struct LayoutVars {
 }
 
 impl LayoutVars {
-    #[must_use] 
+    #[must_use]
     pub fn new(layout: Layout) -> Self {
         Self {
             is_root_layout: layout.is_root(),
@@ -356,7 +356,10 @@ mod tests {
                 !root.contains("ws/$WS"),
                 "{name} (root) still uses bare `ws/$WS` paths"
             );
-            assert!(!bare.contains(".maw/workspaces"), "{name} (bare) leaked root-layout `.maw/workspaces` path");
+            assert!(
+                !bare.contains(".maw/workspaces"),
+                "{name} (bare) leaked root-layout `.maw/workspaces` path"
+            );
         }
     }
 

@@ -12,7 +12,7 @@ use std::fmt::Write;
 /// restart quoting: `'` → `'\''`.
 ///
 /// Returns the string with surrounding single quotes.
-#[must_use] 
+#[must_use]
 pub fn shell_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('\'');
@@ -239,7 +239,7 @@ impl MergeTarget<'_> {
 // for defense-in-depth against unvalidated callers.
 
 /// Build: `rite claims stake --agent <agent> "bone://<project>/<id>" -m "<memo>"`
-#[must_use] 
+#[must_use]
 pub fn claims_stake_cmd(agent: &str, uri: &str, memo: &str) -> String {
     validate_identifier("agent", agent).expect("invalid agent name");
     let agent_safe = safe_ident(agent);
@@ -259,7 +259,7 @@ pub fn claims_stake_cmd(agent: &str, uri: &str, memo: &str) -> String {
 
 /// Build: `rite claims release --agent <agent> "<uri>"`
 #[allow(dead_code)]
-#[must_use] 
+#[must_use]
 pub fn claims_release_cmd(agent: &str, uri: &str) -> String {
     validate_identifier("agent", agent).expect("invalid agent name");
     let agent_safe = safe_ident(agent);
@@ -271,7 +271,7 @@ pub fn claims_release_cmd(agent: &str, uri: &str) -> String {
 }
 
 /// Build: `rite claims release --agent <agent> --all`
-#[must_use] 
+#[must_use]
 pub fn claims_release_all_cmd(agent: &str) -> String {
     validate_identifier("agent", agent).expect("invalid agent name");
     let agent_safe = safe_ident(agent);
@@ -279,7 +279,7 @@ pub fn claims_release_all_cmd(agent: &str) -> String {
 }
 
 /// Build: `rite send --agent <agent> <project> '<message>' -L <label>`
-#[must_use] 
+#[must_use]
 pub fn rite_send_cmd(agent: &str, project: &str, message: &str, label: &str) -> String {
     validate_identifier("agent", agent).expect("invalid agent name");
     let agent_safe = safe_ident(agent);
@@ -324,7 +324,7 @@ pub fn rite_send_cmd(agent: &str, project: &str, message: &str, label: &str) -> 
 
 /// Build: `maw exec default -- bn do <id>`
 #[allow(dead_code)]
-#[must_use] 
+#[must_use]
 pub fn bn_do_cmd(bone_id: &str) -> String {
     // Validate bone_id before use - escape if validation fails
     let bone_id_safe = if validate_bone_id(bone_id).is_ok() {
@@ -338,7 +338,7 @@ pub fn bn_do_cmd(bone_id: &str) -> String {
 
 /// Build: `maw exec default -- bn bone comment add <id> '<message>'`
 #[allow(dead_code)]
-#[must_use] 
+#[must_use]
 pub fn bn_comment_cmd(bone_id: &str, message: &str) -> String {
     // Validate bone_id before use
     let bone_id_safe = if validate_bone_id(bone_id).is_ok() {
@@ -355,7 +355,7 @@ pub fn bn_comment_cmd(bone_id: &str, message: &str) -> String {
 }
 
 /// Build: `maw exec default -- bn done <id> --reason '<reason>'`
-#[must_use] 
+#[must_use]
 pub fn bn_done_cmd(bone_id: &str, reason: &str) -> String {
     // Validate bone_id before use
     let bone_id_safe = if validate_bone_id(bone_id).is_ok() {
@@ -372,7 +372,7 @@ pub fn bn_done_cmd(bone_id: &str, reason: &str) -> String {
 }
 
 /// Build: `maw ws create <name> --from main --description "..."`
-#[must_use] 
+#[must_use]
 pub fn ws_create_cmd(name: &str, description: &str, source: WorkspaceSource<'_>) -> String {
     let workspace_safe = if validate_workspace_name(name).is_ok() {
         safe_ident(name)
@@ -390,7 +390,7 @@ pub fn ws_create_cmd(name: &str, description: &str, source: WorkspaceSource<'_>)
 }
 
 /// Build: `maw ws merge <ws> --into <target> --check --format json`
-#[must_use] 
+#[must_use]
 pub fn ws_merge_check_cmd(workspace: &str, target: MergeTarget<'_>) -> String {
     let workspace_safe = if validate_workspace_name(workspace).is_ok() {
         safe_ident(workspace)
@@ -399,16 +399,14 @@ pub fn ws_merge_check_cmd(workspace: &str, target: MergeTarget<'_>) -> String {
     };
 
     let target_safe = target.shell_value();
-    format!(
-        "maw ws merge {workspace_safe} --into {target_safe} --check --format json"
-    )
+    format!("maw ws merge {workspace_safe} --into {target_safe} --check --format json")
 }
 
 /// Build: `maw ws merge <ws> --into <target> --destroy --message <msg>`
 ///
 /// `message` is required — maw enforces explicit commit messages.
 /// Use conventional commit prefix: `feat:`, `fix:`, `chore:`, etc.
-#[must_use] 
+#[must_use]
 pub fn ws_merge_cmd(workspace: &str, target: MergeTarget<'_>, message: &str) -> String {
     // Validate workspace name before use
     let workspace_safe = if validate_workspace_name(workspace).is_ok() {
@@ -428,7 +426,7 @@ pub fn ws_merge_cmd(workspace: &str, target: MergeTarget<'_>, message: &str) -> 
 }
 
 /// Build: `maw exec <ws> -- seal reviews create --agent <agent> --title '<title>' --reviewers <reviewers>`
-#[must_use] 
+#[must_use]
 pub fn seal_create_cmd(workspace: &str, agent: &str, title: &str, reviewers: &str) -> String {
     validate_identifier("agent", agent).expect("invalid agent name");
     let agent_safe = safe_ident(agent);
@@ -456,7 +454,7 @@ pub fn seal_create_cmd(workspace: &str, agent: &str, title: &str, reviewers: &st
 }
 
 /// Build: `maw exec <ws> -- seal reviews request <id> --reviewers <reviewers> --agent <agent>`
-#[must_use] 
+#[must_use]
 pub fn seal_request_cmd(workspace: &str, review_id: &str, reviewers: &str, agent: &str) -> String {
     validate_identifier("agent", agent).expect("invalid agent name");
     let agent_safe = safe_ident(agent);
@@ -486,7 +484,7 @@ pub fn seal_request_cmd(workspace: &str, review_id: &str, reviewers: &str, agent
 }
 
 /// Build: `maw exec <ws> -- seal review <id>`
-#[must_use] 
+#[must_use]
 pub fn seal_show_cmd(workspace: &str, review_id: &str) -> String {
     // Validate workspace and review_id before use
     let workspace_safe = if validate_workspace_name(workspace).is_ok() {
@@ -501,13 +499,11 @@ pub fn seal_show_cmd(workspace: &str, review_id: &str) -> String {
         std::borrow::Cow::Owned(shell_escape(review_id))
     };
 
-    format!(
-        "maw exec {workspace_safe} -- seal review {review_id_safe}"
-    )
+    format!("maw exec {workspace_safe} -- seal review {review_id_safe}")
 }
 
 /// Build: `rite statuses clear --agent <agent>`
-#[must_use] 
+#[must_use]
 pub fn rite_statuses_clear_cmd(agent: &str) -> String {
     validate_identifier("agent", agent).expect("invalid agent name");
     let agent_safe = safe_ident(agent);

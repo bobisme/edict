@@ -557,9 +557,7 @@ fn parse_inbox_count(json: &str) -> u64 {
 /// envelope signals all unblocked items need breaking down — still work, just
 /// of a different kind.
 fn parse_next_status(stdout: &str) -> NextStatus {
-    let json = stdout
-        .find(['{', '['])
-        .map_or(stdout, |i| &stdout[i..]);
+    let json = stdout.find(['{', '[']).map_or(stdout, |i| &stdout[i..]);
     let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else {
         return NextStatus::None;
     };
@@ -857,9 +855,10 @@ fn is_systemd_dbus_available() -> bool {
         return true;
     }
     if let Ok(xdg) = std::env::var("XDG_RUNTIME_DIR")
-        && std::path::Path::new(&xdg).join("rite").exists() {
-            return true;
-        }
+        && std::path::Path::new(&xdg).join("rite").exists()
+    {
+        return true;
+    }
     false
 }
 

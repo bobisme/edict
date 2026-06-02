@@ -152,7 +152,7 @@ fn extract_workspace_name(stdout: &str) -> Option<String> {
 /// - Text: concise step-by-step output for agents
 /// - JSON: structured output with all details
 /// - Pretty: colored output with symbols for humans
-#[must_use] 
+#[must_use]
 pub fn render_report(report: &ExecutionReport, format: OutputFormat) -> String {
     match format {
         OutputFormat::Text => render_text(report),
@@ -185,10 +185,12 @@ fn render_text(report: &ExecutionReport) -> String {
         ));
 
         // If this was a workspace creation, show the workspace name
-        if result.command.contains("maw ws create") && result.success
-            && let Some(ws) = extract_workspace_name(&result.stdout) {
-                out.push_str(&format!("  ws={ws}"));
-            }
+        if result.command.contains("maw ws create")
+            && result.success
+            && let Some(ws) = extract_workspace_name(&result.stdout)
+        {
+            out.push_str(&format!("  ws={ws}"));
+        }
 
         out.push('\n');
     }
@@ -260,10 +262,12 @@ fn render_pretty(report: &ExecutionReport) -> String {
         ));
 
         // If this was a workspace creation, show the workspace name
-        if result.command.contains("maw ws create") && result.success
-            && let Some(ws) = extract_workspace_name(&result.stdout) {
-                out.push_str(&format!("  {gray}ws={ws}{reset}"));
-            }
+        if result.command.contains("maw ws create")
+            && result.success
+            && let Some(ws) = extract_workspace_name(&result.stdout)
+        {
+            out.push_str(&format!("  {gray}ws={ws}{reset}"));
+        }
 
         out.push('\n');
     }
@@ -524,9 +528,11 @@ mod tests {
     #[test]
     fn ws_substitution_mock() {
         // Simulate what execute_steps does for $WS substitution
-        let steps = ["maw ws create bd-abc --description 'Fix bug' --from main".to_string(),
+        let steps = [
+            "maw ws create bd-abc --description 'Fix bug' --from main".to_string(),
             "echo workspace is $WS".to_string(),
-            "rite claims stake 'workspace://$WS'".to_string()];
+            "rite claims stake 'workspace://$WS'".to_string(),
+        ];
 
         // Mock workspace name extraction
         let mock_ws_output = "Creating workspace 'frost-castle'\n";

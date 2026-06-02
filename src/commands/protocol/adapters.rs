@@ -31,7 +31,7 @@ pub struct Claim {
 
 impl Claim {
     /// Extract bone IDs from `bone://project/bd-xxx` patterns.
-    #[must_use] 
+    #[must_use]
     pub fn bone_ids(&self) -> Vec<&str> {
         self.patterns
             .iter()
@@ -43,7 +43,7 @@ impl Claim {
     }
 
     /// Extract workspace names from `workspace://project/ws-name` patterns.
-    #[must_use] 
+    #[must_use]
     pub fn workspace_names(&self) -> Vec<&str> {
         self.patterns
             .iter()
@@ -176,12 +176,12 @@ pub struct ReviewVote {
 }
 
 impl ReviewVote {
-    #[must_use] 
+    #[must_use]
     pub fn is_lgtm(&self) -> bool {
         self.vote == "lgtm"
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn is_block(&self) -> bool {
         self.vote == "block"
     }

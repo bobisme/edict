@@ -58,7 +58,7 @@ pub struct ProtocolGuidance {
 impl ProtocolGuidance {
     /// Create a new guidance with ready status.
     /// Default freshness: 300 seconds (5 minutes)
-    #[must_use] 
+    #[must_use]
     pub fn new(command: &'static str) -> Self {
         Self {
             schema: "protocol-guidance.v1",
@@ -177,7 +177,7 @@ pub fn validate_guidance(guidance: &ProtocolGuidance) -> Result<(), ValidationEr
 ///
 /// Advice: Create workspace and stake claims before starting implementation.
 /// ```
-#[must_use] 
+#[must_use]
 pub fn render_text(guidance: &ProtocolGuidance) -> String {
     let mut out = String::new();
 
@@ -249,7 +249,7 @@ pub fn render_json(guidance: &ProtocolGuidance) -> Result<String, serde_json::Er
 /// Render guidance as colored TTY output (for humans).
 ///
 /// Uses ANSI color codes for status, headers, and command highlighting.
-#[must_use] 
+#[must_use]
 pub fn render_pretty(guidance: &ProtocolGuidance) -> String {
     let mut out = String::new();
 
@@ -769,14 +769,16 @@ mod tests {
 
     #[test]
     fn golden_status_variants_are_complete() {
-        let _statuses = [ProtocolStatus::Ready,
+        let _statuses = [
+            ProtocolStatus::Ready,
             ProtocolStatus::Blocked,
             ProtocolStatus::Resumable,
             ProtocolStatus::NeedsReview,
             ProtocolStatus::HasResources,
             ProtocolStatus::Clean,
             ProtocolStatus::HasWork,
-            ProtocolStatus::Fresh];
+            ProtocolStatus::Fresh,
+        ];
         assert_eq!(_statuses.len(), 8);
     }
 

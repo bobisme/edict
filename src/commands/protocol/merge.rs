@@ -305,8 +305,10 @@ pub fn execute(
                     );
 
                     let mut steps = Vec::new();
-                    let title = bone_id
-                        .as_ref().map_or_else(|| format!("Work from {workspace}"), |id| format!("Work from {id}"));
+                    let title = bone_id.as_ref().map_or_else(
+                        || format!("Work from {workspace}"),
+                        |id| format!("Work from {id}"),
+                    );
                     steps.push(shell::seal_create_cmd(
                         workspace,
                         "agent",
@@ -433,8 +435,7 @@ fn build_merge_steps(
     let mut steps = Vec::new();
 
     // 1. Merge workspace with the required commit message
-    let target = merge_target
-        .map_or(shell::MergeTarget::Default, shell::MergeTarget::Change);
+    let target = merge_target.map_or(shell::MergeTarget::Default, shell::MergeTarget::Change);
     steps.push(shell::ws_merge_cmd(workspace, target, message));
 
     // 2. Mark review as merged (if review exists)
@@ -475,8 +476,7 @@ fn add_conflict_recovery_guidance(
     merge_target: Option<&str>,
     merge_msg: &str,
 ) {
-    let target = merge_target
-        .map_or(shell::MergeTarget::Default, shell::MergeTarget::Change);
+    let target = merge_target.map_or(shell::MergeTarget::Default, shell::MergeTarget::Change);
     let retry_cmd = shell::ws_merge_cmd(workspace, target, merge_msg);
     let check_cmd = shell::ws_merge_check_cmd(workspace, target);
     guidance.diagnostic(format!(
@@ -524,9 +524,10 @@ fn find_bone_for_workspace(ctx: &ProtocolContext, workspace: &str) -> Option<Str
                 if let Some(ws_name) = pattern
                     .strip_prefix("workspace://")
                     .and_then(|rest| rest.split('/').nth(1))
-                    && ws_name == workspace {
-                        return Some(memo.clone());
-                    }
+                    && ws_name == workspace
+                {
+                    return Some(memo.clone());
+                }
             }
         }
     }
@@ -561,9 +562,10 @@ fn find_review_for_workspace(
 
     for review_summary in &reviews_resp.reviews {
         if review_summary.status != "merged"
-            && let Ok(detail) = ctx.review_status(&review_summary.review_id, workspace) {
-                return Some((review_summary.review_id.clone(), detail));
-            }
+            && let Ok(detail) = ctx.review_status(&review_summary.review_id, workspace)
+        {
+            return Some((review_summary.review_id.clone(), detail));
+        }
     }
 
     None

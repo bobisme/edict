@@ -39,7 +39,7 @@ pub struct ProtocolArgs {
 
 impl ProtocolArgs {
     /// Resolve the effective agent name from flag, env, or config.
-    #[must_use] 
+    #[must_use]
     pub fn resolve_agent(&self, config: &crate::config::Config) -> String {
         if let Some(ref agent) = self.agent {
             return agent.clone();
@@ -54,7 +54,7 @@ impl ProtocolArgs {
     }
 
     /// Resolve the effective project name from flag or config.
-    #[must_use] 
+    #[must_use]
     pub fn resolve_project(&self, config: &crate::config::Config) -> String {
         if let Some(ref project) = self.project {
             return project.clone();
@@ -63,7 +63,7 @@ impl ProtocolArgs {
     }
 
     /// Resolve the effective output format from flag or TTY detection.
-    #[must_use] 
+    #[must_use]
     pub fn resolve_format(&self) -> OutputFormat {
         self.format.unwrap_or_else(|| {
             if std::io::stdout().is_terminal() {
@@ -332,7 +332,9 @@ impl ProtocolCommand {
         let ctx = context::ProtocolContext::collect(&project, &agent)?;
 
         // Check if bone exists and get its status
-        let bone_info = if let Ok(bone) = ctx.bone_status(bone_id) { bone } else {
+        let bone_info = if let Ok(bone) = ctx.bone_status(bone_id) {
+            bone
+        } else {
             let mut guidance = render::ProtocolGuidance::new("start");
             guidance.blocked(format!(
                 "bone {bone_id} not found. Check the ID with: maw exec default -- bn show {bone_id}"

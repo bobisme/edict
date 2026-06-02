@@ -15,7 +15,7 @@ const KNOWN_ROLES: &[&str] = &["security"];
 
 /// Derive the reviewer role from an agent name.
 /// e.g., "myproject-security" -> Some("security"), "myproject-dev" -> None
-#[must_use] 
+#[must_use]
 pub fn derive_role_from_agent_name(agent_name: &str) -> Option<String> {
     for role in KNOWN_ROLES {
         if agent_name.ends_with(&format!("-{role}")) {
@@ -27,7 +27,7 @@ pub fn derive_role_from_agent_name(agent_name: &str) -> Option<String> {
 
 /// Get the prompt name for a reviewer based on role.
 /// e.g., Some("security") -> "reviewer-security", None -> "reviewer"
-#[must_use] 
+#[must_use]
 pub fn get_reviewer_prompt_name(role: Option<&str>) -> String {
     match role {
         Some(r) => format!("reviewer-{r}"),
@@ -280,9 +280,7 @@ fn build_prompt(
         match load_prompt(&prompt_name, agent, project, &prompts_dir, target_workspace) {
             Ok(p) => p,
             Err(_) if role.is_some() => {
-                eprintln!(
-                    "Warning: {prompt_name}.md not found, using base reviewer prompt"
-                );
+                eprintln!("Warning: {prompt_name}.md not found, using base reviewer prompt");
                 load_prompt("reviewer", agent, project, &prompts_dir, target_workspace)?
             }
             Err(e) => return Err(e),
@@ -610,9 +608,7 @@ pub fn run_reviewer_loop(
 
         let review_count = work_items.iter().filter(|w| !w.is_thread).count();
         let thread_count = work_items.iter().filter(|w| w.is_thread).count();
-        eprintln!(
-            "  {review_count} reviews awaiting vote, {thread_count} threads with responses"
-        );
+        eprintln!("  {review_count} reviews awaiting vote, {thread_count} threads with responses");
 
         // Build prompt
         let last_iteration = read_last_iteration(&journal_path);

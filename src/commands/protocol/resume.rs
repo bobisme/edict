@@ -60,7 +60,9 @@ fn assess_bone(ctx: &ProtocolContext, bone_id: &str, config: &Config) -> BoneRes
         Err(_) => (String::new(), "unknown".to_string()),
     };
 
-    let workspace = ctx.workspace_for_bone(bone_id).map(std::string::ToString::to_string);
+    let workspace = ctx
+        .workspace_for_bone(bone_id)
+        .map(std::string::ToString::to_string);
 
     // Check for reviews in the workspace
     let review = workspace.as_deref().and_then(|ws| {
