@@ -51,11 +51,11 @@ pub fn resolve_message(provided: Option<&str>) -> anyhow::Result<String> {
     let status = std::process::Command::new(&editor)
         .arg(&tmp_path)
         .status()
-        .with_context(|| format!("failed to open editor '{}'", editor))?;
+        .with_context(|| format!("failed to open editor '{editor}'"))?;
 
     if !status.success() {
         let _ = std::fs::remove_file(&tmp_path);
-        anyhow::bail!("editor '{}' exited with non-zero status — aborting", editor);
+        anyhow::bail!("editor '{editor}' exited with non-zero status — aborting");
     }
 
     let content =
@@ -158,7 +158,7 @@ pub fn execute(
         Ok(ctx) => ctx,
         Err(e) => {
             let mut guidance = ProtocolGuidance::new("merge");
-            guidance.blocked(format!("failed to collect state: {}", e));
+            guidance.blocked(format!("failed to collect state: {e}"));
             print_guidance(&guidance, format)?;
             return Ok(());
         }
@@ -166,7 +166,7 @@ pub fn execute(
 
     let mut guidance = ProtocolGuidance::new("merge");
     guidance.workspace = Some(workspace.to_string());
-    guidance.set_freshness(120, Some(format!("edict protocol merge {}", workspace)));
+    guidance.set_freshness(120, Some(format!("edict protocol merge {workspace}")));
     let mut merge_target = ctx
         .find_workspace(workspace)
         .and_then(|ws| ws.change_id.clone());
@@ -175,8 +175,7 @@ pub fn execute(
     let ws_exists = ctx.workspaces().iter().any(|ws| ws.name == workspace);
     if !ws_exists {
         guidance.blocked(format!(
-            "workspace '{}' not found. Check with: maw ws list",
-            workspace
+            "workspace '{workspace}' not found. Check with: maw ws list"
         ));
         print_guidance(&guidance, format)?;
         return Ok(());
@@ -206,12 +205,11 @@ pub fn execute(
                         bone_id, bone_info.state
                     ));
                     guidance.advise(format!(
-                        "Wait for worker to finish bone {}, or use --force to merge anyway.",
-                        bone_id
+                        "Wait for worker to finish bone {bone_id}, or use --force to merge anyway."
                     ));
 
                     let mut steps = Vec::new();
-                    steps.push(format!("maw exec default -- bn show {}", bone_id));
+                    steps.push(format!("maw exec default -- bn show {bone_id}"));
                     guidance.steps(steps);
 
                     print_guidance(&guidance, format)?;
@@ -220,8 +218,7 @@ pub fn execute(
             }
             Err(_) => {
                 guidance.diagnostic(format!(
-                    "Could not fetch bone {} — it may have been deleted. Proceeding with merge.",
-                    bone_id
+                    "Could not fetch bone {bone_id} — it may have been deleted. Proceeding with merge."
                 ));
             }
         }
@@ -237,7 +234,7 @@ pub fn execute(
         .review
         .reviewers
         .iter()
-        .map(|role| format!("{}-{}", project, role))
+        .map(|role| format!("{project}-{role}"))
         .collect();
     let review_enabled = config.review.enabled && !required_reviewers.is_empty();
 
@@ -247,7 +244,7 @@ pub fn execute(
                 let decision =
                     review_gate::evaluate_review_gate(&review_detail, &required_reviewers);
                 if merge_target.is_none() {
-                    merge_target = review_detail.change_id.clone();
+                    merge_target = review_detail.change_id;
                 }
                 guidance.review = Some(render::ReviewRef {
                     review_id: review_id.clone(),
@@ -309,9 +306,7 @@ pub fn execute(
 
                     let mut steps = Vec::new();
                     let title = bone_id
-                        .as_ref()
-                        .map(|id| format!("Work from {}", id))
-                        .unwrap_or_else(|| format!("Work from {}", workspace));
+                        .as_ref().map_or_else(|| format!("Work from {workspace}"), |id| format!("Work from {id}"));
                     steps.push(shell::seal_create_cmd(
                         workspace,
                         "agent",
@@ -360,8 +355,7 @@ pub fn execute(
         Err(e) => {
             // --check failed (maybe old maw version). Warn but proceed.
             guidance.diagnostic(format!(
-                "Pre-flight check failed ({}). Proceeding without conflict detection.",
-                e
+                "Pre-flight check failed ({e}). Proceeding without conflict detection."
             ));
         }
     }
@@ -392,14 +386,12 @@ pub fn execute(
 
     if force {
         guidance.advise(format!(
-            "Force-merging workspace {} (review/bone checks bypassed). \
-             Run these commands to merge.",
-            workspace
+            "Force-merging workspace {workspace} (review/bone checks bypassed). \
+             Run these commands to merge."
         ));
     } else {
         guidance.advise(format!(
-            "All preconditions met. Run these commands to merge workspace {}.",
-            workspace
+            "All preconditions met. Run these commands to merge workspace {workspace}."
         ));
     }
 
@@ -418,12 +410,12 @@ fn run_merge_check(
             "ws", "merge", workspace, "--into", target, "--check", "--format", "json",
         ])
         .output()
-        .map_err(|e| format!("failed to run maw ws merge --check: {}", e))?;
+        .map_err(|e| format!("failed to run maw ws merge --check: {e}"))?;
 
-    let stdout = String::from_utf8(output.stdout).map_err(|e| format!("invalid UTF-8: {}", e))?;
+    let stdout = String::from_utf8(output.stdout).map_err(|e| format!("invalid UTF-8: {e}"))?;
 
     // Parse JSON even on non-zero exit (--check exits non-zero on conflicts)
-    serde_json::from_str(&stdout).map_err(|e| format!("failed to parse --check output: {}", e))
+    serde_json::from_str(&stdout).map_err(|e| format!("failed to parse --check output: {e}"))
 }
 
 /// Build the merge steps: merge, mark-merged, sync, push.
@@ -442,15 +434,13 @@ fn build_merge_steps(
 
     // 1. Merge workspace with the required commit message
     let target = merge_target
-        .map(shell::MergeTarget::Change)
-        .unwrap_or(shell::MergeTarget::Default);
+        .map_or(shell::MergeTarget::Default, shell::MergeTarget::Change);
     steps.push(shell::ws_merge_cmd(workspace, target, message));
 
     // 2. Mark review as merged (if review exists)
     if let Some(rid) = review_id {
         steps.push(format!(
-            "maw exec default -- seal reviews mark-merged {}",
-            rid
+            "maw exec default -- seal reviews mark-merged {rid}"
         ));
     }
 
@@ -461,9 +451,9 @@ fn build_merge_steps(
 
     // 4. Announce merge
     let announce_msg = if let Some(bid) = bone_id {
-        format!("Merged workspace {} ({})", workspace, bid)
+        format!("Merged workspace {workspace} ({bid})")
     } else {
-        format!("Merged workspace {}", workspace)
+        format!("Merged workspace {workspace}")
     };
     steps.push(shell::rite_send_cmd(
         "agent",
@@ -486,8 +476,7 @@ fn add_conflict_recovery_guidance(
     merge_msg: &str,
 ) {
     let target = merge_target
-        .map(shell::MergeTarget::Change)
-        .unwrap_or(shell::MergeTarget::Default);
+        .map_or(shell::MergeTarget::Default, shell::MergeTarget::Change);
     let retry_cmd = shell::ws_merge_cmd(workspace, target, merge_msg);
     let check_cmd = shell::ws_merge_check_cmd(workspace, target);
     guidance.diagnostic(format!(
@@ -495,43 +484,31 @@ fn add_conflict_recovery_guidance(
          \n\
          1. Inspect conflicts and stale state:\n\
          \n\
-         maw ws conflicts {} --format json\n\
-         {}\n\
-         maw ws sync {}\n\
+         maw ws conflicts {workspace} --format json\n\
+         {check_cmd}\n\
+         maw ws sync {workspace}\n\
          \n\
          2. For auto-resolvable files (.bones/, .claude/, .agents/):\n\
          \n\
-         maw exec {} -- git restore --source refs/heads/main -- .bones/ .claude/ .agents/\n\
+         maw exec {workspace} -- git restore --source refs/heads/main -- .bones/ .claude/ .agents/\n\
          \n\
          3. For code conflicts — resolve, stage, and commit in workspace:\n\
          \n\
-         maw exec {} -- git status\n\
-         maw exec {} -- git add <resolved-file>\n\
-         maw exec {} -- git commit -m 'resolve: merge conflicts in {}'\n\
+         maw exec {workspace} -- git status\n\
+         maw exec {workspace} -- git add <resolved-file>\n\
+         maw exec {workspace} -- git commit -m 'resolve: merge conflicts in {workspace}'\n\
          \n\
          4. After resolving:\n\
          \n\
-         {}              # retry merge\n\
+         {retry_cmd}              # retry merge\n\
          \n\
          5. To UNDO the merge entirely (recover pre-merge state):\n\
          \n\
-         maw ws undo {}                         # reset workspace to its base\n\
+         maw ws undo {workspace}                         # reset workspace to its base\n\
          \n\
          6. To recover a destroyed workspace:\n\
          \n\
-         maw ws recover {} --to {}-recovered    # recreate it under a new name",
-        workspace,
-        check_cmd,
-        workspace,
-        workspace,
-        workspace,
-        workspace,
-        workspace,
-        workspace,
-        retry_cmd,
-        workspace,
-        workspace,
-        workspace,
+         maw ws recover {workspace} --to {workspace}-recovered    # recreate it under a new name",
     ));
 }
 
@@ -547,11 +524,9 @@ fn find_bone_for_workspace(ctx: &ProtocolContext, workspace: &str) -> Option<Str
                 if let Some(ws_name) = pattern
                     .strip_prefix("workspace://")
                     .and_then(|rest| rest.split('/').nth(1))
-                {
-                    if ws_name == workspace {
+                    && ws_name == workspace {
                         return Some(memo.clone());
                     }
-                }
             }
         }
     }
@@ -585,11 +560,10 @@ fn find_review_for_workspace(
     let reviews_resp = super::adapters::parse_reviews_list(&stdout).ok()?;
 
     for review_summary in &reviews_resp.reviews {
-        if review_summary.status != "merged" {
-            if let Ok(detail) = ctx.review_status(&review_summary.review_id, workspace) {
+        if review_summary.status != "merged"
+            && let Ok(detail) = ctx.review_status(&review_summary.review_id, workspace) {
                 return Some((review_summary.review_id.clone(), detail));
             }
-        }
     }
 
     None
@@ -608,7 +582,7 @@ fn execute_and_render(
     use super::executor;
 
     let report = executor::execute_steps(&guidance.steps)
-        .map_err(|e| anyhow::anyhow!("execution failed: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("execution failed: {e}"))?;
 
     // Fallback conflict detection via WARNING pattern (safety net)
     let merge_had_conflicts = report.results.iter().any(|r| {
@@ -621,19 +595,18 @@ fn execute_and_render(
         conflict_guidance.workspace = Some(workspace.to_string());
         conflict_guidance.status = ProtocolStatus::Blocked;
         conflict_guidance.diagnostic(format!(
-            "Merge completed with CONFLICTS. Workspace {} is preserved (not destroyed).",
-            workspace
+            "Merge completed with CONFLICTS. Workspace {workspace} is preserved (not destroyed)."
         ));
         add_conflict_recovery_guidance(&mut conflict_guidance, workspace, None, merge_msg);
 
         let output = render::render(&conflict_guidance, format)
-            .map_err(|e| anyhow::anyhow!("render error: {}", e))?;
-        println!("{}", output);
+            .map_err(|e| anyhow::anyhow!("render error: {e}"))?;
+        println!("{output}");
         std::process::exit(1);
     }
 
     let output = executor::render_report(&report, format);
-    println!("{}", output);
+    println!("{output}");
 
     if !report.remaining.is_empty() || report.results.iter().any(|r| !r.success) {
         std::process::exit(1);
@@ -645,8 +618,8 @@ fn execute_and_render(
 /// Render and print guidance.
 fn print_guidance(guidance: &ProtocolGuidance, format: OutputFormat) -> anyhow::Result<()> {
     let output =
-        render::render(guidance, format).map_err(|e| anyhow::anyhow!("render error: {}", e))?;
-    println!("{}", output);
+        render::render(guidance, format).map_err(|e| anyhow::anyhow!("render error: {e}"))?;
+    println!("{output}");
     Ok(())
 }
 

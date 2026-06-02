@@ -29,7 +29,7 @@ pub struct StatusArgs {
     /// Project name for scoping (defaults to project.name in config)
     #[arg(long)]
     pub project: Option<String>,
-    /// Agent name for filtering (defaults to EDICT_AGENT or defaultAgent in config)
+    /// Agent name for filtering (defaults to `EDICT_AGENT` or defaultAgent in config)
     #[arg(long)]
     pub agent: Option<String>,
     /// Output format
@@ -119,21 +119,19 @@ impl StatusArgs {
             .agent
             .clone()
             .or_else(|| std::env::var("EDICT_AGENT").ok())
-            .or_else(|| config.as_ref().map(|c| c.default_agent()))
+            .or_else(|| config.as_ref().map(super::super::config::Config::default_agent))
             .unwrap_or_else(|| format!("{project}-dev"));
 
         // Get required reviewers from config (format: ["security"] → ["<project>-security"])
         let required_reviewers: Vec<String> = config
             .as_ref()
-            .filter(|c| c.review.enabled)
-            .map(|c| {
+            .filter(|c| c.review.enabled).map_or_else(|| vec![format!("{project}-security")], |c| {
                 c.review
                     .reviewers
                     .iter()
                     .map(|r| format!("{project}-{r}"))
                     .collect()
-            })
-            .unwrap_or_else(|| vec![format!("{project}-security")]);
+            });
 
         let mut report = StatusReport {
             ready_bones: ReadyBones {
@@ -191,7 +189,7 @@ impl StatusArgs {
                 for ws in workspaces {
                     if ws
                         .get("is_default")
-                        .and_then(|v| v.as_bool())
+                        .and_then(serde_json::Value::as_bool)
                         .unwrap_or(false)
                     {
                         continue;
@@ -205,8 +203,7 @@ impl StatusArgs {
                     .filter(|a| {
                         a.get("message")
                             .and_then(|v| v.as_str())
-                            .map(|s| s.contains("stale"))
-                            .unwrap_or(false)
+                            .is_some_and(|s| s.contains("stale"))
                     })
                     .count();
             }
@@ -281,18 +278,16 @@ impl StatusArgs {
             if !is_valid_bone_id(bone_id) {
                 continue; // Skip malformed claim URIs
             }
-            if let Ok(bone) = ctx.bone_status(bone_id) {
-                if bone.state == "done" || bone.state == "archived" {
+            if let Ok(bone) = ctx.bone_status(bone_id)
+                && (bone.state == "done" || bone.state == "archived") {
                     report.advice.push(Advice {
                         severity: "CRITICAL".to_string(),
                         message: format!(
-                            "Orphaned claim: bone {} is closed but claim still active → cleanup required",
-                            bone_id
+                            "Orphaned claim: bone {bone_id} is closed but claim still active → cleanup required"
                         ),
-                        command: Some(format!("edict protocol cleanup {}", bone_id)),
+                        command: Some(format!("edict protocol cleanup {bone_id}")),
                     });
                 }
-            }
         }
 
         // Priority 2: HIGH - LGTM review with no finish action
@@ -300,8 +295,8 @@ impl StatusArgs {
             if !is_valid_bone_id(bone_id) {
                 continue;
             }
-            if let Some(ws_name) = ctx.workspace_for_bone(bone_id) {
-                if let Ok(reviews) = ctx.reviews_in_workspace(ws_name) {
+            if let Some(ws_name) = ctx.workspace_for_bone(bone_id)
+                && let Ok(reviews) = ctx.reviews_in_workspace(ws_name) {
                     for review_summary in reviews {
                         if let Ok(review_detail) =
                             ctx.review_status(&review_summary.review_id, ws_name)
@@ -318,13 +313,12 @@ impl StatusArgs {
                                         "Review {} approved (LGTM) → ready to finish bone {}",
                                         review_detail.review_id, bone_id
                                     ),
-                                    command: Some(format!("edict protocol finish {}", bone_id)),
+                                    command: Some(format!("edict protocol finish {bone_id}")),
                                 });
                             }
                         }
                     }
                 }
-            }
         }
 
         // Priority 3: HIGH - BLOCK review needing response
@@ -332,8 +326,8 @@ impl StatusArgs {
             if !is_valid_bone_id(bone_id) {
                 continue;
             }
-            if let Some(ws_name) = ctx.workspace_for_bone(bone_id) {
-                if let Ok(reviews) = ctx.reviews_in_workspace(ws_name) {
+            if let Some(ws_name) = ctx.workspace_for_bone(bone_id)
+                && let Ok(reviews) = ctx.reviews_in_workspace(ws_name) {
                     for review_summary in reviews {
                         if let Ok(review_detail) =
                             ctx.review_status(&review_summary.review_id, ws_name)
@@ -351,13 +345,12 @@ impl StatusArgs {
                                         "Review {} blocked by {} → address feedback on bone {}",
                                         review_detail.review_id, blocked_by, bone_id
                                     ),
-                                    command: Some(format!("bn show {}", bone_id)),
+                                    command: Some(format!("bn show {bone_id}")),
                                 });
                             }
                         }
                     }
                 }
-            }
         }
 
         // Priority 4: MEDIUM - in-progress bone with no workspace
@@ -365,18 +358,16 @@ impl StatusArgs {
             if !is_valid_bone_id(bone_id) {
                 continue;
             }
-            if let Ok(bone) = ctx.bone_status(bone_id) {
-                if bone.state == "doing" && ctx.workspace_for_bone(bone_id).is_none() {
+            if let Ok(bone) = ctx.bone_status(bone_id)
+                && bone.state == "doing" && ctx.workspace_for_bone(bone_id).is_none() {
                     report.advice.push(Advice {
                         severity: "MEDIUM".to_string(),
                         message: format!(
-                            "In-progress bone {} has no workspace → possible crash recovery needed",
-                            bone_id
+                            "In-progress bone {bone_id} has no workspace → possible crash recovery needed"
                         ),
-                        command: Some(format!("bn show {}", bone_id)),
+                        command: Some(format!("bn show {bone_id}")),
                     });
                 }
-            }
         }
 
         // Priority 5: MEDIUM - workspace with no bone claim
@@ -460,7 +451,7 @@ impl StatusArgs {
             for adv in &report.advice {
                 println!("  [{}] {}", adv.severity, adv.message);
                 if let Some(ref cmd) = adv.command {
-                    println!("      → {}", cmd);
+                    println!("      → {cmd}");
                 }
             }
         }
@@ -488,7 +479,7 @@ impl StatusArgs {
                     adv.severity, adv.message
                 );
                 if let Some(ref cmd) = adv.command {
-                    println!("advice-command  {}", cmd);
+                    println!("advice-command  {cmd}");
                 }
             }
         }

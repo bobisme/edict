@@ -56,11 +56,11 @@ pub fn execute(
 /// Assess a single held bone's state.
 fn assess_bone(ctx: &ProtocolContext, bone_id: &str, config: &Config) -> BoneResume {
     let (title, state) = match ctx.bone_status(bone_id) {
-        Ok(bone) => (bone.title.clone(), bone.state.clone()),
+        Ok(bone) => (bone.title.clone(), bone.state),
         Err(_) => (String::new(), "unknown".to_string()),
     };
 
-    let workspace = ctx.workspace_for_bone(bone_id).map(|s| s.to_string());
+    let workspace = ctx.workspace_for_bone(bone_id).map(std::string::ToString::to_string);
 
     // Check for reviews in the workspace
     let review = workspace.as_deref().and_then(|ws| {
@@ -107,8 +107,8 @@ fn render_fresh(_agent: &str, format: OutputFormat) -> anyhow::Result<()> {
     );
 
     let output =
-        render::render(&guidance, format).map_err(|e| anyhow::anyhow!("render error: {}", e))?;
-    println!("{}", output);
+        render::render(&guidance, format).map_err(|e| anyhow::anyhow!("render error: {e}"))?;
+    println!("{output}");
     Ok(())
 }
 
@@ -192,14 +192,13 @@ fn render_resume(
         }
     } else {
         guidance.advise(format!(
-            "Agent {} has {} in-progress bone(s). Review each and continue or finish as appropriate.",
-            agent, bone_count
+            "Agent {agent} has {bone_count} in-progress bone(s). Review each and continue or finish as appropriate."
         ));
     }
 
     let output =
-        render::render(&guidance, format).map_err(|e| anyhow::anyhow!("render error: {}", e))?;
-    println!("{}", output);
+        render::render(&guidance, format).map_err(|e| anyhow::anyhow!("render error: {e}"))?;
+    println!("{output}");
     Ok(())
 }
 
@@ -222,8 +221,7 @@ fn build_bone_guidance(
             ));
             guidance.step(shell::seal_show_cmd(ws_name, &review.review_id));
             guidance.step(format!(
-                "edict protocol finish {} --project {}",
-                bead_id, project
+                "edict protocol finish {bead_id} --project {project}"
             ));
         }
 
@@ -257,10 +255,9 @@ fn build_bone_guidance(
         // No review, has workspace → continue working
         (None, Some(ws_name)) => {
             guidance.step(format!(
-                "# {} — continue implementation in {}",
-                bead_id, ws_name
+                "# {bead_id} — continue implementation in {ws_name}"
             ));
-            guidance.step(format!("maw exec default -- bn show {}", bead_id));
+            guidance.step(format!("maw exec default -- bn show {bead_id}"));
             guidance.step(format!(
                 "# Work in ws/{ws_name}/, then request review when ready"
             ));
@@ -268,7 +265,7 @@ fn build_bone_guidance(
 
         // No review, no workspace → needs workspace
         (None, None) => {
-            guidance.step(format!("# {} — claimed but no workspace", bead_id));
+            guidance.step(format!("# {bead_id} — claimed but no workspace"));
             guidance.step(shell::ws_create_cmd(
                 bead_id,
                 bead_id,

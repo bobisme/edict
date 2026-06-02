@@ -21,7 +21,8 @@ pub struct RunOutput {
 
 impl RunOutput {
     /// Returns true if the process exited successfully.
-    pub fn success(&self) -> bool {
+    #[must_use] 
+    pub const fn success(&self) -> bool {
         self.exit_code == 0
     }
 
@@ -38,7 +39,7 @@ pub struct Tool {
     args: Vec<String>,
     timeout: Option<Duration>,
     maw_workspace: Option<String>,
-    /// When true, spawn the subprocess in a new process group (process_group(0)) so
+    /// When true, spawn the subprocess in a new process group (`process_group(0)`) so
     /// it survives a SIGTERM directed at the parent's process group.  Use this for
     /// cleanup subprocesses that must outlive the signal that triggered them.
     new_process_group: bool,
@@ -46,6 +47,7 @@ pub struct Tool {
 
 impl Tool {
     /// Create a new tool invocation.
+    #[must_use] 
     pub fn new(program: &str) -> Self {
         Self {
             program: program.to_string(),
@@ -61,26 +63,30 @@ impl Tool {
     /// (e.g. `rite claims release`) that are spawned from a signal handler.
     ///
     /// On non-Unix platforms this is a no-op (the flag is ignored).
-    pub fn new_process_group(mut self) -> Self {
+    #[must_use] 
+    pub const fn new_process_group(mut self) -> Self {
         self.new_process_group = true;
         self
     }
 
     /// Add a single argument.
+    #[must_use] 
     pub fn arg(mut self, arg: &str) -> Self {
         self.args.push(arg.to_string());
         self
     }
 
     /// Add multiple arguments.
+    #[must_use] 
     pub fn args(mut self, args: &[&str]) -> Self {
-        self.args.extend(args.iter().map(|s| s.to_string()));
+        self.args.extend(args.iter().map(std::string::ToString::to_string));
         self
     }
 
     /// Set a timeout for the subprocess.
     #[allow(dead_code)]
-    pub fn timeout(mut self, duration: Duration) -> Self {
+    #[must_use] 
+    pub const fn timeout(mut self, duration: Duration) -> Self {
         self.timeout = Some(duration);
         self
     }
@@ -255,6 +261,79 @@ fn run_with_timeout(
     }
 }
 
+/// Ensure exactly one rite hook exists with the given description.
+///
+/// Performs idempotent upsert: finds any existing hook(s) matching the
+/// description, removes them, then adds a new hook with current parameters.
+/// The `add_args` slice should contain all args for `rite hooks add` *except*
+/// `--description` (which is added automatically).
+///
+/// Returns `Ok(("created"|"updated"|"unchanged", hook_id))`.
+pub fn ensure_rite_hook(description: &str, add_args: &[&str]) -> anyhow::Result<(String, String)> {
+    // List existing hooks
+    let existing = Tool::new("rite")
+        .args(&["hooks", "list", "--format", "json"])
+        .run();
+
+    let mut removed = false;
+    if let Ok(output) = existing
+        && output.success()
+            && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&output.stdout)
+                && let Some(hooks) = parsed.get("hooks").and_then(|h| h.as_array()) {
+                    for hook in hooks {
+                        let desc = hook.get("description").and_then(|d| d.as_str());
+                        if desc == Some(description)
+                            && let Some(id) = hook.get("id").and_then(|i| i.as_str()) {
+                                let _ = Tool::new("rite").args(&["hooks", "remove", id]).run();
+                                removed = true;
+                            }
+                    }
+                }
+
+    // Add with --description
+    let mut args = vec!["hooks", "add", "--description", description];
+    args.extend_from_slice(add_args);
+
+    let result = Tool::new("rite").args(&args).run()?;
+
+    if !result.success() {
+        anyhow::bail!("rite hooks add failed: {}", result.stderr.trim());
+    }
+
+    // Extract hook ID from output (format: "Added: Hook hk-xxx created")
+    let hook_id = result
+        .stdout
+        .split_whitespace()
+        .find(|s| s.starts_with("hk-"))
+        .unwrap_or("unknown")
+        .to_string();
+
+    let action = if removed { "updated" } else { "created" };
+    Ok((action.to_string(), hook_id))
+}
+
+/// Simple helper to run a command with args, optionally in a specific directory.
+/// Returns stdout on success, or an error.
+pub fn run_command(program: &str, args: &[&str], cwd: Option<&Path>) -> anyhow::Result<String> {
+    let mut cmd = Command::new(program);
+    cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
+
+    if let Some(dir) = cwd {
+        cmd.current_dir(dir);
+    }
+
+    let output = cmd.output().with_context(|| format!("running {program}"))?;
+
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    } else {
+        anyhow::bail!(
+            "{program} failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -331,82 +410,5 @@ mod tests {
         };
         let parsed: serde_json::Value = output.parse_json().unwrap();
         assert_eq!(parsed["key"], "value");
-    }
-}
-
-/// Ensure exactly one rite hook exists with the given description.
-///
-/// Performs idempotent upsert: finds any existing hook(s) matching the
-/// description, removes them, then adds a new hook with current parameters.
-/// The `add_args` slice should contain all args for `rite hooks add` *except*
-/// `--description` (which is added automatically).
-///
-/// Returns `Ok(("created"|"updated"|"unchanged", hook_id))`.
-pub fn ensure_rite_hook(description: &str, add_args: &[&str]) -> anyhow::Result<(String, String)> {
-    // List existing hooks
-    let existing = Tool::new("rite")
-        .args(&["hooks", "list", "--format", "json"])
-        .run();
-
-    let mut removed = false;
-    if let Ok(output) = existing {
-        if output.success() {
-            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&output.stdout) {
-                if let Some(hooks) = parsed.get("hooks").and_then(|h| h.as_array()) {
-                    for hook in hooks {
-                        let desc = hook.get("description").and_then(|d| d.as_str());
-                        if desc == Some(description) {
-                            if let Some(id) = hook.get("id").and_then(|i| i.as_str()) {
-                                let _ = Tool::new("rite").args(&["hooks", "remove", id]).run();
-                                removed = true;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Add with --description
-    let mut args = vec!["hooks", "add", "--description", description];
-    args.extend_from_slice(add_args);
-
-    let result = Tool::new("rite").args(&args).run()?;
-
-    if !result.success() {
-        anyhow::bail!("rite hooks add failed: {}", result.stderr.trim());
-    }
-
-    // Extract hook ID from output (format: "Added: Hook hk-xxx created")
-    let hook_id = result
-        .stdout
-        .split_whitespace()
-        .find(|s| s.starts_with("hk-"))
-        .unwrap_or("unknown")
-        .to_string();
-
-    let action = if removed { "updated" } else { "created" };
-    Ok((action.to_string(), hook_id))
-}
-
-/// Simple helper to run a command with args, optionally in a specific directory.
-/// Returns stdout on success, or an error.
-pub fn run_command(program: &str, args: &[&str], cwd: Option<&Path>) -> anyhow::Result<String> {
-    let mut cmd = Command::new(program);
-    cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
-
-    if let Some(dir) = cwd {
-        cmd.current_dir(dir);
-    }
-
-    let output = cmd.output().with_context(|| format!("running {program}"))?;
-
-    if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-    } else {
-        anyhow::bail!(
-            "{program} failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        )
     }
 }

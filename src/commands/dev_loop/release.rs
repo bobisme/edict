@@ -1,6 +1,6 @@
 //! Release check helpers.
 //!
-//! Scans commits since last tag for feat:/fix: prefixes to determine
+//! Scans commits since last tag for <feat:/fix>: prefixes to determine
 //! if a release is needed. The actual version bumping and tagging is
 //! prompt-driven.
 

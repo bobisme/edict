@@ -57,12 +57,12 @@ impl MissionCheckpoint {
     }
 
     /// Check if all children are done.
-    pub fn is_complete(&self) -> bool {
+    pub const fn is_complete(&self) -> bool {
         self.closed == self.total_children
     }
 
     /// Check if the mission is stuck (all remaining bones blocked, no workers alive).
-    pub fn is_stuck(&self) -> bool {
+    pub const fn is_stuck(&self) -> bool {
         self.in_progress == 0 && self.blocked > 0 && self.open == 0
     }
 }

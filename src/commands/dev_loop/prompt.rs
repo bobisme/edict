@@ -53,38 +53,38 @@ pub fn build(
         .map(|s| format!("\n## CURRENT STATUS (pre-gathered — no need to re-fetch)\n\n{s}\n"))
         .unwrap_or_default();
 
-    let sibling_section = if !sibling_leads.is_empty() {
-        let leads_list: String = sibling_leads
-            .iter()
-            .map(|s| {
-                let memo = if s.memo.is_empty() {
-                    String::new()
-                } else {
-                    format!(" ({})", s.memo)
-                };
-                format!("- {}{memo}", s.name)
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+    let sibling_section = if sibling_leads.is_empty() {
+            String::new()
+        } else {
+            let leads_list: String = sibling_leads
+                .iter()
+                .map(|s| {
+                    let memo = if s.memo.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" ({})", s.memo)
+                    };
+                    format!("- {}{memo}", s.name)
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
 
-        format!(
-            r#"
-## SIBLING LEADS (multi-lead mode active)
+            format!(
+                r"
+    ## SIBLING LEADS (multi-lead mode active)
 
-Other lead agents are currently active on this project. Coordinate through claims — do NOT duplicate work.
+    Other lead agents are currently active on this project. Coordinate through claims — do NOT duplicate work.
 
-Active leads:
-{leads_list}
+    Active leads:
+    {leads_list}
 
-**Bone claim rule**: Before starting work on ANY bone, check if it is already claimed:
-  rite claims list --format json
-  Look for `bone://{project}/<id>` — if claimed by another agent, SKIP that bone and pick the next one.
-  Only work on bones you can successfully claim.
-"#
-        )
-    } else {
-        String::new()
-    };
+    **Bone claim rule**: Before starting work on ANY bone, check if it is already claimed:
+      rite claims list --format json
+      Look for `bone://{project}/<id>` — if claimed by another agent, SKIP that bone and pick the next one.
+      Only work on bones you can successfully claim.
+    "
+            )
+        };
 
     let edict_mission_env = std::env::var("EDICT_MISSION").ok();
 
@@ -857,12 +857,10 @@ mod tests {
             ("protocol finish", "finish"),
         ];
 
-        for (protocol_cmd, step_name) in fallback_patterns.iter() {
+        for (protocol_cmd, step_name) in &fallback_patterns {
             assert!(
                 prompt.contains(protocol_cmd),
-                "dev-loop prompt must reference '{}' in {} step",
-                protocol_cmd,
-                step_name
+                "dev-loop prompt must reference '{protocol_cmd}' in {step_name} step"
             );
         }
     }

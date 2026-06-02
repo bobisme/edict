@@ -62,6 +62,7 @@ pub struct Colors {
 }
 
 impl Colors {
+    #[must_use] 
     pub fn detect() -> Self {
         if std::io::stdout().is_terminal() {
             Self {
@@ -83,14 +84,17 @@ impl Colors {
     }
 }
 
+#[must_use] 
 pub fn h1(c: &Colors, s: &str) -> String {
     format!("{}{}# {}{}", c.bold, c.cyan, s, c.reset)
 }
 
+#[must_use] 
 pub fn h2(c: &Colors, s: &str) -> String {
     format!("{}{}## {}{}", c.bold, c.green, s, c.reset)
 }
 
+#[must_use] 
 pub fn hint(c: &Colors, s: &str) -> String {
     format!("{}> {}{}", c.dim, s, c.reset)
 }
@@ -145,7 +149,7 @@ pub fn run_iteration_start(agent_override: Option<&str>) -> anyhow::Result<()> {
     let c = Colors::detect();
     let layout = crate::layout::Layout::detect(&std::env::current_dir().unwrap_or_default());
 
-    println!("{}", h1(&c, &format!("Iteration Start: {}", agent)));
+    println!("{}", h1(&c, &format!("Iteration Start: {agent}")));
     println!();
 
     // 1. Unread rite messages
@@ -160,7 +164,7 @@ pub fn run_iteration_start(agent_override: Option<&str>) -> anyhow::Result<()> {
 
     println!(
         "{}",
-        h2(&c, &format!("Unread Bus Messages ({})", unread_count))
+        h2(&c, &format!("Unread Bus Messages ({unread_count})"))
     );
 
     if let Some(output) = inbox_output {
@@ -173,7 +177,7 @@ pub fn run_iteration_start(agent_override: Option<&str>) -> anyhow::Result<()> {
                                 let label = msg
                                     .label
                                     .as_ref()
-                                    .map(|l| format!("[{}]", l))
+                                    .map(|l| format!("[{l}]"))
                                     .unwrap_or_default();
                                 let body = if msg.body.len() > 60 {
                                     format!("{}...", &msg.body[..msg.body.floor_char_boundary(60)])
@@ -256,12 +260,13 @@ pub fn run_iteration_start(agent_override: Option<&str>) -> anyhow::Result<()> {
                     .filter(|cl| {
                         cl.patterns
                             .as_ref()
-                            .map(|p| !p.iter().all(|pat| pat.starts_with("agent://")))
-                            .unwrap_or(true)
+                            .is_none_or(|p| !p.iter().all(|pat| pat.starts_with("agent://")))
                     })
                     .collect();
 
-                if !resource_claims.is_empty() {
+                if resource_claims.is_empty() {
+                    println!("   {}No resource claims{}", c.dim, c.reset);
+                } else {
                     println!("   {} active claim(s)", resource_claims.len());
                     for claim in resource_claims.iter().take(5) {
                         if let Some(patterns) = &claim.patterns {
@@ -274,12 +279,10 @@ pub fn run_iteration_start(agent_override: Option<&str>) -> anyhow::Result<()> {
                                     .expires_in_secs
                                     .map(|s| format!("({}m left)", s / 60))
                                     .unwrap_or_default();
-                                println!("   {} {}", pattern, expires);
+                                println!("   {pattern} {expires}");
                             }
                         }
                     }
-                } else {
-                    println!("   {}No resource claims{}", c.dim, c.reset);
                 }
             } else {
                 println!("   {}No active claims{}", c.dim, c.reset);
@@ -299,8 +302,7 @@ pub fn run_iteration_start(agent_override: Option<&str>) -> anyhow::Result<()> {
             hint(
                 &c,
                 &format!(
-                    "Get unread messages and mark them as read: rite inbox --agent {} --channels {} --mark-read",
-                    agent, project
+                    "Get unread messages and mark them as read: rite inbox --agent {agent} --channels {project} --mark-read"
                 )
             )
         );
@@ -310,8 +312,7 @@ pub fn run_iteration_start(agent_override: Option<&str>) -> anyhow::Result<()> {
             hint(
                 &c,
                 &layout.rewrite_prompt(format!(
-                    "Start review: maw exec default -- seal inbox --agent {}",
-                    agent
+                    "Start review: maw exec default -- seal inbox --agent {agent}"
                 ))
             )
         );

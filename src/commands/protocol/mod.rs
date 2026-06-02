@@ -39,6 +39,7 @@ pub struct ProtocolArgs {
 
 impl ProtocolArgs {
     /// Resolve the effective agent name from flag, env, or config.
+    #[must_use] 
     pub fn resolve_agent(&self, config: &crate::config::Config) -> String {
         if let Some(ref agent) = self.agent {
             return agent.clone();
@@ -53,6 +54,7 @@ impl ProtocolArgs {
     }
 
     /// Resolve the effective project name from flag or config.
+    #[must_use] 
     pub fn resolve_project(&self, config: &crate::config::Config) -> String {
         if let Some(ref project) = self.project {
             return project.clone();
@@ -61,6 +63,7 @@ impl ProtocolArgs {
     }
 
     /// Resolve the effective output format from flag or TTY detection.
+    #[must_use] 
     pub fn resolve_format(&self) -> OutputFormat {
         self.format.unwrap_or_else(|| {
             if std::io::stdout().is_terminal() {
@@ -154,13 +157,13 @@ pub enum ProtocolCommand {
 impl ProtocolCommand {
     pub fn execute(&self) -> anyhow::Result<()> {
         match self {
-            ProtocolCommand::Start {
+            Self::Start {
                 bone_id,
                 dispatched,
                 execute,
                 args,
             } => Self::execute_start(bone_id, *dispatched, *execute, args),
-            ProtocolCommand::Finish {
+            Self::Finish {
                 bone_id,
                 no_merge,
                 force,
@@ -185,7 +188,7 @@ impl ProtocolCommand {
                     bone_id, *no_merge, *force, *execute, &agent, &project, &config, format,
                 )
             }
-            ProtocolCommand::Review {
+            Self::Review {
                 bone_id,
                 reviewers,
                 review_id,
@@ -217,7 +220,7 @@ impl ProtocolCommand {
                     format,
                 )
             }
-            ProtocolCommand::Cleanup { execute, args } => {
+            Self::Cleanup { execute, args } => {
                 let project_root = match args.project_root.clone() {
                     Some(p) => p,
                     None => {
@@ -233,7 +236,7 @@ impl ProtocolCommand {
                 let format = args.resolve_format();
                 cleanup::execute(*execute, &agent, &project, format)
             }
-            ProtocolCommand::Merge {
+            Self::Merge {
                 workspace,
                 message,
                 force,
@@ -267,7 +270,7 @@ impl ProtocolCommand {
                     format,
                 )
             }
-            ProtocolCommand::Resume { args } => {
+            Self::Resume { args } => {
                 let project_root = match args.project_root.clone() {
                     Some(p) => p,
                     None => {
@@ -290,7 +293,7 @@ impl ProtocolCommand {
     ///
     /// Analyzes bone status and outputs shell commands to start work.
     /// All status outcomes (ready, blocked, resumable) exit 0 with status in stdout.
-    /// Operational failures (config missing, tool unavailable) exit 1 via ProtocolExitError.
+    /// Operational failures (config missing, tool unavailable) exit 1 via `ProtocolExitError`.
     ///
     /// If `execute` is true and status is Ready, runs the steps directly via the executor.
     fn execute_start(
@@ -329,16 +332,12 @@ impl ProtocolCommand {
         let ctx = context::ProtocolContext::collect(&project, &agent)?;
 
         // Check if bone exists and get its status
-        let bone_info = match ctx.bone_status(bone_id) {
-            Ok(bone) => bone,
-            Err(_) => {
-                let mut guidance = render::ProtocolGuidance::new("start");
-                guidance.blocked(format!(
-                    "bone {} not found. Check the ID with: maw exec default -- bn show {}",
-                    bone_id, bone_id
-                ));
-                return exit_policy::render_guidance(&guidance, format);
-            }
+        let bone_info = if let Ok(bone) = ctx.bone_status(bone_id) { bone } else {
+            let mut guidance = render::ProtocolGuidance::new("start");
+            guidance.blocked(format!(
+                "bone {bone_id} not found. Check the ID with: maw exec default -- bn show {bone_id}"
+            ));
+            return exit_policy::render_guidance(&guidance, format);
         };
 
         let mut guidance = render::ProtocolGuidance::new("start");
@@ -356,14 +355,14 @@ impl ProtocolCommand {
         // Check for claim conflicts
         match ctx.check_bone_claim_conflict(bone_id) {
             Ok(Some(other_agent)) => {
-                guidance.blocked(format!("bone already claimed by agent '{}'", other_agent));
+                guidance.blocked(format!("bone already claimed by agent '{other_agent}'"));
                 guidance.diagnostic(
                     "Check current claims with: rite claims list --format json".to_string(),
                 );
                 return exit_policy::render_guidance(&guidance, format);
             }
             Err(e) => {
-                guidance.blocked(format!("failed to check claim conflict: {}", e));
+                guidance.blocked(format!("failed to check claim conflict: {e}"));
                 return exit_policy::render_guidance(&guidance, format);
             }
             Ok(None) => {
@@ -379,8 +378,7 @@ impl ProtocolCommand {
             guidance.status = render::ProtocolStatus::Resumable;
             guidance.workspace = Some(ws_name.to_string());
             guidance.advise(format!(
-                "Resume work in workspace {} with: edict protocol resume",
-                ws_name
+                "Resume work in workspace {ws_name} with: edict protocol resume"
             ));
             return exit_policy::render_guidance(&guidance, format);
         }
@@ -394,7 +392,7 @@ impl ProtocolCommand {
         // 1. Stake bone claim
         steps.push(shell::claims_stake_cmd(
             &agent,
-            &format!("bone://{}/{}", project, bone_id),
+            &format!("bone://{project}/{bone_id}"),
             bone_id,
         ));
 
@@ -408,7 +406,7 @@ impl ProtocolCommand {
         // 3. Stake workspace claim
         steps.push(shell::claims_stake_cmd(
             &agent,
-            &format!("workspace://{}/{}", project, bone_id),
+            &format!("workspace://{project}/{bone_id}"),
             bone_id,
         ));
 
@@ -418,7 +416,7 @@ impl ProtocolCommand {
         // 5. Comment bone with workspace info
         steps.push(shell::bn_comment_cmd(
             bone_id,
-            &format!("Started in workspace {}", bone_id),
+            &format!("Started in workspace {bone_id}"),
         ));
 
         // 7. Announce on rite (unless --dispatched)
@@ -439,10 +437,10 @@ impl ProtocolCommand {
         // If --execute is set and status is Ready, execute the steps
         if execute && guidance.status == render::ProtocolStatus::Ready {
             let report = executor::execute_steps(&guidance.steps)
-                .map_err(|e| anyhow::anyhow!("step execution failed: {}", e))?;
+                .map_err(|e| anyhow::anyhow!("step execution failed: {e}"))?;
 
             let output = executor::render_report(&report, format);
-            println!("{}", output);
+            println!("{output}");
 
             // Return error if any step failed
             if !report.remaining.is_empty() || report.results.iter().any(|r| !r.success) {

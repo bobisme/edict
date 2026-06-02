@@ -23,7 +23,7 @@ pub struct TemplateContext {
     pub tools: ToolsConfig,
     /// Review configuration
     pub review: ReviewConfig,
-    /// Install command (optional, legacy — use release_instructions instead)
+    /// Install command (optional, legacy — use `release_instructions` instead)
     pub install_command: Option<String>,
     /// Freeform release instructions block inserted into managed AGENTS.md
     pub release_instructions: Option<String>,
@@ -58,6 +58,7 @@ pub struct LayoutVars {
 }
 
 impl LayoutVars {
+    #[must_use] 
     pub fn new(layout: Layout) -> Self {
         Self {
             is_root_layout: layout.is_root(),
@@ -233,7 +234,7 @@ pub fn render_agents_md(config: &Config, layout: Layout) -> anyhow::Result<Strin
         .tools
         .enabled_tools()
         .into_iter()
-        .map(|t| format!("`{}`", t))
+        .map(|t| format!("`{t}`"))
         .collect::<Vec<_>>()
         .join(", ");
 
@@ -264,7 +265,7 @@ pub fn render_agents_md(config: &Config, layout: Layout) -> anyhow::Result<Strin
 /// AGENTS.md files from botbox-era projects on the next `edict sync`.
 pub fn update_managed_section(content: &str, ctx: &TemplateContext) -> anyhow::Result<String> {
     let managed = render_managed_section(ctx)?;
-    let full_managed = format!("{}\n{}\n{}", MANAGED_START, managed, MANAGED_END);
+    let full_managed = format!("{MANAGED_START}\n{managed}\n{MANAGED_END}");
 
     // Try current markers first
     if let Some(start_idx) = content.find(MANAGED_START)
@@ -273,7 +274,7 @@ pub fn update_managed_section(content: &str, ctx: &TemplateContext) -> anyhow::R
     {
         let before = &content[..start_idx];
         let after = &content[end_idx + MANAGED_END.len()..];
-        return Ok(format!("{}{}{}", before, full_managed, after));
+        return Ok(format!("{before}{full_managed}{after}"));
     }
 
     // Try legacy markers (botbox era) — replace them with current markers
@@ -283,7 +284,7 @@ pub fn update_managed_section(content: &str, ctx: &TemplateContext) -> anyhow::R
     {
         let before = &content[..start_idx];
         let after = &content[end_idx + MANAGED_END_LEGACY.len()..];
-        return Ok(format!("{}{}{}", before, full_managed, after));
+        return Ok(format!("{before}{full_managed}{after}"));
     }
 
     // Missing or invalid markers — strip any stale marker fragments and append
@@ -293,7 +294,7 @@ pub fn update_managed_section(content: &str, ctx: &TemplateContext) -> anyhow::R
         .replace(MANAGED_START_LEGACY, "")
         .replace(MANAGED_END_LEGACY, "");
     let cleaned = temp.trim_end();
-    Ok(format!("{}\n\n{}\n", cleaned, full_managed))
+    Ok(format!("{cleaned}\n\n{full_managed}\n"))
 }
 
 /// Dedent a multi-line string by stripping the common leading whitespace, then trim.
@@ -355,9 +356,7 @@ mod tests {
                 !root.contains("ws/$WS"),
                 "{name} (root) still uses bare `ws/$WS` paths"
             );
-            if bare.contains(".maw/workspaces") {
-                panic!("{name} (bare) leaked root-layout `.maw/workspaces` path");
-            }
+            assert!(!bare.contains(".maw/workspaces"), "{name} (bare) leaked root-layout `.maw/workspaces` path");
         }
     }
 
@@ -482,7 +481,7 @@ mod tests {
 
     #[test]
     fn test_update_managed_section() {
-        let original = r#"# My Project
+        let original = r"# My Project
 
 Some custom content.
 
@@ -491,7 +490,7 @@ Old managed content here
 <!-- edict:managed-end -->
 
 More custom content.
-"#;
+";
 
         let config = Config {
             version: "1.0.0".to_string(),
@@ -538,14 +537,14 @@ More custom content.
     #[test]
     fn test_update_managed_section_migrates_legacy_markers() {
         // AGENTS.md still has botbox:managed-* markers — should be replaced with edict:managed-*
-        let original = r#"# My Project
+        let original = r"# My Project
 
 Custom content.
 
 <!-- botbox:managed-start -->
 Old botbox-era managed content
 <!-- botbox:managed-end -->
-"#;
+";
 
         let config = Config {
             version: "1.0.0".to_string(),

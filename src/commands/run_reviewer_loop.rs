@@ -15,9 +15,10 @@ const KNOWN_ROLES: &[&str] = &["security"];
 
 /// Derive the reviewer role from an agent name.
 /// e.g., "myproject-security" -> Some("security"), "myproject-dev" -> None
+#[must_use] 
 pub fn derive_role_from_agent_name(agent_name: &str) -> Option<String> {
     for role in KNOWN_ROLES {
-        if agent_name.ends_with(&format!("-{}", role)) {
+        if agent_name.ends_with(&format!("-{role}")) {
             return Some(role.to_string());
         }
     }
@@ -26,9 +27,10 @@ pub fn derive_role_from_agent_name(agent_name: &str) -> Option<String> {
 
 /// Get the prompt name for a reviewer based on role.
 /// e.g., Some("security") -> "reviewer-security", None -> "reviewer"
+#[must_use] 
 pub fn get_reviewer_prompt_name(role: Option<&str>) -> String {
     match role {
-        Some(r) => format!("reviewer-{}", r),
+        Some(r) => format!("reviewer-{r}"),
         None => "reviewer".to_string(),
     }
 }
@@ -67,7 +69,7 @@ pub fn load_prompt(
         anyhow::bail!("invalid prompt name {prompt_name:?}");
     }
 
-    let file_path = prompts_dir.join(format!("{}.md", prompt_name));
+    let file_path = prompts_dir.join(format!("{prompt_name}.md"));
 
     let template =
         fs::read_to_string(&file_path).with_context(|| "reading prompt template".to_string())?;
@@ -134,7 +136,7 @@ fn get_journal_path(agent_name: &str) -> Result<PathBuf> {
     let role = derive_role_from_agent_name(agent_name);
     let role_suffix = role.as_deref().unwrap_or("reviewer");
     let cache_dir = get_cache_dir()?;
-    Ok(cache_dir.join(format!("review-loop-{}.txt", role_suffix)))
+    Ok(cache_dir.join(format!("review-loop-{role_suffix}.txt")))
 }
 
 /// Workspace information from maw ws list.
@@ -279,8 +281,7 @@ fn build_prompt(
             Ok(p) => p,
             Err(_) if role.is_some() => {
                 eprintln!(
-                    "Warning: {}.md not found, using base reviewer prompt",
-                    prompt_name
+                    "Warning: {prompt_name}.md not found, using base reviewer prompt"
                 );
                 load_prompt("reviewer", agent, project, &prompts_dir, target_workspace)?
             }
@@ -329,10 +330,10 @@ fn build_prompt(
         if !threads.is_empty() {
             base_prompt.push_str("### Threads with new responses:\n");
             for item in threads {
-                let review_info = if !item.review_id.is_empty() {
-                    format!(" (review {})", item.review_id)
-                } else {
+                let review_info = if item.review_id.is_empty() {
                     String::new()
+                } else {
+                    format!(" (review {})", item.review_id)
                 };
                 let thread_id = item.thread_id.as_deref().unwrap_or("");
                 base_prompt.push_str(&format!(
@@ -350,8 +351,7 @@ fn build_prompt(
     // Append previous iteration context if available
     if let Some((content, age)) = last_iteration {
         base_prompt.push_str(&format!(
-            "\n\n## PREVIOUS ITERATION ({}, may be stale)\n\n{}\n",
-            age, content
+            "\n\n## PREVIOUS ITERATION ({age}, may be stale)\n\n{content}\n"
         ));
     }
 
@@ -375,9 +375,9 @@ fn read_last_iteration(journal_path: &Path) -> Option<(String, String)> {
     let age_minutes = age_secs / 60;
     let age_hours = age_minutes / 60;
     let age_str = if age_hours > 0 {
-        format!("{}h ago", age_hours)
+        format!("{age_hours}h ago")
     } else {
-        format!("{}m ago", age_minutes)
+        format!("{age_minutes}m ago")
     };
 
     Some((content.trim().to_string(), age_str))
@@ -399,7 +399,7 @@ fn cleanup(agent: &str, project: &str, already_signed_off: bool) -> Result<()> {
                 "--agent",
                 agent,
                 project,
-                &format!("Reviewer {} signing off.", agent),
+                &format!("Reviewer {agent} signing off."),
                 "-L",
                 "agent-idle",
             ])
@@ -418,12 +418,12 @@ fn cleanup(agent: &str, project: &str, already_signed_off: bool) -> Result<()> {
             "release",
             "--agent",
             agent,
-            &format!("agent://{}", agent),
+            &format!("agent://{agent}"),
         ])
         .new_process_group()
         .run();
 
-    eprintln!("Cleanup complete for {}.", agent);
+    eprintln!("Cleanup complete for {agent}.");
     Ok(())
 }
 
@@ -488,11 +488,11 @@ pub fn run_reviewer_loop(
 
     let journal_path = get_journal_path(&agent)?;
 
-    eprintln!("Reviewer:  {}", agent);
-    eprintln!("Project:   {}", project);
-    eprintln!("Max loops: {}", max_loops);
-    eprintln!("Pause:     {}s", pause_secs);
-    eprintln!("Model:     {}", model);
+    eprintln!("Reviewer:  {agent}");
+    eprintln!("Project:   {project}");
+    eprintln!("Max loops: {max_loops}");
+    eprintln!("Pause:     {pause_secs}s");
+    eprintln!("Model:     {model}");
     eprintln!("Journal:   {}", journal_path.display());
 
     // Confirm identity
@@ -511,7 +511,7 @@ pub fn run_reviewer_loop(
             "refresh",
             "--agent",
             &agent,
-            &format!("agent://{}", agent),
+            &format!("agent://{agent}"),
         ])
         .run();
 
@@ -522,9 +522,9 @@ pub fn run_reviewer_loop(
                 "stake",
                 "--agent",
                 &agent,
-                &format!("agent://{}", agent),
+                &format!("agent://{agent}"),
                 "-m",
-                &format!("reviewer-loop for {}", project),
+                &format!("reviewer-loop for {project}"),
             ])
             .run();
 
@@ -540,7 +540,7 @@ pub fn run_reviewer_loop(
             "--agent",
             &agent,
             &project,
-            &format!("Reviewer {} online, starting review loop", agent),
+            &format!("Reviewer {agent} online, starting review loop"),
             "-L",
             "spawn-ack",
         ])
@@ -576,7 +576,7 @@ pub fn run_reviewer_loop(
 
     // Main loop
     for i in 1..=max_loops {
-        eprintln!("\n--- Review loop {}/{} ---", i, max_loops);
+        eprintln!("\n--- Review loop {i}/{max_loops} ---");
         crate::telemetry::metrics::counter(
             "edict.reviewer.iterations_total",
             1,
@@ -598,7 +598,7 @@ pub fn run_reviewer_loop(
                     "--agent",
                     &agent,
                     &project,
-                    &format!("No reviews pending. Reviewer {} signing off.", agent),
+                    &format!("No reviews pending. Reviewer {agent} signing off."),
                     "-L",
                     "agent-idle",
                 ])
@@ -611,8 +611,7 @@ pub fn run_reviewer_loop(
         let review_count = work_items.iter().filter(|w| !w.is_thread).count();
         let thread_count = work_items.iter().filter(|w| w.is_thread).count();
         eprintln!(
-            "  {} reviews awaiting vote, {} threads with responses",
-            review_count, thread_count
+            "  {review_count} reviews awaiting vote, {thread_count} threads with responses"
         );
 
         // Build prompt
@@ -640,11 +639,11 @@ pub fn run_reviewer_loop(
         );
 
         match run_agent_result {
-            Ok(_) => {
+            Ok(()) => {
                 eprintln!("✓ Review iteration complete");
             }
             Err(e) => {
-                eprintln!("Error running Claude: {}", e);
+                eprintln!("Error running Claude: {e}");
                 // Continue to next iteration on error
             }
         }

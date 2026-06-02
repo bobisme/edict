@@ -1,4 +1,4 @@
-//! ProtocolContext: cross-tool shared state collector.
+//! `ProtocolContext`: cross-tool shared state collector.
 //!
 //! Gathers rite claims, maw workspaces, and bone/review status in a single
 //! structure to avoid duplicating subprocess calls across protocol commands.
@@ -42,7 +42,7 @@ impl ProtocolContext {
         let workspaces_resp = adapters::parse_workspaces(&workspaces_output)
             .map_err(|e| ContextError::ParseFailed(format!("workspaces: {e}")))?;
 
-        Ok(ProtocolContext {
+        Ok(Self {
             project: project.to_string(),
             agent: agent.to_string(),
             claims: claims_resp.claims,
@@ -50,7 +50,8 @@ impl ProtocolContext {
         })
     }
 
-    /// Get all held bone claims as (bone_id, pattern) tuples.
+    /// Get all held bone claims as (`bone_id`, pattern) tuples.
+    #[must_use] 
     pub fn held_bone_claims(&self) -> Vec<(&str, &str)> {
         let mut result = Vec::new();
         for claim in &self.claims {
@@ -68,7 +69,8 @@ impl ProtocolContext {
         result
     }
 
-    /// Get all held workspace claims as (workspace_name, pattern) tuples.
+    /// Get all held workspace claims as (`workspace_name`, pattern) tuples.
+    #[must_use] 
     pub fn held_workspace_claims(&self) -> Vec<(&str, &str)> {
         let mut result = Vec::new();
         for claim in &self.claims {
@@ -88,6 +90,7 @@ impl ProtocolContext {
 
     /// Find a workspace by name.
     #[allow(dead_code)]
+    #[must_use] 
     pub fn find_workspace(&self, name: &str) -> Option<&Workspace> {
         self.workspaces.iter().find(|ws| ws.name == name)
     }
@@ -98,12 +101,13 @@ impl ProtocolContext {
     /// finding any non-default workspace claim from this agent. The fallback
     /// is needed because `rite claims list --format json` currently omits the
     /// memo field, making memo-based lookup fail.
+    #[must_use] 
     pub fn workspace_for_bone(&self, bone_id: &str) -> Option<&str> {
         // First pass: memo-based correlation (precise, works when rite includes memo)
         for claim in &self.claims {
-            if claim.agent == self.agent {
-                if let Some(memo) = &claim.memo {
-                    if memo == bone_id {
+            if claim.agent == self.agent
+                && let Some(memo) = &claim.memo
+                    && memo == bone_id {
                         for pattern in &claim.patterns {
                             if let Some(ws_name) = pattern
                                 .strip_prefix("workspace://")
@@ -113,8 +117,6 @@ impl ProtocolContext {
                             }
                         }
                     }
-                }
-            }
         }
 
         // Fallback: find any non-default workspace claim from this agent.
@@ -125,11 +127,9 @@ impl ProtocolContext {
                     if let Some(ws_name) = pattern
                         .strip_prefix("workspace://")
                         .and_then(|rest| rest.split('/').nth(1))
-                    {
-                        if ws_name != "default" {
+                        && ws_name != "default" {
                             return Some(ws_name);
                         }
-                    }
                 }
             }
         }
@@ -202,11 +202,9 @@ impl ProtocolContext {
                     if let Some(id) = pattern
                         .strip_prefix("bone://")
                         .and_then(|rest| rest.split('/').nth(1))
-                    {
-                        if id == bone_id {
+                        && id == bone_id {
                             return Ok(Some(claim.agent.clone()));
                         }
-                    }
                 }
             }
         }
@@ -279,27 +277,31 @@ impl ProtocolContext {
             )));
         }
 
-        Ok(String::from_utf8(output.stdout).map_err(|e| {
+        String::from_utf8(output.stdout).map_err(|e| {
             ContextError::SubprocessFailed(format!("invalid UTF-8 from {}: {e}", args[0]))
-        })?)
+        })
     }
 
     #[allow(dead_code)]
+    #[must_use] 
     pub fn project(&self) -> &str {
         &self.project
     }
 
     #[allow(dead_code)]
+    #[must_use] 
     pub fn agent(&self) -> &str {
         &self.agent
     }
 
     #[allow(dead_code)]
+    #[must_use] 
     pub fn claims(&self) -> &[Claim] {
         &self.claims
     }
 
     #[allow(dead_code)]
+    #[must_use] 
     pub fn workspaces(&self) -> &[Workspace] {
         &self.workspaces
     }
@@ -317,8 +319,8 @@ pub enum ContextError {
 impl std::fmt::Display for ContextError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ContextError::SubprocessFailed(msg) => write!(f, "subprocess failed: {msg}"),
-            ContextError::ParseFailed(msg) => write!(f, "parse failed: {msg}"),
+            Self::SubprocessFailed(msg) => write!(f, "subprocess failed: {msg}"),
+            Self::ParseFailed(msg) => write!(f, "parse failed: {msg}"),
         }
     }
 }

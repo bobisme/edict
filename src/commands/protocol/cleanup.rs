@@ -16,9 +16,9 @@ use crate::commands::doctor::OutputFormat;
 /// Execute cleanup protocol: check for held resources and output cleanup guidance.
 ///
 /// Returns Ok(()) with guidance on stdout (exit 0) for all status outcomes.
-/// ProtocolContext::collect errors propagate as anyhow::Error → exit 1.
+/// `ProtocolContext::collect` errors propagate as `anyhow::Error` → exit 1.
 ///
-/// When `execute` is true and status is HasResources, runs the cleanup steps
+/// When `execute` is true and status is `HasResources`, runs the cleanup steps
 /// via the executor instead of outputting them as guidance.
 pub fn execute(
     execute: bool,
@@ -73,8 +73,7 @@ pub fn execute(
             .collect::<Vec<_>>()
             .join(", ");
         guidance.diagnostic(format!(
-            "WARNING: Active bone claim(s) held: {}. Releasing these marks them as unowned in doing state.",
-            bone_list
+            "WARNING: Active bone claim(s) held: {bone_list}. Releasing these marks them as unowned in doing state."
         ));
     }
     steps.push(shell::claims_release_all_cmd("agent"));
@@ -96,11 +95,11 @@ pub fn execute(
 
 /// Render cleanup guidance in the requested format.
 ///
-/// For JSON format, delegates to the standard render path (exit_policy::render_guidance).
+/// For JSON format, delegates to the standard render path (`exit_policy::render_guidance`).
 /// For text/pretty formats, uses cleanup-specific rendering optimized for
 /// the cleanup use case (tab-delimited status, claim counts, etc.).
 ///
-/// When execute is true and status is HasResources, runs the steps via the executor.
+/// When execute is true and status is `HasResources`, runs the steps via the executor.
 /// If execute is true but status is Ready (clean), just reports clean status.
 ///
 /// All formats exit 0 — status is communicated via stdout content.
@@ -113,7 +112,7 @@ fn render_cleanup(
     if execute && matches!(guidance.status, ProtocolStatus::HasResources) {
         let report = executor::execute_steps(&guidance.steps)?;
         let output = executor::render_report(&report, format);
-        println!("{}", output);
+        println!("{output}");
         return Ok(());
     }
 
@@ -126,7 +125,7 @@ fn render_cleanup(
                 ProtocolStatus::HasResources => "has-resources",
                 _ => "unknown",
             };
-            println!("status\t{}", status_text);
+            println!("status\t{status_text}");
 
             // Count claims if has-resources
             if matches!(guidance.status, ProtocolStatus::HasResources) {
@@ -134,13 +133,12 @@ fn render_cleanup(
                     .diagnostics
                     .iter()
                     .find(|d| d.contains("Active bone claim"))
-                    .map(|_| guidance.diagnostics.len())
-                    .unwrap_or(0);
-                println!("claims\t{} active", claim_count);
+                    .map_or(0, |_| guidance.diagnostics.len());
+                println!("claims\t{claim_count} active");
                 println!();
                 println!("Run these commands to clean up:");
                 for step in &guidance.steps {
-                    println!("  {}", step);
+                    println!("  {step}");
                 }
             } else {
                 println!("claims\t0 active");
@@ -156,20 +154,20 @@ fn render_cleanup(
                 ProtocolStatus::HasResources => "⚠ has-resources",
                 _ => "? unknown",
             };
-            println!("Status: {}", status_text);
+            println!("Status: {status_text}");
 
             if matches!(guidance.status, ProtocolStatus::HasResources) {
                 println!();
                 println!("Run these commands to clean up:");
                 for step in &guidance.steps {
-                    println!("  {}", step);
+                    println!("  {step}");
                 }
 
                 if !guidance.diagnostics.is_empty() {
                     println!();
                     println!("Warnings:");
                     for diagnostic in &guidance.diagnostics {
-                        println!("  ⚠ {}", diagnostic);
+                        println!("  ⚠ {diagnostic}");
                     }
                 }
             } else {
@@ -178,7 +176,7 @@ fn render_cleanup(
 
             if let Some(advice) = &guidance.advice {
                 println!();
-                println!("Notes: {}", advice);
+                println!("Notes: {advice}");
             }
             Ok(())
         }

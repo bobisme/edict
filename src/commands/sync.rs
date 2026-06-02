@@ -25,7 +25,7 @@ pub struct SyncArgs {
 }
 
 /// Embedded workflow docs
-pub(crate) const WORKFLOW_DOCS: &[(&str, &str)] = &[
+pub const WORKFLOW_DOCS: &[(&str, &str)] = &[
     ("triage.md", include_str!("../templates/docs/triage.md")),
     ("start.md", include_str!("../templates/docs/start.md")),
     ("update.md", include_str!("../templates/docs/update.md")),
@@ -74,13 +74,13 @@ pub(crate) const WORKFLOW_DOCS: &[(&str, &str)] = &[
 ];
 
 /// Embedded design docs
-pub(crate) const DESIGN_DOCS: &[(&str, &str)] = &[(
+pub const DESIGN_DOCS: &[(&str, &str)] = &[(
     "cli-conventions.md",
     include_str!("../templates/design/cli-conventions.md"),
 )];
 
 /// Embedded reviewer prompts
-pub(crate) const REVIEWER_PROMPTS: &[(&str, &str)] = &[
+pub const REVIEWER_PROMPTS: &[(&str, &str)] = &[
     (
         "reviewer.md",
         include_str!("../templates/reviewer.md.jinja"),
@@ -190,10 +190,9 @@ impl SyncArgs {
                 }
                 tracing::warn!(components = %parts.join(", "), "stale components detected");
                 return Err(ExitError::new(1, "Project is out of sync".to_string()).into());
-            } else {
-                println!("All components up to date");
-                return Ok(());
             }
+            println!("All components up to date");
+            return Ok(());
         }
 
         // Clean up per-repo hooks (now managed globally)
@@ -317,15 +316,14 @@ impl SyncArgs {
                     return Err(
                         ExitError::new(1, format!("Stale {stale_name} at bare repo root")).into(),
                     );
-                } else {
-                    match fs::remove_file(&stale_path) {
-                        Ok(()) => println!(
-                            "Removed stale {stale_name} from bare repo root \
-                             (authoritative config lives in ws/default/)"
-                        ),
-                        Err(e) => {
-                            tracing::warn!("failed to remove stale {stale_name} at bare root: {e}")
-                        }
+                }
+                match fs::remove_file(&stale_path) {
+                    Ok(()) => println!(
+                        "Removed stale {stale_name} from bare repo root \
+                         (authoritative config lives in ws/default/)"
+                    ),
+                    Err(e) => {
+                        tracing::warn!("failed to remove stale {stale_name} at bare root: {e}");
                     }
                 }
             }
@@ -409,7 +407,7 @@ impl SyncArgs {
                 tracing::warn!("legacy scripts/ directory exists (will be removed on sync)");
             } else {
                 match fs::remove_dir_all(&scripts_dir) {
-                    Ok(_) => {
+                    Ok(()) => {
                         println!("Removed legacy scripts/ directory");
                         changed_files.push(".agents/botbox/scripts/");
                     }
@@ -425,7 +423,7 @@ impl SyncArgs {
                 tracing::warn!("legacy hooks/ directory exists (will be removed on sync)");
             } else {
                 match fs::remove_dir_all(&hooks_dir) {
-                    Ok(_) => {
+                    Ok(()) => {
                         println!("Removed legacy hooks/ directory");
                         changed_files.push(".agents/botbox/hooks/");
                     }
@@ -525,7 +523,7 @@ impl SyncArgs {
                         }
                     }
                     // Remove empty event arrays
-                    hooks.retain(|_, v| v.as_array().map(|a| !a.is_empty()).unwrap_or(true));
+                    hooks.retain(|_, v| v.as_array().is_none_or(|a| !a.is_empty()));
                 }
 
                 if changed {
@@ -533,13 +531,13 @@ impl SyncArgs {
                     if settings
                         .get("hooks")
                         .and_then(|h| h.as_object())
-                        .is_some_and(|h| h.is_empty())
+                        .is_some_and(serde_json::Map::is_empty)
                     {
                         settings.as_object_mut().unwrap().remove("hooks");
                     }
 
                     // Only write back if there's other content; delete if empty
-                    if settings.as_object().is_some_and(|o| o.is_empty()) {
+                    if settings.as_object().is_some_and(serde_json::Map::is_empty) {
                         fs::remove_file(&settings_path)?;
                         // Also remove .claude dir if empty
                         let claude_dir = project_root.join(".claude");
@@ -593,7 +591,7 @@ impl SyncArgs {
         for (name, content) in WORKFLOW_DOCS {
             let path = agents_dir.join(name);
             let rendered = render_workflow_doc(content, layout)
-                .with_context(|| format!("Failed to render {}", name))?;
+                .with_context(|| format!("Failed to render {name}"))?;
             fs::write(&path, rendered)
                 .with_context(|| format!("Failed to write {}", path.display()))?;
         }
@@ -680,7 +678,7 @@ impl SyncArgs {
             .chars()
             .filter(|c| !c.is_control())
             .collect();
-        let message = format!("chore: edict sync (updated {})", files_str);
+        let message = format!("chore: edict sync (updated {files_str})");
 
         match vcs {
             Vcs::Jj => {
@@ -759,9 +757,7 @@ fn migrate_botbox_rite_hooks_to_edict(config: &Config, project_root: &Path) {
     } else {
         None
     };
-    let root_str = bare_root
-        .map(|r| r.display().to_string())
-        .unwrap_or_else(|| project_root.display().to_string());
+    let root_str = bare_root.map_or_else(|| project_root.display().to_string(), |r| r.display().to_string());
 
     for hook in hooks {
         let desc = hook
@@ -893,8 +889,7 @@ fn migrate_rite_hooks(config: &Config) {
         let spawn_cwd = cmd_strs
             .windows(2)
             .find(|w| w[0] == "--cwd")
-            .map(|w| w[1])
-            .unwrap_or(".");
+            .map_or(".", |w| w[1]);
 
         // Remove old hook (ensure_rite_hook handles dedup by description,
         // but these legacy hooks have no description so we remove manually)
@@ -1022,7 +1017,7 @@ fn migrate_rite_hooks(config: &Config) {
                     "  Migrated reviewer hook {id} → edict run reviewer-loop --agent {reviewer_agent}"
                 ),
                 Err(e) => {
-                    tracing::warn!(agent = %reviewer_agent, "failed to re-register reviewer hook: {e}")
+                    tracing::warn!(agent = %reviewer_agent, "failed to re-register reviewer hook: {e}");
                 }
             }
         }
@@ -1227,9 +1222,7 @@ fn migrate_router_hook_claim(config: &Config, project_root: &Path) {
         } else {
             None
         };
-        let root_str = bare_root
-            .map(|r| r.display().to_string())
-            .unwrap_or_else(|| project_root.display().to_string());
+        let root_str = bare_root.map_or_else(|| project_root.display().to_string(), |r| r.display().to_string());
         let responder_ml = config
             .agents
             .responder
@@ -1246,7 +1239,7 @@ fn migrate_router_hook_claim(config: &Config, project_root: &Path) {
 fn migrate_vessel_hooks(config: &Config, project_root: &Path, config_path: &Path) {
     // 1. Update config TOML on disk: botty → vessel, crit → seal, botbus → rite
     if let Ok(content) = fs::read_to_string(config_path) {
-        let mut updated = content.clone();
+        let mut updated = content;
         let mut changed = false;
 
         if updated.contains("botty = ") {
@@ -1265,11 +1258,10 @@ fn migrate_vessel_hooks(config: &Config, project_root: &Path, config_path: &Path
             println!("Migrated config: tools.botbus → tools.rite");
         }
 
-        if changed {
-            if let Err(e) = fs::write(config_path, updated) {
+        if changed
+            && let Err(e) = fs::write(config_path, updated) {
                 tracing::warn!("failed to update config tool renames: {e}");
             }
-        }
     }
 
     // 2. Re-register edict hooks that still call `botty spawn` with `vessel spawn`.
@@ -1289,7 +1281,7 @@ fn migrate_vessel_hooks(config: &Config, project_root: &Path, config_path: &Path
     };
 
     let hooks = match parsed.get("hooks").and_then(|h| h.as_array()) {
-        Some(h) => h.to_vec(),
+        Some(h) => h.clone(),
         None => return,
     };
 
@@ -1306,9 +1298,7 @@ fn migrate_vessel_hooks(config: &Config, project_root: &Path, config_path: &Path
     } else {
         None
     };
-    let root_str = bare_root
-        .map(|r| r.display().to_string())
-        .unwrap_or_else(|| project_root.display().to_string());
+    let root_str = bare_root.map_or_else(|| project_root.display().to_string(), |r| r.display().to_string());
     let agent = config.default_agent();
 
     for hook in &hooks {
@@ -1316,8 +1306,7 @@ fn migrate_vessel_hooks(config: &Config, project_root: &Path, config_path: &Path
         let uses_botty = hook
             .get("command")
             .and_then(|c| c.as_array())
-            .map(|arr| arr.iter().any(|v| v.as_str() == Some("botty")))
-            .unwrap_or(false);
+            .is_some_and(|arr| arr.iter().any(|v| v.as_str() == Some("botty")));
         if !uses_botty {
             continue;
         }
@@ -1382,7 +1371,7 @@ fn ensure_reviewer_hooks(config: &Config, project_root: &Path) {
     };
 
     let hooks = match parsed.get("hooks").and_then(|h| h.as_array()) {
-        Some(h) => h.to_vec(),
+        Some(h) => h.clone(),
         None => return,
     };
 
@@ -1399,9 +1388,7 @@ fn ensure_reviewer_hooks(config: &Config, project_root: &Path) {
     } else {
         None
     };
-    let root_str = bare_root
-        .map(|r| r.display().to_string())
-        .unwrap_or_else(|| project_root.display().to_string());
+    let root_str = bare_root.map_or_else(|| project_root.display().to_string(), |r| r.display().to_string());
 
     let ml = config
         .agents
@@ -1438,7 +1425,7 @@ fn ensure_reviewer_hooks(config: &Config, project_root: &Path) {
 ///
 /// These hooks have correct `edict:` descriptions but were registered before
 /// rite was renamed from botbus, so their `--env-inherit` still references
-/// BOTBUS_CHANNEL, BOTBUS_MESSAGE_ID, etc.
+/// `BOTBUS_CHANNEL`, `BOTBUS_MESSAGE_ID`, etc.
 fn migrate_botbus_env_hooks(config: &Config, project_root: &Path) {
     let output = match Tool::new("rite")
         .args(&["hooks", "list", "--format", "json"])
@@ -1454,7 +1441,7 @@ fn migrate_botbus_env_hooks(config: &Config, project_root: &Path) {
     };
 
     let hooks = match parsed.get("hooks").and_then(|h| h.as_array()) {
-        Some(h) => h.to_vec(),
+        Some(h) => h.clone(),
         None => return,
     };
 
@@ -1470,9 +1457,7 @@ fn migrate_botbus_env_hooks(config: &Config, project_root: &Path) {
     } else {
         None
     };
-    let root_str = bare_root
-        .map(|r| r.display().to_string())
-        .unwrap_or_else(|| project_root.display().to_string());
+    let root_str = bare_root.map_or_else(|| project_root.display().to_string(), |r| r.display().to_string());
     let agent = config.default_agent();
 
     for hook in &hooks {
@@ -1480,11 +1465,10 @@ fn migrate_botbus_env_hooks(config: &Config, project_root: &Path) {
         let has_botbus_env = hook
             .get("command")
             .and_then(|c| c.as_array())
-            .map(|arr| {
+            .is_some_and(|arr| {
                 arr.iter()
                     .any(|v| v.as_str().is_some_and(|s| s.contains("BOTBUS_")))
-            })
-            .unwrap_or(false);
+            });
         if !has_botbus_env {
             continue;
         }
@@ -1666,7 +1650,7 @@ fn detect_vcs(project_root: &Path) -> Vcs {
 fn find_jj_root(from: &Path) -> Option<PathBuf> {
     from.ancestors()
         .find(|p| p.join(".jj").is_dir())
-        .map(|p| p.to_path_buf())
+        .map(std::path::Path::to_path_buf)
 }
 
 /// Compute SHA-256 hash of all workflow docs

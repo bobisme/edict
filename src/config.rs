@@ -10,12 +10,13 @@ use crate::error::ExitError;
 
 /// Config file name constants.
 pub const CONFIG_TOML: &str = ".edict.toml";
-/// Legacy config name from the botbox era — accepted on read, migrated to CONFIG_TOML on sync.
+/// Legacy config name from the botbox era — accepted on read, migrated to `CONFIG_TOML` on sync.
 pub const CONFIG_TOML_LEGACY: &str = ".botbox.toml";
 pub const CONFIG_JSON: &str = ".botbox.json";
 
 /// Find the config file path, preferring the current name over legacy names.
 /// Returns None if none exist.
+#[must_use] 
 pub fn find_config(dir: &Path) -> Option<PathBuf> {
     // Current name
     let toml_path = dir.join(CONFIG_TOML);
@@ -36,7 +37,7 @@ pub fn find_config(dir: &Path) -> Option<PathBuf> {
 }
 
 /// Find config in the standard locations: direct path, then ws/default/.
-/// Returns (config_path, config_dir) or an error.
+/// Returns (`config_path`, `config_dir`) or an error.
 ///
 /// Priority order (highest first):
 /// 1. Root `.edict.toml` — current canonical name
@@ -97,7 +98,7 @@ pub fn find_config_in_project(root: &Path) -> anyhow::Result<(PathBuf, PathBuf)>
 
 /// Top-level .botbox.toml config.
 ///
-/// All structs use snake_case (TOML native) with `alias` attributes for
+/// All structs use `snake_case` (TOML native) with `alias` attributes for
 /// backwards compatibility when loading legacy camelCase JSON configs.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Config {
@@ -156,6 +157,7 @@ pub struct ToolsConfig {
 
 impl ToolsConfig {
     /// Returns a list of enabled tool names
+    #[must_use] 
     pub fn enabled_tools(&self) -> Vec<String> {
         let mut tools = Vec::new();
         if self.bones {
@@ -357,40 +359,40 @@ fn default_model_reviewer() -> String {
 fn default_model_responder() -> String {
     "balanced".into()
 }
-fn default_max_loops() -> u32 {
+const fn default_max_loops() -> u32 {
     100
 }
-fn default_pause() -> u32 {
+const fn default_pause() -> u32 {
     2
 }
-fn default_timeout_300() -> u64 {
+const fn default_timeout_300() -> u64 {
     300
 }
-fn default_timeout_900() -> u64 {
+const fn default_timeout_900() -> u64 {
     900
 }
-fn default_timeout_3600() -> u64 {
+const fn default_timeout_3600() -> u64 {
     3600
 }
-fn default_true() -> bool {
+const fn default_true() -> bool {
     true
 }
-fn default_max_workers() -> u32 {
+const fn default_max_workers() -> u32 {
     4
 }
-fn default_max_children() -> u32 {
+const fn default_max_children() -> u32 {
     12
 }
-fn default_checkpoint_interval() -> u64 {
+const fn default_checkpoint_interval() -> u64 {
     30
 }
-fn default_max_leads() -> u32 {
+const fn default_max_leads() -> u32 {
     3
 }
-fn default_merge_timeout() -> u64 {
+const fn default_merge_timeout() -> u64 {
     120
 }
-fn default_max_conversations() -> u32 {
+const fn default_max_conversations() -> u32 {
     10
 }
 fn default_missions() -> Option<MissionsConfig> {
@@ -467,11 +469,10 @@ impl Config {
 
         // Add comments before section headers using item decor
         fn set_table_comment(doc: &mut toml_edit::DocumentMut, key: &str, comment: &str) {
-            if let Some(item) = doc.get_mut(key) {
-                if let Some(tbl) = item.as_table_mut() {
+            if let Some(item) = doc.get_mut(key)
+                && let Some(tbl) = item.as_table_mut() {
                     tbl.decor_mut().set_prefix(comment);
                 }
-            }
         }
 
         set_table_comment(&mut doc, "tools", "\n# Companion tools to enable\n");
@@ -495,7 +496,8 @@ impl Config {
         Ok(doc.to_string())
     }
 
-    /// Returns the effective agent name (project.default_agent or "{name}-dev").
+    /// Returns the effective agent name (`project.default_agent` or "{name}-dev").
+    #[must_use] 
     pub fn default_agent(&self) -> String {
         self.project
             .default_agent
@@ -504,6 +506,7 @@ impl Config {
     }
 
     /// Returns the effective channel name (project.channel or project.name).
+    #[must_use] 
     pub fn channel(&self) -> String {
         self.project
             .channel
@@ -515,6 +518,7 @@ impl Config {
     ///
     /// Also propagates `OTEL_EXPORTER_OTLP_ENDPOINT` from the process environment if set and
     /// not already defined in the config, so telemetry flows through to spawned agents.
+    #[must_use] 
     pub fn resolved_env(&self) -> HashMap<String, String> {
         let mut env: HashMap<String, String> = self
             .env
@@ -523,11 +527,10 @@ impl Config {
             .collect();
 
         // Auto-propagate telemetry endpoint to child agents
-        if !env.contains_key("OTEL_EXPORTER_OTLP_ENDPOINT") {
-            if let Ok(val) = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT") {
+        if !env.contains_key("OTEL_EXPORTER_OTLP_ENDPOINT")
+            && let Ok(val) = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT") {
                 env.insert("OTEL_EXPORTER_OTLP_ENDPOINT".into(), val);
             }
-        }
 
         env
     }
@@ -535,6 +538,7 @@ impl Config {
     /// Resolve a model string to the full pool of models for that tier.
     /// Tier names (fast/balanced/strong) return a shuffled Vec of all models in the pool.
     /// Legacy short names (opus/sonnet/haiku) and explicit model strings return a single-element Vec.
+    #[must_use] 
     pub fn resolve_model_pool(&self, model: &str) -> Vec<String> {
         // Legacy short names -> specific Anthropic models (no fallback pool)
         match model {
@@ -563,6 +567,7 @@ impl Config {
 
     /// Resolve a model string: if it matches a tier name (fast/balanced/strong),
     /// randomly pick from that tier's pool. Otherwise pass through as-is.
+    #[must_use] 
     pub fn resolve_model(&self, model: &str) -> String {
         // Legacy short names -> specific Anthropic models (deterministic)
         match model {

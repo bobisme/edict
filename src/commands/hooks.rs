@@ -11,7 +11,7 @@ use crate::error::ExitError;
 use crate::hooks::HookRegistry;
 use crate::subprocess::run_command;
 
-pub(crate) const PI_EDICT_HOOKS_EXTENSION: &str =
+pub const PI_EDICT_HOOKS_EXTENSION: &str =
     include_str!("../templates/extensions/edict-hooks.ts");
 
 #[derive(Debug, Subcommand)]
@@ -49,13 +49,13 @@ pub enum HooksCommand {
 impl HooksCommand {
     pub fn execute(&self) -> anyhow::Result<()> {
         match self {
-            HooksCommand::Install { project_root } => install_hooks(project_root.as_deref()),
-            HooksCommand::Uninstall => uninstall_hooks(),
-            HooksCommand::Audit {
+            Self::Install { project_root } => install_hooks(project_root.as_deref()),
+            Self::Uninstall => uninstall_hooks(),
+            Self::Audit {
                 project_root,
                 format,
             } => audit_hooks(project_root.as_deref(), *format),
-            HooksCommand::Run {
+            Self::Run {
                 hook_name, release, ..
             } => run_hook(hook_name, *release),
         }
@@ -64,7 +64,7 @@ impl HooksCommand {
 
 /// Install global agent hooks into ~/.claude/settings.json (and Pi extensions).
 ///
-/// If project_root is provided, also registers rite hooks (router + reviewers).
+/// If `project_root` is provided, also registers rite hooks (router + reviewers).
 fn install_hooks(project_root: Option<&Path>) -> Result<()> {
     // Install global Claude Code hooks
     let home = dirs::home_dir().context("could not determine home directory")?;
@@ -82,11 +82,10 @@ fn install_hooks(project_root: Option<&Path>) -> Result<()> {
         let root = resolve_project_root(Some(root))?;
         let config = load_config(&root)?;
         register_rite_hooks(&root, &config)?;
-    } else if let Ok(root) = resolve_project_root(None) {
-        if let Ok(config) = load_config(&root) {
+    } else if let Ok(root) = resolve_project_root(None)
+        && let Ok(config) = load_config(&root) {
             register_rite_hooks(&root, &config)?;
         }
-    }
 
     println!("Hooks installed successfully");
     Ok(())
@@ -111,14 +110,14 @@ fn uninstall_hooks() -> Result<()> {
                 }
             }
             // Remove empty event arrays
-            hooks.retain(|_, v| v.as_array().map(|a| !a.is_empty()).unwrap_or(true));
+            hooks.retain(|_, v| v.as_array().is_none_or(|a| !a.is_empty()));
         }
 
         // Remove hooks key entirely if empty
         if settings
             .get("hooks")
             .and_then(|h| h.as_object())
-            .is_some_and(|h| h.is_empty())
+            .is_some_and(serde_json::Map::is_empty)
         {
             settings.as_object_mut().unwrap().remove("hooks");
         }
@@ -144,9 +143,7 @@ fn audit_hooks(project_root: Option<&Path>, format: super::doctor::OutputFormat)
 
     // Check global settings.json
     let settings_path = home.join(".claude/settings.json");
-    if !settings_path.exists() {
-        issues.push("Missing ~/.claude/settings.json".to_string());
-    } else {
+    if settings_path.exists() {
         let content = fs::read_to_string(&settings_path)
             .with_context(|| format!("reading {}", settings_path.display()))?;
         let settings: serde_json::Value = serde_json::from_str(&content)
@@ -174,19 +171,18 @@ fn audit_hooks(project_root: Option<&Path>, format: super::doctor::OutputFormat)
                 ));
             }
         }
+    } else {
+        issues.push("Missing ~/.claude/settings.json".to_string());
     }
 
     // Check rite hooks (if in a botbox project)
     if let Some(root) = project_root
         .and_then(|p| resolve_project_root(Some(p)).ok())
         .or_else(|| resolve_project_root(None).ok())
-    {
-        if let Ok(config) = load_config(&root) {
-            if config.tools.rite {
+        && let Ok(config) = load_config(&root)
+            && config.tools.rite {
                 check_rite_hooks(&root, &config, &mut issues)?;
             }
-        }
-    }
 
     match format {
         super::doctor::OutputFormat::Json => {
@@ -244,9 +240,7 @@ fn run_hook(hook_name: &str, release: bool) -> Result<()> {
 // --- Helper functions ---
 
 fn resolve_project_root(project_root: Option<&Path>) -> Result<PathBuf> {
-    let path = project_root
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| std::env::current_dir().expect("get cwd"));
+    let path = project_root.map_or_else(|| std::env::current_dir().expect("get cwd"), std::path::Path::to_path_buf);
     let canonical = path
         .canonicalize()
         .with_context(|| format!("resolving project root: {}", path.display()))?;
@@ -271,7 +265,7 @@ fn install_global_claude_hooks(settings_path: &Path) -> Result<()> {
 
     let mut hooks_config: HashMap<String, Vec<serde_json::Value>> = HashMap::new();
     for hook_entry in &hooks {
-        for event in hook_entry.events.iter() {
+        for event in hook_entry.events {
             let entry = json!({
                 "matcher": "",
                 "hooks": [{
@@ -509,7 +503,7 @@ fn register_rite_hooks(root: &Path, config: &Config) -> Result<()> {
         match crate::subprocess::ensure_rite_hook(&desc, &reviewer_args) {
             Ok((action, _)) => println!("Reviewer hook for @{reviewer_agent} {action}"),
             Err(e) => {
-                eprintln!("Warning: failed to register reviewer hook for @{reviewer_agent}: {e}")
+                eprintln!("Warning: failed to register reviewer hook for @{reviewer_agent}: {e}");
             }
         }
     }
@@ -538,8 +532,7 @@ fn check_rite_hooks(root: &Path, config: &Config, issues: &mut Vec<String>) -> R
     let has_router = hooks.iter().any(|h| {
         h["condition"]["claim"]
             .as_str()
-            .map(|c| c == router_claim)
-            .unwrap_or(false)
+            .is_some_and(|c| c == router_claim)
     });
 
     if !has_router {
@@ -551,8 +544,7 @@ fn check_rite_hooks(root: &Path, config: &Config, issues: &mut Vec<String>) -> R
         let has_reviewer = hooks.iter().any(|h| {
             h["condition"]["mention"]
                 .as_str()
-                .map(|m| m == mention_name)
-                .unwrap_or(false)
+                .is_some_and(|m| m == mention_name)
         });
 
         if !has_reviewer {

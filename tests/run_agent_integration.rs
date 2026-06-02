@@ -61,8 +61,7 @@ fn run_agent_defaults_to_auto_runner() {
     // Should NOT say "Unsupported runner" — auto is the default
     assert!(
         !stderr.contains("Unsupported runner"),
-        "auto should be the default runner, got stderr: {}",
-        stderr
+        "auto should be the default runner, got stderr: {stderr}"
     );
 }
 
@@ -171,20 +170,17 @@ EVENTS
     // Verify tool call displayed
     assert!(
         stdout.contains("read"),
-        "should show tool name 'read', got: {}",
-        stdout
+        "should show tool name 'read', got: {stdout}"
     );
     // Verify tool result displayed
     assert!(
         stdout.contains("test file contents here"),
-        "should show tool result, got: {}",
-        stdout
+        "should show tool result, got: {stdout}"
     );
     // Verify assistant text displayed
     assert!(
         stdout.contains("The file contains test data."),
-        "should show assistant response, got: {}",
-        stdout
+        "should show assistant response, got: {stdout}"
     );
 }
 
@@ -243,8 +239,7 @@ EVENTS
     // Verify error result displayed
     assert!(
         stdout.contains("ENOENT"),
-        "should show error text, got: {}",
-        stdout
+        "should show error text, got: {stdout}"
     );
 }
 

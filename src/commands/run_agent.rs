@@ -22,17 +22,17 @@ impl OutputFormat {
     fn detect(explicit: Option<&str>) -> Self {
         if let Some(fmt) = explicit {
             return match fmt {
-                "pretty" => OutputFormat::Pretty,
-                "text" => OutputFormat::Text,
-                _ => OutputFormat::Text,
+                "pretty" => Self::Pretty,
+                "text" => Self::Text,
+                _ => Self::Text,
             };
         }
 
         if let Ok(env) = std::env::var("FORMAT") {
             if env == "pretty" {
-                return OutputFormat::Pretty;
+                return Self::Pretty;
             } else if env == "text" {
-                return OutputFormat::Text;
+                return Self::Text;
             }
         }
 
@@ -40,16 +40,16 @@ impl OutputFormat {
         // The TERM check handles cases where we're in a PTY (like vessel spawn)
         // but stdout appears as a pipe due to stream processing
         if std::io::stdout().is_terminal() {
-            OutputFormat::Pretty
+            Self::Pretty
         } else if let Ok(term) = std::env::var("TERM") {
             // If TERM is set and not "dumb", treat as a terminal
             if !term.is_empty() && term != "dumb" {
-                OutputFormat::Pretty
+                Self::Pretty
             } else {
-                OutputFormat::Text
+                Self::Text
             }
         } else {
-            OutputFormat::Text
+            Self::Text
         }
     }
 }
@@ -153,7 +153,7 @@ pub fn run_agent(
     let (mut child, tool_name) = match effective_runner {
         "claude" => {
             // Translate model format for Claude Code
-            let claude_model = model.map(|m| parse_model_for_claude(m));
+            let claude_model = model.map(parse_model_for_claude);
             (
                 spawn_claude(prompt, claude_model.as_deref(), skip_permissions)?,
                 "claude",
@@ -162,8 +162,7 @@ pub fn run_agent(
         "pi" => (spawn_pi(prompt, model)?, "pi"),
         _ => {
             return Err(anyhow!(
-                "Unsupported runner: {}. Supported: 'auto', 'pi', 'claude'.",
-                effective_runner
+                "Unsupported runner: {effective_runner}. Supported: 'auto', 'pi', 'claude'."
             ));
         }
     };
@@ -254,14 +253,12 @@ fn spawn_claude(
 }
 
 fn home_dir() -> std::path::PathBuf {
-    std::env::var("HOME")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| std::path::PathBuf::from("/root"))
+    std::env::var("HOME").map_or_else(|_| std::path::PathBuf::from("/root"), std::path::PathBuf::from)
 }
 
 /// Spawn Pi agent with JSON mode output.
 ///
-/// Pi is a multi-provider agent harness supporting Anthropic, OpenAI, Google, etc.
+/// Pi is a multi-provider agent harness supporting Anthropic, `OpenAI`, Google, etc.
 /// Model format: "provider/model-id" (e.g. "openai/gpt-4o", "google/gemini-2.5-pro")
 /// or just "model-id" with --provider flag.
 fn spawn_pi(prompt: &str, model: Option<&str>) -> anyhow::Result<Child> {
@@ -360,11 +357,10 @@ fn process_output(
                     if line.trim().is_empty() {
                         continue;
                     }
-                    if let Ok(event) = serde_json::from_str::<Value>(&line) {
-                        if event_handler(&event, style) {
+                    if let Ok(event) = serde_json::from_str::<Value>(&line)
+                        && event_handler(&event, style) {
                             result_received = true;
                         }
-                    }
                 }
 
                 if result_received || status.success() {
@@ -372,9 +368,9 @@ fn process_output(
                 } else {
                     let code = status.code().unwrap_or(-1);
                     let error_msg = if let Some(err) = detected_error {
-                        format!("{} (exit code {})", err, code)
+                        format!("{err} (exit code {code})")
                     } else {
-                        format!("Agent exited with code {}", code)
+                        format!("Agent exited with code {code}")
                     };
                     return Err(ExitError::ToolFailed {
                         tool: tool_name.to_string(),
@@ -397,12 +393,11 @@ fn process_output(
             if line.trim().is_empty() {
                 continue;
             }
-            if let Ok(event) = serde_json::from_str::<Value>(&line) {
-                if event_handler(&event, style) {
+            if let Ok(event) = serde_json::from_str::<Value>(&line)
+                && event_handler(&event, style) {
                     result_received = true;
                     result_time = Some(Instant::now());
                 }
-            }
         }
 
         // Process stderr
@@ -411,7 +406,7 @@ fn process_output(
                 detected_error = Some(err.clone());
                 eprintln!("\n{}FATAL:{} {}", style.yellow, style.reset, err);
             } else if line.contains("Error") || line.contains("error") {
-                eprintln!("{}", line);
+                eprintln!("{line}");
             }
         }
 
@@ -515,18 +510,18 @@ fn print_claude_user_event(event: &Value, style: &Style) {
 // In pretty mode, we buffer the full text block and render it as markdown
 // when the text_end event arrives, rather than streaming char-by-char.
 thread_local! {
-    static PI_TEXT_BUFFER: RefCell<String> = RefCell::new(String::new());
+    static PI_TEXT_BUFFER: RefCell<String> = const { RefCell::new(String::new()) };
 }
 
 /// Handle a Pi JSON mode event. Returns true if this is a completion event.
 ///
 /// Pi JSONL event types:
 /// - session: session metadata
-/// - agent_start/agent_end: session lifecycle
-/// - turn_start/turn_end: turn lifecycle
-/// - message_start/message_end: message boundaries
-/// - message_update: streaming content (text_delta, toolcall_start/end, thinking_*)
-/// - tool_execution_start/end: tool execution with results
+/// - `agent_start/agent_end`: session lifecycle
+/// - `turn_start/turn_end`: turn lifecycle
+/// - `message_start/message_end`: message boundaries
+/// - `message_update`: streaming content (`text_delta`, `toolcall_start/end`, thinking_*)
+/// - `tool_execution_start/end`: tool execution with results
 fn handle_pi_event(event: &Value, style: &Style) -> bool {
     let event_type = event.get("type").and_then(|t| t.as_str()).unwrap_or("");
 
@@ -561,20 +556,23 @@ fn print_pi_text_delta(ae: &Value, style: &Style) {
         if delta.is_empty() {
             return;
         }
-        if !style.bold.is_empty() {
-            // Pretty mode: buffer text for markdown rendering at text_end
-            PI_TEXT_BUFFER.with(|buf| buf.borrow_mut().push_str(delta));
-        } else {
+        if style.bold.is_empty() {
             // Text mode: stream inline as before
-            print!("{}", delta);
+            print!("{delta}");
             use std::io::Write;
             let _ = std::io::stdout().flush();
+        } else {
+            // Pretty mode: buffer text for markdown rendering at text_end
+            PI_TEXT_BUFFER.with(|buf| buf.borrow_mut().push_str(delta));
         }
     }
 }
 
 fn print_pi_text_end(_ae: &Value, style: &Style) {
-    if !style.bold.is_empty() {
+    if style.bold.is_empty() {
+        // Text mode: just finish the line
+        println!();
+    } else {
         // Pretty mode: render buffered text as markdown
         PI_TEXT_BUFFER.with(|buf| {
             let mut text = buf.borrow_mut();
@@ -586,9 +584,6 @@ fn print_pi_text_end(_ae: &Value, style: &Style) {
             }
             text.clear();
         });
-    } else {
-        // Text mode: just finish the line
-        println!();
     }
 }
 
@@ -600,14 +595,13 @@ fn print_pi_toolcall_start(ae: &Value, style: &Style) {
         .and_then(|c| c.as_array())
     {
         for item in content {
-            if item.get("type").and_then(|t| t.as_str()) == Some("toolCall") {
-                if let Some(name) = item.get("name").and_then(|n| n.as_str()) {
+            if item.get("type").and_then(|t| t.as_str()) == Some("toolCall")
+                && let Some(name) = item.get("name").and_then(|n| n.as_str()) {
                     println!(
                         "\n{} {}{}{}",
                         style.tool_arrow, style.bold_bright, name, style.reset
                     );
                 }
-            }
         }
     }
 }
@@ -623,7 +617,7 @@ fn print_pi_toolcall_end(ae: &Value, style: &Style) {
 
 /// Format tool call arguments based on tool type.
 /// - bash: show the full command
-/// - edit: show file path and a unified diff of old_string → new_string
+/// - edit: show file path and a unified diff of `old_string` → `new_string`
 /// - read: show the file path with offset/limit
 /// - write: show the file path
 /// - other tools: truncated JSON (default)
@@ -663,10 +657,10 @@ fn print_tool_args(name: &str, args: &Value, style: &Style) {
             if let Some(path) = path {
                 let short = path.rsplit('/').next().unwrap_or(path);
                 let mut extra = Vec::new();
-                if let Some(off) = args.get("offset").and_then(|o| o.as_u64()) {
+                if let Some(off) = args.get("offset").and_then(serde_json::Value::as_u64) {
                     extra.push(format!(":{off}"));
                 }
-                if let Some(lim) = args.get("limit").and_then(|l| l.as_u64()) {
+                if let Some(lim) = args.get("limit").and_then(serde_json::Value::as_u64) {
                     extra.push(format!("+{lim}"));
                 }
                 println!("  {}{}{}{}", style.dim, short, extra.join(""), style.reset);
@@ -696,7 +690,7 @@ fn print_tool_args(name: &str, args: &Value, style: &Style) {
 
 /// Print a compact inline diff of old → new text.
 /// Shows removed lines in red with - prefix and added lines in green with + prefix.
-/// Limits output to MAX_DIFF_LINES lines total.
+/// Limits output to `MAX_DIFF_LINES` lines total.
 fn print_inline_diff(old: &str, new: &str, style: &Style) {
     const MAX_DIFF_LINES: usize = 12;
     let old_lines: Vec<&str> = old.lines().collect();
@@ -747,7 +741,7 @@ fn print_pi_tool_result(event: &Value, style: &Style) {
         .unwrap_or("?");
     let is_error = event
         .get("isError")
-        .and_then(|e| e.as_bool())
+        .and_then(serde_json::Value::as_bool)
         .unwrap_or(false);
 
     // Extract result text
@@ -958,7 +952,7 @@ mod tests {
         let input = "**bold** `code` ```rust\nlet x = 1;\n```\n## Header";
         let output = format_markdown(input, &TEXT_STYLE);
         assert!(!output.contains("**"));
-        assert!(!output.contains("`"));
+        assert!(!output.contains('`'));
         assert!(!output.contains("```"));
         // Headers on their own line should have the ## removed
         assert!(!output.contains("## Header"));

@@ -17,7 +17,7 @@ use crate::subprocess::Tool;
 // Route types
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RouteType {
     Dev,
     Bone,
@@ -41,6 +41,7 @@ pub struct Route {
 /// Parse a message body and return a Route describing how to handle it.
 ///
 /// Supports ! prefix commands (new convention) and legacy colon prefixes.
+#[must_use] 
 pub fn route_message(body: &str) -> Route {
     let trimmed = body.trim();
 
@@ -50,7 +51,7 @@ pub fn route_message(body: &str) -> Route {
     if let Some(rest) = strip_prefix_ci(trimmed, "!oneshot") {
         return Route {
             route_type: RouteType::Oneshot,
-            body: rest.to_string(),
+            body: rest,
             model: None,
         };
     }
@@ -59,7 +60,7 @@ pub fn route_message(body: &str) -> Route {
     if let Some(rest) = strip_prefix_ci(trimmed, "!mission") {
         return Route {
             route_type: RouteType::Mission,
-            body: rest.to_string(),
+            body: rest,
             model: None,
         };
     }
@@ -68,7 +69,7 @@ pub fn route_message(body: &str) -> Route {
     if let Some(rest) = strip_prefix_ci(trimmed, "!leads") {
         return Route {
             route_type: RouteType::Dev,
-            body: rest.to_string(),
+            body: rest,
             model: None,
         };
     }
@@ -77,7 +78,7 @@ pub fn route_message(body: &str) -> Route {
     if let Some(rest) = strip_prefix_ci(trimmed, "!dev") {
         return Route {
             route_type: RouteType::Dev,
-            body: rest.to_string(),
+            body: rest,
             model: None,
         };
     }
@@ -86,7 +87,7 @@ pub fn route_message(body: &str) -> Route {
     if let Some(rest) = strip_prefix_ci(trimmed, "!bone") {
         return Route {
             route_type: RouteType::Bone,
-            body: rest.to_string(),
+            body: rest,
             model: None,
         };
     }
@@ -94,7 +95,7 @@ pub fn route_message(body: &str) -> Route {
     if let Some(rest) = strip_prefix_ci(trimmed, "!bead") {
         return Route {
             route_type: RouteType::Bone,
-            body: rest.to_string(),
+            body: rest,
             model: None,
         };
     }
@@ -112,7 +113,7 @@ pub fn route_message(body: &str) -> Route {
     if let Some(rest) = strip_prefix_ci(trimmed, "!bigq") {
         return Route {
             route_type: RouteType::Question,
-            body: rest.to_string(),
+            body: rest,
             model: Some("opus".into()),
         };
     }
@@ -121,7 +122,7 @@ pub fn route_message(body: &str) -> Route {
     if let Some(rest) = strip_prefix_ci(trimmed, "!qq") {
         return Route {
             route_type: RouteType::Question,
-            body: rest.to_string(),
+            body: rest,
             model: Some("haiku".into()),
         };
     }
@@ -130,7 +131,7 @@ pub fn route_message(body: &str) -> Route {
     if let Some(rest) = strip_prefix_ci(trimmed, "!q") {
         return Route {
             route_type: RouteType::Question,
-            body: rest.to_string(),
+            body: rest,
             model: Some("sonnet".into()),
         };
     }
@@ -150,7 +151,7 @@ pub fn route_message(body: &str) -> Route {
     if let Some(rest) = strip_prefix_colon_ci(trimmed, "big q") {
         return Route {
             route_type: RouteType::Question,
-            body: rest.to_string(),
+            body: rest,
             model: Some("opus".into()),
         };
     }
@@ -159,7 +160,7 @@ pub fn route_message(body: &str) -> Route {
     if let Some(rest) = strip_prefix_colon_ci(trimmed, "qq") {
         return Route {
             route_type: RouteType::Question,
-            body: rest.to_string(),
+            body: rest,
             model: Some("haiku".into()),
         };
     }
@@ -168,7 +169,7 @@ pub fn route_message(body: &str) -> Route {
     if let Some(rest) = strip_prefix_colon_ci(trimmed, "q") {
         return Route {
             route_type: RouteType::Question,
-            body: rest.to_string(),
+            body: rest,
             model: Some("sonnet".into()),
         };
     }
@@ -312,7 +313,7 @@ struct Transcript {
 }
 
 impl Transcript {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self {
             entries: Vec::new(),
         }
@@ -383,7 +384,7 @@ fn now_iso() -> String {
     format!("{year:04}-{month:02}-{day:02}T{h:02}:{m:02}:{s:02}Z")
 }
 
-fn days_to_ymd(days: u64) -> (u64, u64, u64) {
+const fn days_to_ymd(days: u64) -> (u64, u64, u64) {
     // Compute year/month/day from days since 1970-01-01
     // Algorithm from http://howardhinnant.github.io/date_algorithms.html
     let z = days + 719468;
@@ -489,29 +490,25 @@ impl Responder {
             .ok()
             .and_then(|(p, _)| Config::load(&p).ok());
 
-        let project = config.as_ref().map(|c| c.channel()).unwrap_or_default();
+        let project = config.as_ref().map(super::super::config::Config::channel).unwrap_or_default();
         let default_agent = config
             .as_ref()
-            .map(|c| c.default_agent())
+            .map(super::super::config::Config::default_agent)
             .unwrap_or_default();
 
         let responder_config = config.as_ref().and_then(|c| c.agents.responder.clone());
 
         let default_model = model.unwrap_or_else(|| {
             responder_config
-                .as_ref()
-                .map(|r| r.model.clone())
-                .unwrap_or_else(|| "sonnet".into())
+                .as_ref().map_or_else(|| "sonnet".into(), |r| r.model.clone())
         });
         let wait_timeout = responder_config
             .as_ref()
-            .map(|r| r.wait_timeout)
-            .unwrap_or(300);
-        let claude_timeout = responder_config.as_ref().map(|r| r.timeout).unwrap_or(300);
+            .map_or(300, |r| r.wait_timeout);
+        let claude_timeout = responder_config.as_ref().map_or(300, |r| r.timeout);
         let max_conversations = responder_config
             .as_ref()
-            .map(|r| r.max_conversations)
-            .unwrap_or(10);
+            .map_or(10, |r| r.max_conversations);
 
         let multi_lead_config = config
             .as_ref()
@@ -519,9 +516,8 @@ impl Responder {
             .and_then(|d| d.multi_lead.clone());
         let multi_lead_enabled = multi_lead_config
             .as_ref()
-            .map(|m| m.enabled)
-            .unwrap_or(false);
-        let multi_lead_max_leads = multi_lead_config.as_ref().map(|m| m.max_leads).unwrap_or(3);
+            .is_some_and(|m| m.enabled);
+        let multi_lead_max_leads = multi_lead_config.as_ref().map_or(3, |m| m.max_leads);
 
         // Resolve agent name: CLI flag > config default
         // Note: we intentionally ignore AGENT/RITE_AGENT here because in hook context
@@ -554,7 +550,7 @@ impl Responder {
 
         let spawn_env = config
             .as_ref()
-            .map(|c| c.resolved_env())
+            .map(super::super::config::Config::resolved_env)
             .unwrap_or_default();
 
         Ok(Self {
@@ -671,9 +667,7 @@ impl Responder {
     /// Resolve a model string through config tiers, falling through to passthrough.
     fn resolve_model(&self, model: &str) -> String {
         self.config
-            .as_ref()
-            .map(|c| c.resolve_model(model))
-            .unwrap_or_else(|| model.to_string())
+            .as_ref().map_or_else(|| model.to_string(), |c| c.resolve_model(model))
     }
 
     // --- Run agent ---
@@ -917,12 +911,9 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
             let ttl = format!("{}s", self.wait_timeout + 60);
             self.rite_set_status("Waiting for follow-up", &ttl);
 
-            let follow_up = match self.wait_for_follow_up() {
-                Some(msg) => msg,
-                None => {
-                    eprintln!("No follow-up received, ending conversation");
-                    break;
-                }
+            let follow_up = if let Some(msg) = self.wait_for_follow_up() { msg } else {
+                eprintln!("No follow-up received, ending conversation");
+                break;
             };
 
             eprintln!(
@@ -1034,7 +1025,6 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
     fn handle_dev(&self, body: &str, mission_bone: Option<&str>) -> anyhow::Result<()> {
         // Parse optional count from body (e.g., "!dev 3" → 3, "!dev" → 1)
         let requested: u32 = body
-            .trim()
             .split_whitespace()
             .next()
             .and_then(|s| s.parse().ok())
@@ -1059,7 +1049,7 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
             }
 
             let lead_name = format!("{}/{}", self.agent, slot);
-            let claim_uri = format!("agent://{}", lead_name);
+            let claim_uri = format!("agent://{lead_name}");
 
             // Try to stake the slot claim — atomic admission control
             let claim_result = Tool::new("rite")
@@ -1123,7 +1113,7 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
                         "--agent".into(),
                         lead_name.clone(),
                     ]);
-                    let spawn_arg_refs: Vec<&str> = spawn_args.iter().map(|s| s.as_str()).collect();
+                    let spawn_arg_refs: Vec<&str> = spawn_args.iter().map(std::string::String::as_str).collect();
                     let spawn_result = Tool::new("vessel").args(&spawn_arg_refs).run();
 
                     match spawn_result {
@@ -1268,12 +1258,9 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
             let ttl = format!("{}s", self.wait_timeout + 60);
             self.rite_set_status("Waiting for follow-up", &ttl);
 
-            let follow_up = match self.wait_for_follow_up() {
-                Some(msg) => msg,
-                None => {
-                    eprintln!("No follow-up received, ending conversation");
-                    break;
-                }
+            let follow_up = if let Some(msg) = self.wait_for_follow_up() { msg } else {
+                eprintln!("No follow-up received, ending conversation");
+                break;
             };
 
             eprintln!(
@@ -1444,7 +1431,7 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
                         if let Some(ref id) = msg.id
                             && !self.stake_message_claim(id)
                         {
-                            eprintln!("Drain: message {} already claimed, skipping", id);
+                            eprintln!("Drain: message {id} already claimed, skipping");
                             continue;
                         }
                         self.handle_dev(&route.body, None)?;
@@ -1454,7 +1441,7 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
                         if let Some(ref id) = msg.id
                             && !self.stake_message_claim(id)
                         {
-                            eprintln!("Drain: message {} already claimed, skipping", id);
+                            eprintln!("Drain: message {id} already claimed, skipping");
                             continue;
                         }
                         self.handle_mission(&route.body)?;
@@ -1598,7 +1585,7 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
         if let Some(ref msg_id) = trigger_message.id
             && !self.stake_message_claim(msg_id)
         {
-            eprintln!("Message {} already being handled, skipping", msg_id);
+            eprintln!("Message {msg_id} already being handled, skipping");
             self.cleanup();
             return Ok(());
         }
@@ -1665,7 +1652,7 @@ fn extract_bone_id(output: &str) -> Option<String> {
 // Allow BusMessage to be "cloned" for follow-up tracking
 impl BusMessage {
     fn clone_for_follow_up(&self) -> Self {
-        BusMessage {
+        Self {
             id: self.id.clone(),
             agent: self.agent.clone(),
             body: self.body.clone(),
@@ -1958,7 +1945,7 @@ mod tests {
             strip_prefix_ci("!DEV fix bug", "!dev"),
             Some("fix bug".into())
         );
-        assert_eq!(strip_prefix_ci("!dev", "!dev"), Some("".into()));
+        assert_eq!(strip_prefix_ci("!dev", "!dev"), Some(String::new()));
         assert_eq!(strip_prefix_ci("!devloop", "!dev"), None); // word boundary
     }
 
@@ -1966,16 +1953,16 @@ mod tests {
     fn skip_project_agent_messages() {
         // Test project-agent prefix matching
         let project = "edict";
-        let project_prefix = format!("{}-", project);
+        let project_prefix = format!("{project}-");
 
         // Should match project agents
-        assert!(format!("edict-dev").starts_with(&project_prefix));
-        assert!(format!("edict-security").starts_with(&project_prefix));
-        assert!(format!("edict-dev/worker-suffix").starts_with(&project_prefix));
+        assert!("edict-dev".to_string().starts_with(&project_prefix));
+        assert!("edict-security".to_string().starts_with(&project_prefix));
+        assert!("edict-dev/worker-suffix".to_string().starts_with(&project_prefix));
 
         // Should not match external agents
-        assert!(!format!("alice").starts_with(&project_prefix));
-        assert!(!format!("alice-dev").starts_with(&project_prefix));
-        assert!(!format!("myproject-dev").starts_with(&project_prefix));
+        assert!(!"alice".to_string().starts_with(&project_prefix));
+        assert!(!"alice-dev".to_string().starts_with(&project_prefix));
+        assert!(!"myproject-dev".to_string().starts_with(&project_prefix));
     }
 }

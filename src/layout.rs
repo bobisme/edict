@@ -45,10 +45,11 @@ impl Layout {
     ///   root two levels up carries maw's `.manifold` metadata dir.
     /// - Everything else (a fresh checkout, or a root-layout repo with
     ///   `.maw/workspaces/`) is the root layout.
-    pub fn detect(project_root: &Path) -> Layout {
+    #[must_use] 
+    pub fn detect(project_root: &Path) -> Self {
         // Standing at a maw bare repo root: ws/default is the trunk worktree.
         if project_root.join("ws/default").is_dir() {
-            return Layout::Bare;
+            return Self::Bare;
         }
         // Standing inside the bare trunk (…/ws/default): the bare repo root is two
         // levels up and carries the maw `.manifold` metadata dir.
@@ -59,65 +60,72 @@ impl Layout {
             && let Some(bare_root) = project_root.parent().and_then(|p| p.parent())
             && bare_root.join(".manifold").is_dir()
         {
-            return Layout::Bare;
+            return Self::Bare;
         }
-        Layout::Root
+        Self::Root
     }
 
     /// True for the new root layout.
-    pub fn is_root(self) -> bool {
-        matches!(self, Layout::Root)
+    #[must_use] 
+    pub const fn is_root(self) -> bool {
+        matches!(self, Self::Root)
     }
 
     /// Command prefix for running a command in the trunk / default workspace
     /// context, including a trailing space when non-empty.
     ///
     /// Bare needs `maw exec default -- `; Root runs at the root with no prefix.
-    pub fn default_prefix(self) -> &'static str {
+    #[must_use] 
+    pub const fn default_prefix(self) -> &'static str {
         match self {
-            Layout::Bare => "maw exec default -- ",
-            Layout::Root => "",
+            Self::Bare => "maw exec default -- ",
+            Self::Root => "",
         }
     }
 
     /// `bn` invocation for the trunk context (`bn` always runs against the trunk).
-    pub fn bn_cmd(self) -> &'static str {
+    #[must_use] 
+    pub const fn bn_cmd(self) -> &'static str {
         match self {
-            Layout::Bare => "maw exec default -- bn",
-            Layout::Root => "bn",
+            Self::Bare => "maw exec default -- bn",
+            Self::Root => "bn",
         }
     }
 
     /// `seal` invocation for the trunk context (e.g. `seal reviews mark-merged`,
     /// which the lead runs against the trunk after a merge).
-    pub fn seal_default_cmd(self) -> &'static str {
+    #[must_use] 
+    pub const fn seal_default_cmd(self) -> &'static str {
         match self {
-            Layout::Bare => "maw exec default -- seal",
-            Layout::Root => "seal",
+            Self::Bare => "maw exec default -- seal",
+            Self::Root => "seal",
         }
     }
 
     /// Filesystem path to the trunk / default working copy, relative to the
     /// project root.
-    pub fn trunk_path(self) -> &'static str {
+    #[must_use] 
+    pub const fn trunk_path(self) -> &'static str {
         match self {
-            Layout::Bare => "ws/default",
-            Layout::Root => ".",
+            Self::Bare => "ws/default",
+            Self::Root => ".",
         }
     }
 
     /// Path prefix under which agent workspaces live, with a trailing slash:
     /// `ws/` (bare) or `.maw/workspaces/` (root). Compose with a workspace name,
     /// e.g. `format!("{}{}", layout.ws_prefix(), name)`.
-    pub fn ws_prefix(self) -> &'static str {
+    #[must_use] 
+    pub const fn ws_prefix(self) -> &'static str {
         match self {
-            Layout::Bare => "ws/",
-            Layout::Root => ".maw/workspaces/",
+            Self::Bare => "ws/",
+            Self::Root => ".maw/workspaces/",
         }
     }
 
     /// Filesystem path to a named workspace's working directory, relative to the
     /// project root. The trunk (`default`) maps to [`trunk_path`](Self::trunk_path).
+    #[must_use] 
     pub fn ws_path(self, name: &str) -> String {
         if name == "default" {
             return self.trunk_path().to_string();
@@ -139,10 +147,11 @@ impl Layout {
     /// prefix so the command name is preserved rather than left with a leading
     /// space, and rewrite the named-workspace tokens before the `ws/default/`
     /// trunk token.
+    #[must_use] 
     pub fn rewrite_prompt(self, s: String) -> String {
         match self {
-            Layout::Bare => s,
-            Layout::Root => s
+            Self::Bare => s,
+            Self::Root => s
                 // Trunk-context commands lose their prefix.
                 .replace("maw exec default -- bn", "bn")
                 .replace("maw exec default -- seal", "seal")

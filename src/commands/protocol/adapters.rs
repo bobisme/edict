@@ -2,7 +2,7 @@
 //!
 //! Tolerant parsing for rite claims, maw workspaces, bn show, and seal review.
 //! Each adapter handles optional/new fields gracefully and produces clear
-//! parse errors. ProtocolContext consumes these instead of ad-hoc parsing.
+//! parse errors. `ProtocolContext` consumes these instead of ad-hoc parsing.
 
 use serde::Deserialize;
 
@@ -31,6 +31,7 @@ pub struct Claim {
 
 impl Claim {
     /// Extract bone IDs from `bone://project/bd-xxx` patterns.
+    #[must_use] 
     pub fn bone_ids(&self) -> Vec<&str> {
         self.patterns
             .iter()
@@ -42,6 +43,7 @@ impl Claim {
     }
 
     /// Extract workspace names from `workspace://project/ws-name` patterns.
+    #[must_use] 
     pub fn workspace_names(&self) -> Vec<&str> {
         self.patterns
             .iter()
@@ -174,10 +176,12 @@ pub struct ReviewVote {
 }
 
 impl ReviewVote {
+    #[must_use] 
     pub fn is_lgtm(&self) -> bool {
         self.vote == "lgtm"
     }
 
+    #[must_use] 
     pub fn is_block(&self) -> bool {
         self.vote == "block"
     }
@@ -217,10 +221,10 @@ pub enum AdapterError {
 impl std::fmt::Display for AdapterError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            AdapterError::ParseFailed { tool, detail } => {
+            Self::ParseFailed { tool, detail } => {
                 write!(f, "failed to parse {tool} output: {detail}")
             }
-            AdapterError::NotFound { tool, detail } => {
+            Self::NotFound { tool, detail } => {
                 write!(f, "{tool}: {detail}")
             }
         }

@@ -37,7 +37,8 @@ pub enum ReviewGateStatus {
 
 impl ReviewGateDecision {
     /// Convert status to string for output.
-    pub fn status_str(&self) -> &'static str {
+    #[must_use] 
+    pub const fn status_str(&self) -> &'static str {
         match self.status {
             ReviewGateStatus::Approved => "approved",
             ReviewGateStatus::Blocked => "blocked",
@@ -51,13 +52,14 @@ impl ReviewGateDecision {
 /// Returns the canonical gate decision and diagnostics.
 ///
 /// Logic:
-/// 1. If no votes and required reviewers not empty → NeedsReview
+/// 1. If no votes and required reviewers not empty → `NeedsReview`
 /// 2. For each required reviewer:
-///    - Track their latest vote (by voted_at timestamp)
-///    - If no vote → add to missing_approvals
-/// 3. If any required reviewer's latest vote is "block" → Blocked, add to newer_block_after_lgtm
+///    - Track their latest vote (by `voted_at` timestamp)
+///    - If no vote → add to `missing_approvals`
+/// 3. If any required reviewer's latest vote is "block" → Blocked, add to `newer_block_after_lgtm`
 /// 4. If all required reviewers have voted lgtm and no blocks → Approved
-/// 5. Otherwise → NeedsReview
+/// 5. Otherwise → `NeedsReview`
+#[must_use] 
 pub fn evaluate_review_gate(
     review: &ReviewDetail,
     required_reviewers: &[String],
@@ -85,11 +87,9 @@ pub fn evaluate_review_gate(
                 // Lexicographic string comparison works correctly for ISO 8601/RFC3339 timestamps
                 if let (Some(existing_voted_at), Some(new_voted_at)) =
                     (&existing.voted_at, &vote.voted_at)
-                {
-                    if new_voted_at > existing_voted_at {
+                    && new_voted_at > existing_voted_at {
                         *existing = vote;
                     }
-                }
             })
             .or_insert(vote);
     }

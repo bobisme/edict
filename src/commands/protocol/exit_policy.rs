@@ -33,14 +33,14 @@ pub enum ProtocolExitCode {
 }
 
 impl From<ProtocolExitCode> for ExitCode {
-    fn from(code: ProtocolExitCode) -> ExitCode {
-        ExitCode::from(code as u8)
+    fn from(code: ProtocolExitCode) -> Self {
+        Self::from(code as u8)
     }
 }
 
 /// Error type for protocol commands that need to set a specific exit code.
 ///
-/// This integrates with the ExitError pattern in main.rs so that protocol
+/// This integrates with the `ExitError` pattern in main.rs so that protocol
 /// commands can signal operational failures (exit 1) via the standard
 /// error-handling path.
 #[derive(Debug, thiserror::Error)]
@@ -61,7 +61,8 @@ impl ProtocolExitError {
         }
     }
 
-    /// Convert to an ExitError for main.rs error handling.
+    /// Convert to an `ExitError` for main.rs error handling.
+    #[must_use] 
     pub fn into_exit_error(self) -> crate::error::ExitError {
         crate::error::ExitError::new(self.code as u8, self.to_string())
     }
@@ -80,7 +81,8 @@ pub struct ProtocolResult {
 impl ProtocolResult {
     /// Command succeeded — guidance is ready to render.
     #[allow(dead_code)]
-    pub fn success(guidance: ProtocolGuidance) -> Self {
+    #[must_use] 
+    pub const fn success(guidance: ProtocolGuidance) -> Self {
         Self {
             exit_code: ProtocolExitCode::Success,
             guidance: Some(guidance),
@@ -90,7 +92,8 @@ impl ProtocolResult {
     /// Operational error — no guidance produced.
     /// The error message will be written to stderr by the caller.
     #[allow(dead_code)]
-    pub fn operational_error() -> Self {
+    #[must_use] 
+    pub const fn operational_error() -> Self {
         Self {
             exit_code: ProtocolExitCode::OperationalError,
             guidance: None,
@@ -98,13 +101,14 @@ impl ProtocolResult {
     }
 }
 
-/// All ProtocolStatus variants map to exit code 0 (Success).
+/// All `ProtocolStatus` variants map to exit code 0 (Success).
 ///
 /// This is the key design decision: blocked, needs-review, etc. are all
 /// valid guidance states, not errors. The agent reads the status field
 /// in stdout to decide what to do next.
 #[allow(dead_code)]
-pub fn exit_code_for_status(_status: ProtocolStatus) -> ProtocolExitCode {
+#[must_use] 
+pub const fn exit_code_for_status(_status: ProtocolStatus) -> ProtocolExitCode {
     // Every status is a successful guidance output.
     // Agents branch on the status field, not the exit code.
     ProtocolExitCode::Success
@@ -130,20 +134,20 @@ pub fn render_and_exit(
     format: OutputFormat,
 ) -> anyhow::Result<ProtocolExitCode> {
     let output = super::render::render(guidance, format)
-        .map_err(|e| anyhow::anyhow!("render error: {}", e))?;
-    println!("{}", output);
+        .map_err(|e| anyhow::anyhow!("render error: {e}"))?;
+    println!("{output}");
     Ok(exit_code_for_status(guidance.status))
 }
 
 /// Render guidance to stdout and return Ok(()).
 ///
 /// Convenience wrapper around `render_and_exit` for commands that return
-/// `anyhow::Result<()>`. All ProtocolStatus variants produce exit 0.
+/// `anyhow::Result<()>`. All `ProtocolStatus` variants produce exit 0.
 /// Operational errors should use `ProtocolExitError` instead.
 pub fn render_guidance(guidance: &ProtocolGuidance, format: OutputFormat) -> anyhow::Result<()> {
     let output = super::render::render(guidance, format)
-        .map_err(|e| anyhow::anyhow!("render error: {}", e))?;
-    println!("{}", output);
+        .map_err(|e| anyhow::anyhow!("render error: {e}"))?;
+    println!("{output}");
     Ok(())
 }
 
@@ -168,8 +172,7 @@ mod tests {
             assert_eq!(
                 exit_code_for_status(status),
                 ProtocolExitCode::Success,
-                "status {:?} should map to Success",
-                status
+                "status {status:?} should map to Success"
             );
         }
     }

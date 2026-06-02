@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use crate::subprocess::Tool;
 
-/// Acquire the merge mutex (workspace://project/default claim).
+/// Acquire the merge mutex (<workspace://project/default> claim).
 ///
 /// Retries with exponential backoff + jitter: 2s, 4s, 8s, 15s.
 /// Returns Ok(()) on success, Err if timeout reached.
@@ -45,9 +45,7 @@ pub fn acquire_merge_mutex(
             _ => {
                 if start.elapsed() >= timeout {
                     anyhow::bail!(
-                        "merge mutex timeout after {}s — another agent holds workspace://{}/default",
-                        timeout_secs,
-                        project
+                        "merge mutex timeout after {timeout_secs}s — another agent holds workspace://{project}/default"
                     );
                 }
 
@@ -127,6 +125,6 @@ pub fn merge_workspace(ws: &str) -> anyhow::Result<()> {
 ///
 /// bones is event-sourced — no sync step needed. This is a no-op retained
 /// for call-site compatibility during migration.
-pub fn sync_bones() {
+pub const fn sync_bones() {
     // bn is event-sourced, no sync required
 }

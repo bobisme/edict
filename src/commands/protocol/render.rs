@@ -19,8 +19,8 @@ use std::fmt::Write;
 /// - `valid_for_sec`: How long this guidance remains fresh (in seconds)
 /// - `revalidate_cmd`: If present, run this command to refresh guidance
 ///
-/// Agents receiving stale guidance (snapshot_at + valid_for_sec < now) should
-/// re-run the revalidate_cmd to get fresh state before executing steps.
+/// Agents receiving stale guidance (`snapshot_at` + `valid_for_sec` < now) should
+/// re-run the `revalidate_cmd` to get fresh state before executing steps.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProtocolGuidance {
     /// Schema version for machine parsing
@@ -58,6 +58,7 @@ pub struct ProtocolGuidance {
 impl ProtocolGuidance {
     /// Create a new guidance with ready status.
     /// Default freshness: 300 seconds (5 minutes)
+    #[must_use] 
     pub fn new(command: &'static str) -> Self {
         Self {
             schema: "protocol-guidance.v1",
@@ -176,6 +177,7 @@ pub fn validate_guidance(guidance: &ProtocolGuidance) -> Result<(), ValidationEr
 ///
 /// Advice: Create workspace and stake claims before starting implementation.
 /// ```
+#[must_use] 
 pub fn render_text(guidance: &ProtocolGuidance) -> String {
     let mut out = String::new();
 
@@ -193,14 +195,14 @@ pub fn render_text(guidance: &ProtocolGuidance) -> String {
         writeln!(&mut out, "Bone: {} ({})", bone.id, bone.title).unwrap();
     }
     if let Some(ref ws) = guidance.workspace {
-        writeln!(&mut out, "Workspace: {}", ws).unwrap();
+        writeln!(&mut out, "Workspace: {ws}").unwrap();
     }
     if let Some(ref review) = guidance.review {
         writeln!(&mut out, "Review: {} ({})", review.review_id, review.status).unwrap();
     }
 
     if let Some(ref cmd) = guidance.revalidate_cmd {
-        writeln!(&mut out, "Revalidate: {}", cmd).unwrap();
+        writeln!(&mut out, "Revalidate: {cmd}").unwrap();
     }
 
     if !guidance.diagnostics.is_empty() {
@@ -218,7 +220,7 @@ pub fn render_text(guidance: &ProtocolGuidance) -> String {
             writeln!(&mut out, "Execution:").unwrap();
             let exec_output = super::executor::render_report(report, OutputFormat::Text);
             for line in exec_output.lines() {
-                writeln!(&mut out, "  {}", line).unwrap();
+                writeln!(&mut out, "  {line}").unwrap();
             }
         }
     } else if !guidance.steps.is_empty() {
@@ -232,7 +234,7 @@ pub fn render_text(guidance: &ProtocolGuidance) -> String {
 
     if let Some(ref advice) = guidance.advice {
         writeln!(&mut out).unwrap();
-        writeln!(&mut out, "Advice: {}", advice).unwrap();
+        writeln!(&mut out, "Advice: {advice}").unwrap();
     }
 
     out
@@ -247,6 +249,7 @@ pub fn render_json(guidance: &ProtocolGuidance) -> Result<String, serde_json::Er
 /// Render guidance as colored TTY output (for humans).
 ///
 /// Uses ANSI color codes for status, headers, and command highlighting.
+#[must_use] 
 pub fn render_pretty(guidance: &ProtocolGuidance) -> String {
     let mut out = String::new();
 
@@ -293,7 +296,7 @@ pub fn render_pretty(guidance: &ProtocolGuidance) -> String {
         .unwrap();
     }
     if let Some(ref ws) = guidance.workspace {
-        writeln!(&mut out, "{}Workspace:{} {}", bold, reset, ws).unwrap();
+        writeln!(&mut out, "{bold}Workspace:{reset} {ws}").unwrap();
     }
     if let Some(ref review) = guidance.review {
         writeln!(
@@ -305,42 +308,42 @@ pub fn render_pretty(guidance: &ProtocolGuidance) -> String {
     }
 
     if let Some(ref cmd) = guidance.revalidate_cmd {
-        writeln!(&mut out, "{}Revalidate:{} {}", bold, reset, cmd).unwrap();
+        writeln!(&mut out, "{bold}Revalidate:{reset} {cmd}").unwrap();
     }
 
     if !guidance.diagnostics.is_empty() {
-        writeln!(&mut out, "\n{}Diagnostics:{}", bold, reset).unwrap();
+        writeln!(&mut out, "\n{bold}Diagnostics:{reset}").unwrap();
         for diag in &guidance.diagnostics {
-            writeln!(&mut out, "  {}{}{}", red, diag, reset).unwrap();
+            writeln!(&mut out, "  {red}{diag}{reset}").unwrap();
         }
     }
 
     // Show execution results if --execute was used
     if guidance.executed {
         if let Some(ref report) = guidance.execution_report {
-            writeln!(&mut out, "\n{}Execution:{}", bold, reset).unwrap();
+            writeln!(&mut out, "\n{bold}Execution:{reset}").unwrap();
             let exec_output = super::executor::render_report(report, OutputFormat::Pretty);
             for line in exec_output.lines() {
-                writeln!(&mut out, "  {}", line).unwrap();
+                writeln!(&mut out, "  {line}").unwrap();
             }
         }
     } else if !guidance.steps.is_empty() {
         // Show steps only if not executed
-        writeln!(&mut out, "\n{}Steps:{}", bold, reset).unwrap();
+        writeln!(&mut out, "\n{bold}Steps:{reset}").unwrap();
         for (i, step) in guidance.steps.iter().enumerate() {
             writeln!(&mut out, "  {}. {}", i + 1, step).unwrap();
         }
     }
 
     if let Some(ref advice) = guidance.advice {
-        writeln!(&mut out, "\n{}Advice:{} {}", bold, reset, advice).unwrap();
+        writeln!(&mut out, "\n{bold}Advice:{reset} {advice}").unwrap();
     }
 
     out
 }
 
 /// Format status as human-readable string.
-fn format_status(status: ProtocolStatus) -> &'static str {
+const fn format_status(status: ProtocolStatus) -> &'static str {
     match status {
         ProtocolStatus::Ready => "Ready",
         ProtocolStatus::Blocked => "Blocked",
@@ -697,8 +700,8 @@ mod tests {
     fn snapshot_at_is_rfc3339() {
         let g = ProtocolGuidance::new("start");
         // Should be ISO 8601 / RFC 3339 format
-        assert!(g.snapshot_at.contains("T"));
-        assert!(g.snapshot_at.contains("Z") || g.snapshot_at.contains("+"));
+        assert!(g.snapshot_at.contains('T'));
+        assert!(g.snapshot_at.contains('Z') || g.snapshot_at.contains('+'));
     }
 
     // --- Freshness Semantics Tests ---
@@ -766,16 +769,14 @@ mod tests {
 
     #[test]
     fn golden_status_variants_are_complete() {
-        let _statuses = vec![
-            ProtocolStatus::Ready,
+        let _statuses = [ProtocolStatus::Ready,
             ProtocolStatus::Blocked,
             ProtocolStatus::Resumable,
             ProtocolStatus::NeedsReview,
             ProtocolStatus::HasResources,
             ProtocolStatus::Clean,
             ProtocolStatus::HasWork,
-            ProtocolStatus::Fresh,
-        ];
+            ProtocolStatus::Fresh];
         assert_eq!(_statuses.len(), 8);
     }
 

@@ -92,7 +92,7 @@ pub enum RunCommand {
 impl RunCommand {
     pub fn execute(&self) -> anyhow::Result<()> {
         match self {
-            RunCommand::Agent {
+            Self::Agent {
                 prompt,
                 model,
                 timeout,
@@ -107,7 +107,7 @@ impl RunCommand {
                 format.as_deref(),
                 *skip_permissions,
             ),
-            RunCommand::DevLoop {
+            Self::DevLoop {
                 project_root,
                 agent,
                 model,
@@ -116,7 +116,7 @@ impl RunCommand {
                 agent.as_deref(),
                 model.as_deref(),
             ),
-            RunCommand::WorkerLoop {
+            Self::WorkerLoop {
                 project_root,
                 agent,
                 model,
@@ -125,7 +125,7 @@ impl RunCommand {
                 agent.clone(),
                 model.clone(),
             ),
-            RunCommand::ReviewerLoop {
+            Self::ReviewerLoop {
                 project_root,
                 agent,
                 model,
@@ -134,7 +134,7 @@ impl RunCommand {
                 agent.clone(),
                 model.clone(),
             ),
-            RunCommand::Responder {
+            Self::Responder {
                 project_root,
                 agent,
                 model,
@@ -143,8 +143,8 @@ impl RunCommand {
                 agent.clone(),
                 model.clone(),
             ),
-            RunCommand::Triage { .. } => crate::commands::triage::run_triage(),
-            RunCommand::IterationStart { agent, .. } => {
+            Self::Triage { .. } => crate::commands::triage::run_triage(),
+            Self::IterationStart { agent, .. } => {
                 crate::commands::iteration_start::run_iteration_start(agent.as_deref())
             }
         }

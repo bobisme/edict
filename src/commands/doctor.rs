@@ -144,7 +144,7 @@ impl DoctorArgs {
                         version: None,
                         present: false,
                     });
-                    report.issues.push(format!("Tool not found: {}", binary));
+                    report.issues.push(format!("Tool not found: {binary}"));
                 }
             } else {
                 report.tools.push(ToolStatus {
@@ -220,7 +220,7 @@ impl DoctorArgs {
         if issue_count > 0 {
             return Err(crate::error::ExitError::new(
                 std::cmp::min(issue_count, 125) as u8,
-                format!("{} issue(s) found", issue_count),
+                format!("{issue_count} issue(s) found"),
             )
             .into());
         }
@@ -264,13 +264,13 @@ impl DoctorArgs {
             }
         }
 
-        if !report.issues.is_empty() {
+        if report.issues.is_empty() {
+            println!("\n✓ No issues found");
+        } else {
             println!("\nIssues ({}):", report.issues.len());
             for issue in &report.issues {
-                println!("  • {}", issue);
+                println!("  • {issue}");
             }
-        } else {
-            println!("\n✓ No issues found");
         }
     }
 
@@ -302,7 +302,7 @@ impl DoctorArgs {
         if !report.issues.is_empty() {
             println!("issues  count={}", report.issues.len());
             for issue in &report.issues {
-                println!("issue  {}", issue);
+                println!("issue  {issue}");
             }
         }
     }

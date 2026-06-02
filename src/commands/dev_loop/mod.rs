@@ -33,7 +33,7 @@ pub fn run(
     model_override: Option<&str>,
 ) -> anyhow::Result<()> {
     let project_root = resolve_project_root(project_root)?;
-    let (config, config_dir) = load_config(&project_root)?;
+    let (config, _config_dir) = load_config(&project_root)?;
 
     let agent = resolve_agent(&config, agent_override)?;
 
@@ -65,7 +65,7 @@ pub fn run(
 
     let missions_config = dev_config.missions.clone();
     let missions_enabled = missions_config.as_ref().is_none_or(|m| m.enabled);
-    let multi_lead_config = dev_config.multi_lead.clone();
+    let multi_lead_config = dev_config.multi_lead;
     let multi_lead_enabled = multi_lead_config.as_ref().is_some_and(|m| m.enabled);
 
     let check_command = config.project.check_command.clone();
@@ -407,7 +407,7 @@ fn resolve_project_root(explicit: Option<&Path>) -> anyhow::Result<PathBuf> {
 }
 
 /// Load config from .edict.toml/.botbox.toml (checking both project root and ws/default/).
-/// Returns (config, config_dir) where config_dir is the directory containing the config file.
+/// Returns (config, `config_dir`) where `config_dir` is the directory containing the config file.
 fn load_config(project_root: &Path) -> anyhow::Result<(Config, PathBuf)> {
     let (config_path, config_dir) = crate::config::find_config_in_project(project_root)?;
     Ok((Config::load(&config_path)?, config_dir))
@@ -558,7 +558,7 @@ fn parse_inbox_count(json: &str) -> u64 {
 /// of a different kind.
 fn parse_next_status(stdout: &str) -> NextStatus {
     let json = stdout
-        .find(|c: char| c == '{' || c == '[')
+        .find(['{', '['])
         .map_or(stdout, |i| &stdout[i..]);
     let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else {
         return NextStatus::None;
@@ -856,11 +856,10 @@ fn is_systemd_dbus_available() -> bool {
     if std::env::var("DBUS_SESSION_BUS_ADDRESS").is_ok() {
         return true;
     }
-    if let Ok(xdg) = std::env::var("XDG_RUNTIME_DIR") {
-        if std::path::Path::new(&xdg).join("rite").exists() {
+    if let Ok(xdg) = std::env::var("XDG_RUNTIME_DIR")
+        && std::path::Path::new(&xdg).join("rite").exists() {
             return true;
         }
-    }
     false
 }
 

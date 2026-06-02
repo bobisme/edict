@@ -208,26 +208,17 @@ impl InitArgs {
 
         // Initialize bones
         if choices.init_bones && choices.tools.contains(&"bones".to_string()) {
-            match run_command("bn", &["init"], Some(&project_dir)) {
-                Ok(_) => println!("Initialized bones"),
-                Err(_) => tracing::warn!("bn init failed (is bones installed?)"),
-            }
+            if let Ok(_) = run_command("bn", &["init"], Some(&project_dir)) { println!("Initialized bones") } else { tracing::warn!("bn init failed (is bones installed?)") }
         }
 
         // Initialize maw
         if choices.tools.contains(&"maw".to_string()) {
-            match run_command("maw", &["init"], Some(&project_dir)) {
-                Ok(_) => println!("Initialized maw"),
-                Err(_) => tracing::warn!("maw init failed (is maw installed?)"),
-            }
+            if let Ok(_) = run_command("maw", &["init"], Some(&project_dir)) { println!("Initialized maw") } else { tracing::warn!("maw init failed (is maw installed?)") }
         }
 
         // Initialize seal
         if choices.tools.contains(&"seal".to_string()) {
-            match run_command("seal", &["init"], Some(&project_dir)) {
-                Ok(_) => println!("Initialized seal"),
-                Err(_) => tracing::warn!("seal init failed (is seal installed?)"),
-            }
+            if let Ok(_) = run_command("seal", &["init"], Some(&project_dir)) { println!("Initialized seal") } else { tracing::warn!("seal init failed (is seal installed?)") }
 
             // Create .sealignore
             let sealignore_path = project_dir.join(".sealignore");
@@ -276,7 +267,7 @@ impl InitArgs {
                 .run()
             {
                 Ok(output) if output.success() => {
-                    println!("Registered project on #projects channel")
+                    println!("Registered project on #projects channel");
                 }
                 _ => tracing::warn!("failed to register on #projects (is rite installed?)"),
             }
@@ -299,7 +290,9 @@ impl InitArgs {
         // Generate .gitignore
         if !choices.languages.is_empty() {
             let gitignore_path = project_dir.join(".gitignore");
-            if !gitignore_path.exists() {
+            if gitignore_path.exists() {
+                println!(".gitignore already exists, skipping generation");
+            } else {
                 match fetch_gitignore(&choices.languages) {
                     Ok(content) => {
                         fs::write(&gitignore_path, content)?;
@@ -307,8 +300,6 @@ impl InitArgs {
                     }
                     Err(e) => tracing::warn!("failed to generate .gitignore: {e}"),
                 }
-            } else {
-                println!(".gitignore already exists, skipping generation");
             }
         }
 
@@ -384,7 +375,7 @@ impl InitArgs {
             args.push("--no-seed-work".into());
         }
 
-        let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let arg_refs: Vec<&str> = args.iter().map(std::string::String::as_str).collect();
         run_command("maw", &arg_refs, Some(&project_dir))?;
 
         // Create bare root stubs
@@ -457,7 +448,7 @@ impl InitArgs {
             let n = detected
                 .name
                 .clone()
-                .or_else(|| infer_project_name())
+                .or_else(infer_project_name)
                 .ok_or_else(|| {
                     ExitError::Other("--name is required in non-interactive mode".into())
                 })?;
@@ -479,12 +470,10 @@ impl InitArgs {
                 PROJECT_TYPES,
                 &defaults,
             )?
+        } else if detected.types.is_empty() {
+            vec!["cli".to_string()]
         } else {
-            if detected.types.is_empty() {
-                vec!["cli".to_string()]
-            } else {
-                detected.types.clone()
-            }
+            detected.types.clone()
         };
 
         // Tools
@@ -504,7 +493,7 @@ impl InitArgs {
                 .collect();
             prompt_multi_select("Tools to enable", AVAILABLE_TOOLS, &defaults)?
         } else if detected.tools.is_empty() {
-            AVAILABLE_TOOLS.iter().map(|s| s.to_string()).collect()
+            AVAILABLE_TOOLS.iter().map(std::string::ToString::to_string).collect()
         } else {
             detected.tools.clone()
         };
@@ -783,7 +772,7 @@ fn sync_workflow_docs(agents_dir: &Path, layout: Layout) -> Result<()> {
     for (name, content) in WORKFLOW_DOCS {
         let path = agents_dir.join(name);
         let rendered = crate::template::render_workflow_doc(content, layout)
-            .with_context(|| format!("rendering {}", name))?;
+            .with_context(|| format!("rendering {name}"))?;
         fs::write(&path, rendered).with_context(|| format!("writing {}", path.display()))?;
     }
 

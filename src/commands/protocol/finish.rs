@@ -28,24 +28,20 @@ pub fn execute(
         Ok(ctx) => ctx,
         Err(e) => {
             let mut guidance = ProtocolGuidance::new("finish");
-            guidance.blocked(format!("failed to collect state: {}", e));
+            guidance.blocked(format!("failed to collect state: {e}"));
             print_guidance(&guidance, format)?;
             return Ok(());
         }
     };
 
     // Fetch bone info
-    let bone_info = match ctx.bone_status(bone_id) {
-        Ok(bone) => bone,
-        Err(_) => {
-            let mut guidance = ProtocolGuidance::new("finish");
-            guidance.blocked(format!(
-                "bone {} not found. Check the ID with: maw exec default -- bn show {}",
-                bone_id, bone_id
-            ));
-            print_guidance(&guidance, format)?;
-            return Ok(());
-        }
+    let bone_info = if let Ok(bone) = ctx.bone_status(bone_id) { bone } else {
+        let mut guidance = ProtocolGuidance::new("finish");
+        guidance.blocked(format!(
+            "bone {bone_id} not found. Check the ID with: maw exec default -- bn show {bone_id}"
+        ));
+        print_guidance(&guidance, format)?;
+        return Ok(());
     };
 
     let mut guidance = ProtocolGuidance::new("finish");
@@ -53,7 +49,7 @@ pub fn execute(
         id: bone_id.to_string(),
         title: bone_info.title.clone(),
     });
-    guidance.set_freshness(120, Some(format!("edict protocol finish {}", bone_id)));
+    guidance.set_freshness(120, Some(format!("edict protocol finish {bone_id}")));
 
     // Check bone is already closed
     if bone_info.state == "done" {
@@ -68,26 +64,21 @@ pub fn execute(
 
     if !holds_claim {
         guidance.blocked(format!(
-            "agent '{}' does not hold a claim for bone {}. \
-             Check with: rite claims list --agent {} --format json",
-            agent, bone_id, agent
+            "agent '{agent}' does not hold a claim for bone {bone_id}. \
+             Check with: rite claims list --agent {agent} --format json"
         ));
         print_guidance(&guidance, format)?;
         return Ok(());
     }
 
     // Resolve workspace from claims
-    let workspace = match ctx.workspace_for_bone(bone_id) {
-        Some(ws) => ws.to_string(),
-        None => {
-            guidance.blocked(format!(
-                "no workspace claim found for bone {}. \
-                 Cannot determine which workspace to merge.",
-                bone_id
-            ));
-            print_guidance(&guidance, format)?;
-            return Ok(());
-        }
+    let workspace = if let Some(ws) = ctx.workspace_for_bone(bone_id) { ws.to_string() } else {
+        guidance.blocked(format!(
+            "no workspace claim found for bone {bone_id}. \
+             Cannot determine which workspace to merge."
+        ));
+        print_guidance(&guidance, format)?;
+        return Ok(());
     };
     guidance.workspace = Some(workspace.clone());
     let mut merge_target = ctx
@@ -99,7 +90,7 @@ pub fn execute(
         .review
         .reviewers
         .iter()
-        .map(|role| format!("{}-{}", project, role))
+        .map(|role| format!("{project}-{role}"))
         .collect();
 
     // Check review gate status
@@ -107,152 +98,146 @@ pub fn execute(
 
     if review_enabled && !force {
         // Try to find a review for this workspace
-        match find_review_for_workspace(&ctx, &workspace) {
-            Some((review_id, review_detail)) => {
-                let decision =
-                    review_gate::evaluate_review_gate(&review_detail, &required_reviewers);
-                if merge_target.is_none() {
-                    merge_target = review_detail.change_id.clone();
+        if let Some((review_id, review_detail)) = find_review_for_workspace(&ctx, &workspace) {
+            let decision =
+                review_gate::evaluate_review_gate(&review_detail, &required_reviewers);
+            if merge_target.is_none() {
+                merge_target = review_detail.change_id.clone();
+            }
+            guidance.review = Some(ReviewRef {
+                review_id: review_id.clone(),
+                status: decision.status_str().to_string(),
+            });
+
+            match decision.status {
+                ReviewGateStatus::Approved => {
+                    // Ready to finish
+                    guidance.status = ProtocolStatus::Ready;
+                    build_finish_steps(
+                        &mut guidance,
+                        bone_id,
+                        &bone_info.title,
+                        project,
+                        &workspace,
+                        merge_target.as_deref(),
+                        Some(&review_id),
+                        no_merge,
+                    );
+
+                    // Execute if --execute flag is set
+                    if execute {
+                        return execute_and_render(&guidance, format);
+                    }
+
+                    guidance.advise(format!(
+                        "Review {review_id} approved. Run these commands to finish bone {bone_id}."
+                    ));
                 }
-                guidance.review = Some(ReviewRef {
-                    review_id: review_id.clone(),
-                    status: decision.status_str().to_string(),
-                });
-
-                match decision.status {
-                    ReviewGateStatus::Approved => {
-                        // Ready to finish
-                        guidance.status = ProtocolStatus::Ready;
-                        build_finish_steps(
-                            &mut guidance,
-                            bone_id,
-                            &bone_info.title,
-                            project,
-                            &workspace,
-                            merge_target.as_deref(),
-                            Some(&review_id),
-                            no_merge,
-                        );
-
-                        // Execute if --execute flag is set
-                        if execute {
-                            return execute_and_render(&guidance, format);
-                        }
-
-                        guidance.advise(format!(
-                            "Review {} approved. Run these commands to finish bone {}.",
-                            review_id, bone_id
+                ReviewGateStatus::Blocked => {
+                    // Blocked by reviewer
+                    guidance.status = ProtocolStatus::Blocked;
+                    guidance.diagnostic(format!(
+                        "Review {} is blocked by: {}",
+                        review_id,
+                        decision.blocked_by.join(", ")
+                    ));
+                    if decision.open_thread_count_hint(&review_detail) > 0 {
+                        guidance.diagnostic(format!(
+                            "{} open thread(s) need resolution",
+                            review_detail.open_thread_count
                         ));
                     }
-                    ReviewGateStatus::Blocked => {
-                        // Blocked by reviewer
-                        guidance.status = ProtocolStatus::Blocked;
-                        guidance.diagnostic(format!(
-                            "Review {} is blocked by: {}",
-                            review_id,
-                            decision.blocked_by.join(", ")
-                        ));
-                        if decision.open_thread_count_hint(&review_detail) > 0 {
-                            guidance.diagnostic(format!(
-                                "{} open thread(s) need resolution",
-                                review_detail.open_thread_count
-                            ));
-                        }
 
-                        // Output commands to check review feedback and re-request
-                        let mut steps = Vec::new();
-                        steps.push(shell::seal_show_cmd(&workspace, &review_id));
+                    // Output commands to check review feedback and re-request
+                    let mut steps = Vec::new();
+                    steps.push(shell::seal_show_cmd(&workspace, &review_id));
+                    steps.push(shell::seal_request_cmd(
+                        &workspace,
+                        &review_id,
+                        &required_reviewers.join(","),
+                        "agent",
+                    ));
+                    steps.push(shell::rite_send_cmd(
+                        "agent",
+                        project,
+                        &format!(
+                            "Review re-requested: {} @{}",
+                            review_id,
+                            required_reviewers.join(" @")
+                        ),
+                        "review-request",
+                    ));
+                    guidance.steps(steps);
+                    guidance.advise(format!(
+                        "Review {review_id} is blocked. Address reviewer feedback, then re-request review."
+                    ));
+                }
+                ReviewGateStatus::NeedsReview => {
+                    // Review exists but not all reviewers have voted
+                    guidance.status = ProtocolStatus::NeedsReview;
+
+                    if !decision.missing_approvals.is_empty() {
+                        guidance.diagnostic(format!(
+                            "Awaiting votes from: {}",
+                            decision.missing_approvals.join(", ")
+                        ));
+                    }
+
+                    let mut steps = Vec::new();
+                    steps.push(shell::seal_show_cmd(&workspace, &review_id));
+                    // Re-request from missing reviewers
+                    if !decision.missing_approvals.is_empty() {
                         steps.push(shell::seal_request_cmd(
                             &workspace,
                             &review_id,
-                            &required_reviewers.join(","),
+                            &decision.missing_approvals.join(","),
                             "agent",
                         ));
+                        let mentions: Vec<String> = decision
+                            .missing_approvals
+                            .iter()
+                            .map(|r| format!("@{r}"))
+                            .collect();
                         steps.push(shell::rite_send_cmd(
                             "agent",
                             project,
-                            &format!(
-                                "Review re-requested: {} @{}",
-                                review_id,
-                                required_reviewers.join(" @")
-                            ),
+                            &format!("Review pending: {} {}", review_id, mentions.join(" ")),
                             "review-request",
                         ));
-                        guidance.steps(steps);
-                        guidance.advise(format!(
-                            "Review {} is blocked. Address reviewer feedback, then re-request review.",
-                            review_id
-                        ));
                     }
-                    ReviewGateStatus::NeedsReview => {
-                        // Review exists but not all reviewers have voted
-                        guidance.status = ProtocolStatus::NeedsReview;
-
-                        if !decision.missing_approvals.is_empty() {
-                            guidance.diagnostic(format!(
-                                "Awaiting votes from: {}",
-                                decision.missing_approvals.join(", ")
-                            ));
-                        }
-
-                        let mut steps = Vec::new();
-                        steps.push(shell::seal_show_cmd(&workspace, &review_id));
-                        // Re-request from missing reviewers
-                        if !decision.missing_approvals.is_empty() {
-                            steps.push(shell::seal_request_cmd(
-                                &workspace,
-                                &review_id,
-                                &decision.missing_approvals.join(","),
-                                "agent",
-                            ));
-                            let mentions: Vec<String> = decision
-                                .missing_approvals
-                                .iter()
-                                .map(|r| format!("@{}", r))
-                                .collect();
-                            steps.push(shell::rite_send_cmd(
-                                "agent",
-                                project,
-                                &format!("Review pending: {} {}", review_id, mentions.join(" ")),
-                                "review-request",
-                            ));
-                        }
-                        guidance.steps(steps);
-                        guidance.advise(format!(
-                            "Review {} needs approval. Wait for reviewers or re-request.",
-                            review_id
-                        ));
-                    }
+                    guidance.steps(steps);
+                    guidance.advise(format!(
+                        "Review {review_id} needs approval. Wait for reviewers or re-request."
+                    ));
                 }
             }
-            None => {
-                // No review found — needs review creation
-                guidance.status = ProtocolStatus::NeedsReview;
-                guidance.diagnostic("No review found for this workspace.".to_string());
+        } else {
+            // No review found — needs review creation
+            guidance.status = ProtocolStatus::NeedsReview;
+            guidance.diagnostic("No review found for this workspace.".to_string());
 
-                let mut steps = Vec::new();
-                steps.push(shell::seal_create_cmd(
-                    &workspace,
-                    "agent",
-                    &bone_info.title,
-                    &required_reviewers.join(","),
-                ));
-                let mentions: Vec<String> = required_reviewers
-                    .iter()
-                    .map(|r| format!("@{}", r))
-                    .collect();
-                steps.push(shell::rite_send_cmd(
-                    "agent",
-                    project,
-                    &format!("Review requested: <review-id> {}", mentions.join(" ")),
-                    "review-request",
-                ));
-                guidance.steps(steps);
-                guidance.advise(
-                    "No review exists yet. Create one and request reviewers before finishing."
-                        .to_string(),
-                );
-            }
+            let mut steps = Vec::new();
+            steps.push(shell::seal_create_cmd(
+                &workspace,
+                "agent",
+                &bone_info.title,
+                &required_reviewers.join(","),
+            ));
+            let mentions: Vec<String> = required_reviewers
+                .iter()
+                .map(|r| format!("@{r}"))
+                .collect();
+            steps.push(shell::rite_send_cmd(
+                "agent",
+                project,
+                &format!("Review requested: <review-id> {}", mentions.join(" ")),
+                "review-request",
+            ));
+            guidance.steps(steps);
+            guidance.advise(
+                "No review exists yet. Create one and request reviewers before finishing."
+                    .to_string(),
+            );
         }
     } else {
         // Review not enabled, or --force flag used
@@ -280,13 +265,11 @@ pub fn execute(
 
         if force && review_enabled {
             guidance.advise(format!(
-                "Force-finishing bone {} without review approval. Run these commands to finish.",
-                bone_id
+                "Force-finishing bone {bone_id} without review approval. Run these commands to finish."
             ));
         } else {
             guidance.advise(format!(
-                "Review not required. Run these commands to finish bone {}.",
-                bone_id
+                "Review not required. Run these commands to finish bone {bone_id}."
             ));
         }
     }
@@ -310,47 +293,44 @@ fn build_finish_steps(
     let mut steps = Vec::new();
 
     // 1. Stage workspace changes
-    steps.push(format!("maw exec {} -- git add -A", workspace,));
+    steps.push(format!("maw exec {workspace} -- git add -A"));
 
     // 2. Commit workspace changes
     steps.push(format!(
         "maw exec {} -- git commit -m {}",
         workspace,
         shell::shell_escape(&format!(
-            "{}: {}\n\nCo-Authored-By: Claude <noreply@anthropic.com>",
-            bone_id, bead_title
+            "{bone_id}: {bead_title}\n\nCo-Authored-By: Claude <noreply@anthropic.com>"
         ))
     ));
 
     // 3. Merge workspace (unless --no-merge)
     if !no_merge {
         // Use a conventional commit message derived from the bone title
-        let merge_msg = format!("feat: {}", bead_title);
+        let merge_msg = format!("feat: {bead_title}");
         let target = merge_target
-            .map(shell::MergeTarget::Change)
-            .unwrap_or(shell::MergeTarget::Default);
+            .map_or(shell::MergeTarget::Default, shell::MergeTarget::Change);
         steps.push(shell::ws_merge_cmd(workspace, target, &merge_msg));
     }
 
     // 4. Mark review as merged (if review exists)
     if let Some(rid) = review_id {
         steps.push(format!(
-            "maw exec default -- seal reviews mark-merged {}",
-            rid
+            "maw exec default -- seal reviews mark-merged {rid}"
         ));
     }
 
     // 5. Close the bone
     steps.push(shell::bn_done_cmd(
         bone_id,
-        &format!("Completed in workspace {}", workspace),
+        &format!("Completed in workspace {workspace}"),
     ));
 
     // 6. Announce completion on rite
     steps.push(shell::rite_send_cmd(
         "agent",
         project,
-        &format!("Finished {}: {}", bone_id, bead_title),
+        &format!("Finished {bone_id}: {bead_title}"),
         "task-done",
     ));
 
@@ -397,11 +377,11 @@ fn find_review_for_workspace(
 fn execute_and_render(guidance: &ProtocolGuidance, format: OutputFormat) -> anyhow::Result<()> {
     // Execute the steps
     let report = executor::execute_steps(&guidance.steps)
-        .map_err(|e| anyhow::anyhow!("execution failed: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("execution failed: {e}"))?;
 
     // Render the execution report
     let output = executor::render_report(&report, format);
-    println!("{}", output);
+    println!("{output}");
 
     // Exit with non-zero if any step failed
     if !report.remaining.is_empty() || report.results.iter().any(|r| !r.success) {
@@ -414,8 +394,8 @@ fn execute_and_render(guidance: &ProtocolGuidance, format: OutputFormat) -> anyh
 /// Render and print guidance.
 fn print_guidance(guidance: &ProtocolGuidance, format: OutputFormat) -> anyhow::Result<()> {
     let output =
-        render::render(guidance, format).map_err(|e| anyhow::anyhow!("render error: {}", e))?;
-    println!("{}", output);
+        render::render(guidance, format).map_err(|e| anyhow::anyhow!("render error: {e}"))?;
+    println!("{output}");
     Ok(())
 }
 

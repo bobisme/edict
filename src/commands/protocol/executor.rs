@@ -73,7 +73,7 @@ pub fn execute_steps(steps: &[String]) -> Result<ExecutionReport, ExecutionError
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output()
-            .map_err(|e| ExecutionError::SpawnFailed(format!("{}: {}", effective_step, e)))?;
+            .map_err(|e| ExecutionError::SpawnFailed(format!("{effective_step}: {e}")))?;
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -93,7 +93,7 @@ pub fn execute_steps(steps: &[String]) -> Result<ExecutionReport, ExecutionError
 
         // Stop on first failure
         if !success {
-            let remaining = steps[idx + 1..].iter().map(|s| s.clone()).collect();
+            let remaining = steps[idx + 1..].to_vec();
             return Ok(ExecutionReport { results, remaining });
         }
     }
@@ -152,6 +152,7 @@ fn extract_workspace_name(stdout: &str) -> Option<String> {
 /// - Text: concise step-by-step output for agents
 /// - JSON: structured output with all details
 /// - Pretty: colored output with symbols for humans
+#[must_use] 
 pub fn render_report(report: &ExecutionReport, format: OutputFormat) -> String {
     match format {
         OutputFormat::Text => render_text(report),
@@ -184,18 +185,17 @@ fn render_text(report: &ExecutionReport) -> String {
         ));
 
         // If this was a workspace creation, show the workspace name
-        if result.command.contains("maw ws create") && result.success {
-            if let Some(ws) = extract_workspace_name(&result.stdout) {
-                out.push_str(&format!("  ws={}", ws));
+        if result.command.contains("maw ws create") && result.success
+            && let Some(ws) = extract_workspace_name(&result.stdout) {
+                out.push_str(&format!("  ws={ws}"));
             }
-        }
 
         out.push('\n');
     }
 
     for (idx, _remaining) in report.remaining.iter().enumerate() {
         let step_num = report.results.len() + idx + 1;
-        out.push_str(&format!("step {}/{}  (not executed)\n", step_num, total));
+        out.push_str(&format!("step {step_num}/{total}  (not executed)\n"));
     }
 
     out
@@ -260,11 +260,10 @@ fn render_pretty(report: &ExecutionReport) -> String {
         ));
 
         // If this was a workspace creation, show the workspace name
-        if result.command.contains("maw ws create") && result.success {
-            if let Some(ws) = extract_workspace_name(&result.stdout) {
-                out.push_str(&format!("  {}ws={}{}", gray, ws, reset));
+        if result.command.contains("maw ws create") && result.success
+            && let Some(ws) = extract_workspace_name(&result.stdout) {
+                out.push_str(&format!("  {gray}ws={ws}{reset}"));
             }
-        }
 
         out.push('\n');
     }
@@ -272,8 +271,7 @@ fn render_pretty(report: &ExecutionReport) -> String {
     for (idx, _remaining) in report.remaining.iter().enumerate() {
         let step_num = report.results.len() + idx + 1;
         out.push_str(&format!(
-            "step {}/{}  {}(not executed){}\n",
-            step_num, total, gray, reset
+            "step {step_num}/{total}  {gray}(not executed){reset}\n"
         ));
     }
 
@@ -526,11 +524,9 @@ mod tests {
     #[test]
     fn ws_substitution_mock() {
         // Simulate what execute_steps does for $WS substitution
-        let steps = vec![
-            "maw ws create bd-abc --description 'Fix bug' --from main".to_string(),
+        let steps = ["maw ws create bd-abc --description 'Fix bug' --from main".to_string(),
             "echo workspace is $WS".to_string(),
-            "rite claims stake 'workspace://$WS'".to_string(),
-        ];
+            "rite claims stake 'workspace://$WS'".to_string()];
 
         // Mock workspace name extraction
         let mock_ws_output = "Creating workspace 'frost-castle'\n";
@@ -558,7 +554,7 @@ mod tests {
         let effective_step = if let Some(ref ws) = ws_name {
             step.replace("$WS", ws)
         } else {
-            step.clone()
+            step
         };
 
         assert_eq!(effective_step, "echo $WS is unknown");

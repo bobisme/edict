@@ -1,5 +1,5 @@
 /// Claude Code hook event type
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HookEvent {
     SessionStart,
     PreCompact,
@@ -8,12 +8,13 @@ pub enum HookEvent {
 }
 
 impl HookEvent {
-    pub fn as_str(&self) -> &'static str {
+    #[must_use] 
+    pub const fn as_str(&self) -> &'static str {
         match self {
-            HookEvent::SessionStart => "SessionStart",
-            HookEvent::PreCompact => "PreCompact",
-            HookEvent::PostToolUse => "PostToolUse",
-            HookEvent::SessionEnd => "SessionEnd",
+            Self::SessionStart => "SessionStart",
+            Self::PreCompact => "PreCompact",
+            Self::PostToolUse => "PostToolUse",
+            Self::SessionEnd => "SessionEnd",
         }
     }
 }
@@ -33,6 +34,7 @@ pub struct HookRegistry;
 
 impl HookRegistry {
     /// Get all registered hooks
+    #[must_use] 
     pub fn all() -> Vec<HookEntry> {
         vec![
             HookEntry {

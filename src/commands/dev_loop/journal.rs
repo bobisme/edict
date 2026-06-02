@@ -112,9 +112,7 @@ fn get_cache_dir(project_root: &Path) -> PathBuf {
 
 /// Get the home directory.
 fn dirs_home() -> PathBuf {
-    std::env::var("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("/tmp"))
+    std::env::var("HOME").map_or_else(|_| PathBuf::from("/tmp"), PathBuf::from)
 }
 
 /// Get the current git HEAD short hash from the default workspace.
@@ -152,7 +150,7 @@ fn chrono_timestamp() -> String {
 }
 
 /// Convert days since epoch to (year, month, day).
-fn days_to_date(days: u64) -> (u64, u64, u64) {
+const fn days_to_date(days: u64) -> (u64, u64, u64) {
     // Civil date algorithm from Howard Hinnant
     let z = days as i64 + 719468;
     let era = if z >= 0 { z } else { z - 146096 } / 146097;

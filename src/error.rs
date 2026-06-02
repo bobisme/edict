@@ -30,19 +30,21 @@ pub enum ExitError {
 }
 
 impl ExitError {
-    pub fn new(code: u8, message: String) -> Self {
-        ExitError::WithCode { code, message }
+    #[must_use] 
+    pub const fn new(code: u8, message: String) -> Self {
+        Self::WithCode { code, message }
     }
 
+    #[must_use] 
     pub fn exit_code(&self) -> ExitCode {
         match self {
-            ExitError::Config(_) => ExitCode::from(2),
-            ExitError::ToolNotFound { .. } => ExitCode::from(3),
-            ExitError::ToolFailed { .. } => ExitCode::from(4),
-            ExitError::Timeout { .. } => ExitCode::from(5),
-            ExitError::WithCode { code, .. } => ExitCode::from(*code),
-            ExitError::AuditFailed => ExitCode::from(6),
-            ExitError::Other(_) => ExitCode::from(1),
+            Self::Config(_) => ExitCode::from(2),
+            Self::ToolNotFound { .. } => ExitCode::from(3),
+            Self::ToolFailed { .. } => ExitCode::from(4),
+            Self::Timeout { .. } => ExitCode::from(5),
+            Self::WithCode { code, .. } => ExitCode::from(*code),
+            Self::AuditFailed => ExitCode::from(6),
+            Self::Other(_) => ExitCode::from(1),
         }
     }
 }

@@ -74,7 +74,7 @@ impl WorkerLoop {
             .unwrap_or_default();
         let model_pool = config.resolve_model_pool(&model_raw);
 
-        let timeout = worker_config.map(|w| w.timeout).unwrap_or(900);
+        let timeout = worker_config.map_or(900, |w| w.timeout);
         let review_enabled = config.review.enabled;
         let critical_approvers = config
             .project
@@ -212,7 +212,7 @@ impl WorkerLoop {
             let ws_path = self.project_root.join(layout.ws_path(ws));
 
             format!(
-                r#"## DISPATCHED WORKER — FAST PATH
+                r"## DISPATCHED WORKER — FAST PATH
 
 You were dispatched by a lead dev agent with a pre-assigned bone and workspace.
 Skip steps 0 (RESUME CHECK), 1 (INBOX), and 2 (TRIAGE) entirely.
@@ -229,7 +229,7 @@ Go directly to:
    Use absolute workspace path: {ws_path}
    For commands in workspace: maw exec {ws} -- <command>
 
-"#,
+",
                 bone = bone,
                 ws = ws,
                 ws_path = ws_path.display(),
@@ -242,8 +242,8 @@ Go directly to:
         let dispatched_intro = if self.dispatched_bone.is_some() {
             "You are a dispatched worker — follow the FAST PATH section below."
         } else {
-            r#"Execute exactly ONE cycle of the worker loop. Complete one task (or determine there is no work),
-then STOP. Do not start a second task — the outer loop handles iteration."#
+            r"Execute exactly ONE cycle of the worker loop. Complete one task (or determine there is no work),
+then STOP. Do not start a second task — the outer loop handles iteration."
         };
 
         let review_step_6 = if self.review_enabled {
@@ -297,8 +297,8 @@ then STOP. Do not start a second task — the outer loop handles iteration."#
                 }
             )
         } else {
-            r#"   REVIEW is disabled. Skip code review.
-   Proceed directly to step 7 (FINISH)."#
+            r"   REVIEW is disabled. Skip code review.
+   Proceed directly to step 7 (FINISH)."
                 .to_string()
         };
 
@@ -521,7 +521,7 @@ pub enum LoopStatus {
 
 /// Emit startup diagnostic for build-related environment variables.
 ///
-/// Logs the effective values of CARGO_BUILD_JOBS, RUSTC_WRAPPER, and SCCACHE_DIR
+/// Logs the effective values of `CARGO_BUILD_JOBS`, `RUSTC_WRAPPER`, and `SCCACHE_DIR`
 /// to stderr. These vars control cargo parallelism and caching — critical for
 /// preventing OOM when multiple agents build concurrently.
 ///
@@ -602,8 +602,7 @@ fn run_agent_with_fallback(
             Ok(output) => {
                 if is_rate_limit_output(&output) {
                     eprintln!(
-                        "Rate limited on {} (detected in output), trying next model...",
-                        model
+                        "Rate limited on {model} (detected in output), trying next model..."
                     );
                     crate::telemetry::metrics::counter(
                         "edict.worker.rate_limit_retries_total",
@@ -617,8 +616,7 @@ fn run_agent_with_fallback(
                 // Try the next model if available.
                 if output.trim().is_empty() && i + 1 < model_pool.len() {
                     eprintln!(
-                        "Empty output from {} (process likely hung), trying next model...",
-                        model
+                        "Empty output from {model} (process likely hung), trying next model..."
                     );
                     continue;
                 }
@@ -706,7 +704,7 @@ fn try_run_agent(prompt: &str, model: &str, timeout: u64) -> anyhow::Result<Stri
     for line in reader.lines() {
         let line = line.context("reading line from edict run agent")?;
         // Echo to stderr for visibility in vessel
-        eprintln!("{}", line);
+        eprintln!("{line}");
         output.push_str(&line);
         output.push('\n');
     }
@@ -1094,12 +1092,10 @@ mod tests {
             ("protocol cleanup", "cleanup"),
         ];
 
-        for (protocol_cmd, step_name) in fallback_patterns.iter() {
+        for (protocol_cmd, step_name) in &fallback_patterns {
             assert!(
                 prompt.contains(protocol_cmd),
-                "worker prompt must reference '{}' in {} step",
-                protocol_cmd,
-                step_name
+                "worker prompt must reference '{protocol_cmd}' in {step_name} step"
             );
         }
     }

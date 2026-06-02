@@ -61,16 +61,13 @@ pub fn execute(
     }
 
     // Resolve workspace from claims
-    let workspace = match ctx.workspace_for_bone(bone_id) {
-        Some(ws) => ws.to_string(),
-        None => {
-            guidance.blocked(format!(
-                "no workspace claim found for bone {bone_id}. \
-                 Create workspace and stake claim first."
-            ));
-            print_guidance(&guidance, format)?;
-            return Ok(());
-        }
+    let workspace = if let Some(ws) = ctx.workspace_for_bone(bone_id) { ws.to_string() } else {
+        guidance.blocked(format!(
+            "no workspace claim found for bone {bone_id}. \
+             Create workspace and stake claim first."
+        ));
+        print_guidance(&guidance, format)?;
+        return Ok(());
     };
 
     // Validate workspace name before it flows into subprocess calls
@@ -366,7 +363,7 @@ fn resolve_reviewers(
 fn print_guidance(guidance: &ProtocolGuidance, format: OutputFormat) -> anyhow::Result<()> {
     let output = super::render::render(guidance, format)
         .map_err(|e| anyhow::anyhow!("render error: {e}"))?;
-    println!("{}", output);
+    println!("{output}");
     Ok(())
 }
 
@@ -391,7 +388,7 @@ mod tests {
             tools: Default::default(),
             review: crate::config::ReviewConfig {
                 enabled: true,
-                reviewers: reviewers.into_iter().map(|s| s.to_string()).collect(),
+                reviewers: reviewers.into_iter().map(std::string::ToString::to_string).collect(),
             },
             push_main: false,
             agents: Default::default(),
