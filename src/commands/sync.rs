@@ -176,7 +176,7 @@ impl SyncArgs {
         };
 
         // Check staleness for each component
-        let docs_stale = Self::check_docs_staleness(&agents_dir)?;
+        let docs_stale = Self::check_docs_staleness(&agents_dir, layout)?;
         let managed_stale = Self::check_managed_section_staleness(&project_root, &config, layout)?;
         let prompts_stale = Self::check_prompts_staleness(&agents_dir)?;
         let design_docs_stale = Self::check_design_docs_staleness(&agents_dir)?;
@@ -447,9 +447,9 @@ impl SyncArgs {
         }
     }
 
-    fn check_docs_staleness(agents_dir: &Path) -> Result<bool> {
+    fn check_docs_staleness(agents_dir: &Path, layout: Layout) -> Result<bool> {
         let version_file = agents_dir.join(".version");
-        let current = compute_docs_version();
+        let current = compute_docs_version(layout);
 
         if !version_file.exists() {
             return Ok(true);
@@ -605,7 +605,7 @@ impl SyncArgs {
                 .with_context(|| format!("Failed to write {}", path.display()))?;
         }
 
-        let version = compute_docs_version();
+        let version = compute_docs_version(layout);
         fs::write(agents_dir.join(".version"), version)?;
 
         Ok(())
@@ -1686,9 +1686,16 @@ fn find_jj_root(from: &Path) -> Option<PathBuf> {
         .map(std::path::Path::to_path_buf)
 }
 
-/// Compute SHA-256 hash of all workflow docs
-fn compute_docs_version() -> String {
+/// Compute SHA-256 hash of all workflow docs for the given layout.
+///
+/// The layout is mixed into the hash so that a project changing its on-disk
+/// layout (e.g. a maw bare → root migration) invalidates the stored `.version`
+/// and triggers a re-render of the workflow docs — even though the embedded
+/// template source is unchanged.
+#[must_use]
+pub fn compute_docs_version(layout: Layout) -> String {
     let mut hasher = Sha256::new();
+    hasher.update(layout.trunk_path().as_bytes());
     for (name, content) in WORKFLOW_DOCS {
         hasher.update(name.as_bytes());
         hasher.update(content.as_bytes());
@@ -1749,7 +1756,7 @@ mod tests {
 
     #[test]
     fn test_version_hashes() {
-        let docs_ver = compute_docs_version();
+        let docs_ver = compute_docs_version(Layout::Bare);
         assert_eq!(docs_ver.len(), 32);
         assert!(docs_ver.chars().all(|c| c.is_ascii_hexdigit()));
 
@@ -1760,6 +1767,16 @@ mod tests {
         let design_ver = compute_design_docs_version();
         assert_eq!(design_ver.len(), 32);
         assert!(design_ver.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn docs_version_differs_by_layout() {
+        // A layout change must invalidate the docs version so that a maw
+        // bare -> root migration re-renders the workflow docs on next sync.
+        assert_ne!(
+            compute_docs_version(Layout::Bare),
+            compute_docs_version(Layout::Root),
+        );
     }
 
     #[test]

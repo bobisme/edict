@@ -836,8 +836,6 @@ fn build_default_env(languages: &[String]) -> std::collections::HashMap<String, 
 use crate::commands::sync::{DESIGN_DOCS, REVIEWER_PROMPTS, WORKFLOW_DOCS};
 
 fn sync_workflow_docs(agents_dir: &Path, layout: Layout) -> Result<()> {
-    use sha2::{Digest, Sha256};
-
     for (name, content) in WORKFLOW_DOCS {
         let path = agents_dir.join(name);
         let rendered = crate::template::render_workflow_doc(content, layout)
@@ -845,14 +843,9 @@ fn sync_workflow_docs(agents_dir: &Path, layout: Layout) -> Result<()> {
         fs::write(&path, rendered).with_context(|| format!("writing {}", path.display()))?;
     }
 
-    // Write version marker
-    let mut hasher = Sha256::new();
-    for (name, content) in WORKFLOW_DOCS {
-        hasher.update(name.as_bytes());
-        hasher.update(content.as_bytes());
-    }
-    let version = format!("{:x}", hasher.finalize());
-    fs::write(agents_dir.join(".version"), &version[..32])?;
+    // Write version marker (layout-aware, matching `edict sync`'s staleness check)
+    let version = crate::commands::sync::compute_docs_version(layout);
+    fs::write(agents_dir.join(".version"), version)?;
 
     Ok(())
 }
