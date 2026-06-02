@@ -46,6 +46,11 @@ pub enum HooksCommand {
 }
 
 impl HooksCommand {
+    /// Dispatch and run the selected hooks subcommand.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if the underlying install/uninstall/audit/run operation fails.
     pub fn execute(&self) -> anyhow::Result<()> {
         match self {
             Self::Install { project_root } => install_hooks(project_root.as_deref()),
@@ -119,7 +124,10 @@ fn uninstall_hooks() -> Result<()> {
             .and_then(|h| h.as_object())
             .is_some_and(serde_json::Map::is_empty)
         {
-            settings.as_object_mut().unwrap().remove("hooks");
+            settings
+                .as_object_mut()
+                .expect("settings is a JSON object")
+                .remove("hooks");
         }
 
         fs::write(&settings_path, serde_json::to_string_pretty(&settings)?)?;
@@ -182,7 +190,7 @@ fn audit_hooks(project_root: Option<&Path>, format: super::doctor::OutputFormat)
         && let Ok(config) = load_config(&root)
         && config.tools.rite
     {
-        check_rite_hooks(&root, &config, &mut issues)?;
+        check_rite_hooks(&root, &config, &mut issues);
     }
 
     match format {
@@ -220,19 +228,27 @@ fn run_hook(hook_name: &str, release: bool) -> Result<()> {
     };
 
     match hook_name {
-        "session-start" => crate::hooks::run_session_start(),
-        "post-tool-call" => crate::hooks::run_post_tool_call(stdin_input.as_deref()),
-        "session-end" => crate::hooks::run_session_end(),
-        // Backwards compat: old hook names map to new ones
-        "init-agent" | "check-jj" => crate::hooks::run_session_start(),
-        "check-rite-inbox" => crate::hooks::run_post_tool_call(stdin_input.as_deref()),
+        // "init-agent" | "check-jj" are backwards-compat aliases for "session-start"
+        "session-start" | "init-agent" | "check-jj" => {
+            crate::hooks::run_session_start();
+            Ok(())
+        }
+        // "check-rite-inbox" is a backwards-compat alias for "post-tool-call"
+        "post-tool-call" | "check-rite-inbox" => {
+            crate::hooks::run_post_tool_call(stdin_input.as_deref())
+        }
+        "session-end" => {
+            crate::hooks::run_session_end();
+            Ok(())
+        }
         "claim-agent" => {
             if release {
-                crate::hooks::run_session_end()
+                crate::hooks::run_session_end();
             } else {
                 // claim-agent on SessionStart/PostToolUse — handled by session-start/post-tool-call
-                crate::hooks::run_session_start()
+                crate::hooks::run_session_start();
             }
+            Ok(())
         }
         _ => Err(ExitError::Config(format!("unknown hook: {hook_name}")).into()),
     }
@@ -340,17 +356,20 @@ fn is_botbox_hook_entry(entry: &serde_json::Value) -> bool {
     entry["hooks"].as_array().is_some_and(|hooks| {
         hooks.iter().any(|h| {
             let cmd = &h["command"];
-            if let Some(cmd_str) = cmd.as_str() {
-                cmd_str.contains("edict hooks run") || cmd_str.contains("botbox hooks run")
-            } else if let Some(cmd_arr) = cmd.as_array() {
-                cmd_arr.len() >= 3
-                    && (cmd_arr[0].as_str() == Some("edict")
-                        || cmd_arr[0].as_str() == Some("botbox"))
-                    && cmd_arr[1].as_str() == Some("hooks")
-                    && cmd_arr[2].as_str() == Some("run")
-            } else {
-                false
-            }
+            cmd.as_str().map_or_else(
+                || {
+                    cmd.as_array().is_some_and(|cmd_arr| {
+                        cmd_arr.len() >= 3
+                            && (cmd_arr[0].as_str() == Some("edict")
+                                || cmd_arr[0].as_str() == Some("botbox"))
+                            && cmd_arr[1].as_str() == Some("hooks")
+                            && cmd_arr[2].as_str() == Some("run")
+                    })
+                },
+                |cmd_str| {
+                    cmd_str.contains("edict hooks run") || cmd_str.contains("botbox hooks run")
+                },
+            )
         })
     })
 }
@@ -358,17 +377,19 @@ fn is_botbox_hook_entry(entry: &serde_json::Value) -> bool {
 /// Check if a specific hook command matches a hook name (edict or legacy botbox)
 fn is_botbox_hook_command(h: &serde_json::Value, name: &str) -> bool {
     let cmd = &h["command"];
-    if let Some(cmd_str) = cmd.as_str() {
-        cmd_str.contains(&format!("run {name}"))
-    } else if let Some(cmd_arr) = cmd.as_array() {
-        cmd_arr.len() >= 4
-            && (cmd_arr[0].as_str() == Some("edict") || cmd_arr[0].as_str() == Some("botbox"))
-            && cmd_arr[1].as_str() == Some("hooks")
-            && cmd_arr[2].as_str() == Some("run")
-            && cmd_arr[3].as_str() == Some(name)
-    } else {
-        false
-    }
+    cmd.as_str().map_or_else(
+        || {
+            cmd.as_array().is_some_and(|cmd_arr| {
+                cmd_arr.len() >= 4
+                    && (cmd_arr[0].as_str() == Some("edict")
+                        || cmd_arr[0].as_str() == Some("botbox"))
+                    && cmd_arr[1].as_str() == Some("hooks")
+                    && cmd_arr[2].as_str() == Some("run")
+                    && cmd_arr[3].as_str() == Some(name)
+            })
+        },
+        |cmd_str| cmd_str.contains(&format!("run {name}")),
+    )
 }
 
 /// Validates a name against `[a-z0-9][a-z0-9-]*` to prevent shell injection.
@@ -402,7 +423,35 @@ fn register_rite_hooks(root: &Path, config: &Config) -> Result<()> {
     let env_inherit = "RITE_CHANNEL,RITE_MESSAGE_ID,RITE_HOOK_ID,SSH_AUTH_SOCK,OTEL_EXPORTER_OTLP_ENDPOINT,TRACEPARENT";
     let root_str = root.display().to_string();
 
-    // Register router hook (claim-based)
+    register_router_hook(
+        config,
+        project_name,
+        &agent,
+        &channel,
+        &root_str,
+        env_inherit,
+    );
+    register_reviewer_hooks(
+        config,
+        project_name,
+        &agent,
+        &channel,
+        &root_str,
+        env_inherit,
+    );
+
+    Ok(())
+}
+
+/// Register the claim-based router hook for the responder agent.
+fn register_router_hook(
+    config: &Config,
+    project_name: &str,
+    agent: &str,
+    channel: &str,
+    root_str: &str,
+    env_inherit: &str,
+) {
     let router_claim = format!("agent://{project_name}-router");
     let spawn_name = format!("{project_name}-router");
     let description = format!("edict:{project_name}:responder");
@@ -415,15 +464,15 @@ fn register_rite_hooks(root: &Path, config: &Config) -> Result<()> {
 
     let mut router_args: Vec<&str> = vec![
         "--agent",
-        &agent,
+        agent,
         "--channel",
-        &channel,
+        channel,
         "--claim",
         &router_claim,
         "--claim-owner",
-        &agent,
+        agent,
         "--cwd",
-        &root_str,
+        root_str,
         "--ttl",
         "600",
         "--",
@@ -440,7 +489,7 @@ fn register_rite_hooks(root: &Path, config: &Config) -> Result<()> {
         "--name",
         &spawn_name,
         "--cwd",
-        &root_str,
+        root_str,
         "--",
         "edict",
         "run",
@@ -451,8 +500,17 @@ fn register_rite_hooks(root: &Path, config: &Config) -> Result<()> {
         Ok((action, _)) => println!("Router hook {action} for #{channel}"),
         Err(e) => eprintln!("Warning: failed to register router hook: {e}"),
     }
+}
 
-    // Register reviewer hooks (mention-based)
+/// Register mention-based reviewer hooks for each configured reviewer.
+fn register_reviewer_hooks(
+    config: &Config,
+    project_name: &str,
+    agent: &str,
+    channel: &str,
+    root_str: &str,
+    env_inherit: &str,
+) {
     let reviewer_memory_limit = config
         .agents
         .reviewer
@@ -466,9 +524,9 @@ fn register_rite_hooks(root: &Path, config: &Config) -> Result<()> {
 
         let mut reviewer_args: Vec<&str> = vec![
             "--agent",
-            &agent,
+            agent,
             "--channel",
-            &channel,
+            channel,
             "--mention",
             &reviewer_agent,
             "--claim",
@@ -480,7 +538,7 @@ fn register_rite_hooks(root: &Path, config: &Config) -> Result<()> {
             "--priority",
             "1",
             "--cwd",
-            &root_str,
+            root_str,
             "--",
             "vessel",
             "spawn",
@@ -495,7 +553,7 @@ fn register_rite_hooks(root: &Path, config: &Config) -> Result<()> {
             "--name",
             &reviewer_agent,
             "--cwd",
-            &root_str,
+            root_str,
             "--",
             "edict",
             "run",
@@ -511,24 +569,19 @@ fn register_rite_hooks(root: &Path, config: &Config) -> Result<()> {
             }
         }
     }
-
-    Ok(())
 }
 
-fn check_rite_hooks(root: &Path, config: &Config, issues: &mut Vec<String>) -> Result<()> {
+fn check_rite_hooks(root: &Path, config: &Config, issues: &mut Vec<String>) {
     let output = run_command("rite", &["hooks", "list", "--format", "json"], Some(root));
 
-    let hooks_data = match output {
-        Ok(json) => serde_json::from_str::<serde_json::Value>(&json).ok(),
-        Err(_) => None,
-    };
+    let hooks_data = output.map_or(None, |json| {
+        serde_json::from_str::<serde_json::Value>(&json).ok()
+    });
 
-    if hooks_data.is_none() {
+    let Some(hooks_data) = hooks_data else {
         issues.push("Failed to fetch rite hooks".to_string());
-        return Ok(());
-    }
-
-    let hooks_data = hooks_data.unwrap();
+        return;
+    };
     let empty_vec = vec![];
     let hooks = hooks_data["hooks"].as_array().unwrap_or(&empty_vec);
 
@@ -555,8 +608,6 @@ fn check_rite_hooks(root: &Path, config: &Config, issues: &mut Vec<String>) -> R
             issues.push(format!("Missing rite reviewer hook for @{mention_name}"));
         }
     }
-
-    Ok(())
 }
 
 #[cfg(test)]

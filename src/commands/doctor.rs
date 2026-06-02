@@ -61,6 +61,13 @@ pub struct FileStatus {
 }
 
 impl DoctorArgs {
+    /// Run the doctor checks and print a report.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if the project config cannot be located or loaded, if
+    /// JSON serialization fails, or if any issues are found (so the process
+    /// exits non-zero).
     pub fn execute(&self) -> anyhow::Result<()> {
         let project_root = match self.project_root.clone() {
             Some(p) => p,
@@ -97,6 +104,46 @@ impl DoctorArgs {
             advice: None,
         };
 
+        Self::check_tools(&mut report, &config);
+        Self::check_project_files(&mut report, &project_root);
+
+        // Strict mode: version compatibility check (simplified)
+        if self.strict && !report.issues.is_empty() {
+            report
+                .issues
+                .insert(0, "strict mode: found issues".to_string());
+        }
+
+        let issue_count = report.issues.len();
+
+        // Format output
+        match format {
+            OutputFormat::Pretty => {
+                Self::print_pretty(&report);
+            }
+            OutputFormat::Text => {
+                Self::print_text(&report);
+            }
+            OutputFormat::Json => {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            }
+        }
+
+        // Return error with issue count for proper exit code handling
+        if issue_count > 0 {
+            return Err(crate::error::ExitError::new(
+                u8::try_from(std::cmp::min(issue_count, 125)).unwrap_or(125),
+                format!("{issue_count} issue(s) found"),
+            )
+            .into());
+        }
+
+        Ok(())
+    }
+
+    /// Probe the agent runtime and required companion tools, recording their
+    /// status (and any missing-tool issues) into `report`.
+    fn check_tools(report: &mut DoctorReport, config: &Config) {
         // Check tools
         // Always check for Pi (default agent runtime)
         let pi_output = Tool::new("pi").arg("--version").run();
@@ -155,7 +202,11 @@ impl DoctorArgs {
                 });
             }
         }
+    }
 
+    /// Check for expected project files/directories, recording their presence
+    /// (and any missing-file issues) into `report`.
+    fn check_project_files(report: &mut DoctorReport, project_root: &std::path::Path) {
         // Check project files
         let agents_dir = project_root.join(".agents/edict");
         let agents_exists = agents_dir.exists();
@@ -193,42 +244,9 @@ impl DoctorArgs {
                 .issues
                 .push("CLAUDE.md symlink not found".to_string());
         }
-
-        // Strict mode: version compatibility check (simplified)
-        if self.strict && !report.issues.is_empty() {
-            report
-                .issues
-                .insert(0, "strict mode: found issues".to_string());
-        }
-
-        let issue_count = report.issues.len();
-
-        // Format output
-        match format {
-            OutputFormat::Pretty => {
-                self.print_pretty(&report);
-            }
-            OutputFormat::Text => {
-                self.print_text(&report);
-            }
-            OutputFormat::Json => {
-                println!("{}", serde_json::to_string_pretty(&report)?);
-            }
-        }
-
-        // Return error with issue count for proper exit code handling
-        if issue_count > 0 {
-            return Err(crate::error::ExitError::new(
-                std::cmp::min(issue_count, 125) as u8,
-                format!("{issue_count} issue(s) found"),
-            )
-            .into());
-        }
-
-        Ok(())
     }
 
-    fn print_pretty(&self, report: &DoctorReport) {
+    fn print_pretty(report: &DoctorReport) {
         println!("=== Botbox Doctor ===\n");
         println!("Project: {}", report.config.project);
         println!("Version: {}", report.config.version);
@@ -243,7 +261,7 @@ impl DoctorArgs {
                     println!(
                         "  ✓ {}: {}",
                         tool.name,
-                        tool.version.as_ref().unwrap_or(&"OK".to_string())
+                        tool.version.as_deref().unwrap_or("OK")
                     );
                 } else {
                     println!("  ✗ {}: NOT FOUND", tool.name);
@@ -274,7 +292,7 @@ impl DoctorArgs {
         }
     }
 
-    fn print_text(&self, report: &DoctorReport) {
+    fn print_text(report: &DoctorReport) {
         println!(
             "edict-doctor  project={}  version={}  agent={}  channel={}",
             report.config.project,

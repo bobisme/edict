@@ -1,3 +1,4 @@
+use std::fmt::Write;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -46,7 +47,7 @@ impl Journal {
 
         let mut header = format!("\n--- {timestamp}");
         if let Some(cid) = change_id {
-            header.push_str(&format!(" | git:{cid}"));
+            write!(header, " | git:{cid}").expect("writing to a String is infallible");
         }
         header.push_str(" ---\n");
 
@@ -89,13 +90,16 @@ impl Journal {
 
 /// Get the XDG-compliant cache directory for edict.
 fn get_cache_dir(project_root: &Path) -> PathBuf {
-    let base = if let Ok(xdg) = std::env::var("XDG_CACHE_HOME") {
-        PathBuf::from(xdg)
-    } else if cfg!(target_os = "macos") {
-        dirs_home().join("Library/Caches")
-    } else {
-        dirs_home().join(".cache")
-    };
+    let base = std::env::var("XDG_CACHE_HOME").map_or_else(
+        |_| {
+            if cfg!(target_os = "macos") {
+                dirs_home().join("Library/Caches")
+            } else {
+                dirs_home().join(".cache")
+            }
+        },
+        PathBuf::from,
+    );
 
     // Slugify the project path
     let canonical = project_root
@@ -150,12 +154,19 @@ fn chrono_timestamp() -> String {
 }
 
 /// Convert days since epoch to (year, month, day).
+// The i64<->u64 casts are inherent to Howard Hinnant's civil-date algorithm and
+// are safe for the representable date range; the algorithm is reproduced verbatim.
+#[allow(
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    reason = "intentional casts in the verbatim Hinnant civil-date algorithm"
+)]
 const fn days_to_date(days: u64) -> (u64, u64, u64) {
     // Civil date algorithm from Howard Hinnant
-    let z = days as i64 + 719468;
-    let era = if z >= 0 { z } else { z - 146096 } / 146097;
-    let doe = (z - era * 146097) as u64;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let z = days as i64 + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
     let y = yoe as i64 + era * 400;
     let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
     let mp = (5 * doy + 2) / 153;

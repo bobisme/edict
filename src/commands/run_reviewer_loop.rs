@@ -1,5 +1,6 @@
 //! Reviewer loop implementation - processes code reviews across workspaces
 
+use std::fmt::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use std::{env, fs};
@@ -29,10 +30,7 @@ pub fn derive_role_from_agent_name(agent_name: &str) -> Option<String> {
 /// e.g., Some("security") -> "reviewer-security", None -> "reviewer"
 #[must_use]
 pub fn get_reviewer_prompt_name(role: Option<&str>) -> String {
-    match role {
-        Some(r) => format!("reviewer-{r}"),
-        None => "reviewer".to_string(),
-    }
+    role.map_or_else(|| "reviewer".to_string(), |r| format!("reviewer-{r}"))
 }
 
 /// Validate that a name matches expected agent/project pattern (alphanumeric + hyphens).
@@ -50,6 +48,11 @@ fn validate_name(name: &str, label: &str) -> Result<()> {
 }
 
 /// Load a prompt template and substitute `{{ VARIABLE }}` placeholders.
+///
+/// # Errors
+///
+/// Returns `Err` if a name fails validation, the prompt name is unsafe, or the
+/// template file cannot be read.
 pub fn load_prompt(
     prompt_name: &str,
     agent: &str,
@@ -314,14 +317,18 @@ fn build_prompt(
             base_prompt.push_str("### Reviews awaiting vote:\n");
             for item in reviews {
                 let title = item.title.as_deref().unwrap_or("(no title)");
-                base_prompt.push_str(&format!(
-                    "- Review {} in workspace **{}**: {}\n",
+                writeln!(
+                    base_prompt,
+                    "- Review {} in workspace **{}**: {}",
                     item.review_id, item.workspace, title
-                ));
-                base_prompt.push_str(&format!(
-                    "  → maw exec {} -- seal review {}\n",
+                )
+                .expect("writing to a String is infallible");
+                writeln!(
+                    base_prompt,
+                    "  → maw exec {} -- seal review {}",
                     item.workspace, item.review_id
-                ));
+                )
+                .expect("writing to a String is infallible");
             }
         }
 
@@ -334,23 +341,29 @@ fn build_prompt(
                     format!(" (review {})", item.review_id)
                 };
                 let thread_id = item.thread_id.as_deref().unwrap_or("");
-                base_prompt.push_str(&format!(
-                    "- Thread {} in workspace **{}**{}\n",
+                writeln!(
+                    base_prompt,
+                    "- Thread {} in workspace **{}**{}",
                     thread_id, item.workspace, review_info
-                ));
-                base_prompt.push_str(&format!(
-                    "  → maw exec {} -- seal review {}\n",
+                )
+                .expect("writing to a String is infallible");
+                writeln!(
+                    base_prompt,
+                    "  → maw exec {} -- seal review {}",
                     item.workspace, item.review_id
-                ));
+                )
+                .expect("writing to a String is infallible");
             }
         }
     }
 
     // Append previous iteration context if available
     if let Some((content, age)) = last_iteration {
-        base_prompt.push_str(&format!(
-            "\n\n## PREVIOUS ITERATION ({age}, may be stale)\n\n{content}\n"
-        ));
+        writeln!(
+            base_prompt,
+            "\n\n## PREVIOUS ITERATION ({age}, may be stale)\n\n{content}"
+        )
+        .expect("writing to a String is infallible");
     }
 
     Ok(layout.rewrite_prompt(base_prompt))
@@ -382,7 +395,7 @@ fn read_last_iteration(journal_path: &Path) -> Option<(String, String)> {
 }
 
 /// Cleanup handler - release claims, clear status, send sign-off.
-fn cleanup(agent: &str, project: &str, already_signed_off: bool) -> Result<()> {
+fn cleanup(agent: &str, project: &str, already_signed_off: bool) {
     eprintln!("Cleaning up...");
 
     // All subprocess spawns below use .new_process_group() so they run in their
@@ -422,10 +435,141 @@ fn cleanup(agent: &str, project: &str, already_signed_off: bool) -> Result<()> {
         .run();
 
     eprintln!("Cleanup complete for {agent}.");
+}
+
+/// Refresh the reviewer's claim, staking a fresh one if refresh fails.
+fn refresh_or_stake_claim(agent: &str, project: &str) {
+    let refresh = Tool::new("rite")
+        .args(&[
+            "claims",
+            "refresh",
+            "--agent",
+            agent,
+            &format!("agent://{agent}"),
+        ])
+        .run();
+
+    if refresh.is_err() || !refresh.as_ref().expect("refresh is Ok here").success() {
+        let stake = Tool::new("rite")
+            .args(&[
+                "claims",
+                "stake",
+                "--agent",
+                agent,
+                &format!("agent://{agent}"),
+                "-m",
+                &format!("reviewer-loop for {project}"),
+            ])
+            .run();
+
+        if stake.is_err() || !stake.as_ref().expect("stake is Ok here").success() {
+            eprintln!("Claim held by another agent, continuing");
+        }
+    }
+}
+
+/// Announce that the reviewer is online and set the starting status.
+fn announce_online(agent: &str, project: &str) {
+    let _ = Tool::new("rite")
+        .args(&[
+            "send",
+            "--agent",
+            agent,
+            project,
+            &format!("Reviewer {agent} online, starting review loop"),
+            "-L",
+            "spawn-ack",
+        ])
+        .run();
+
+    let _ = Tool::new("rite")
+        .args(&[
+            "statuses",
+            "set",
+            "--agent",
+            agent,
+            "Starting loop",
+            "--ttl",
+            "10m",
+        ])
+        .run();
+}
+
+/// Run a single review iteration: build the prompt and invoke the agent.
+fn run_one_iteration(
+    agent: &str,
+    project: &str,
+    work_items: &[WorkItem],
+    journal_path: &Path,
+    model: &str,
+    timeout: u64,
+) -> Result<()> {
+    let review_count = work_items.iter().filter(|w| !w.is_thread).count();
+    let thread_count = work_items.iter().filter(|w| w.is_thread).count();
+    eprintln!("  {review_count} reviews awaiting vote, {thread_count} threads with responses");
+
+    // Build prompt
+    let last_iteration = read_last_iteration(journal_path);
+    let last_iter_ref = last_iteration
+        .as_ref()
+        .map(|(content, age)| (content.as_str(), age.as_str()));
+
+    let prompt = build_prompt(agent, project, work_items, last_iter_ref)?;
+
+    // Run agent (auto-selects runner based on model provider)
+    let reviewer_start = crate::telemetry::metrics::time_start();
+    let run_agent_result =
+        crate::commands::run_agent::run_agent("auto", &prompt, Some(model), timeout, None, true);
+    crate::telemetry::metrics::time_record(
+        "edict.reviewer.agent_run_duration_seconds",
+        reviewer_start,
+        &[("agent", agent)],
+    );
+
+    match run_agent_result {
+        Ok(()) => {
+            eprintln!("✓ Review iteration complete");
+        }
+        Err(e) => {
+            eprintln!("Error running Claude: {e}");
+            // Continue to next iteration on error
+        }
+    }
+
     Ok(())
 }
 
+/// Send the idle sign-off message when no reviews are pending.
+fn announce_idle(agent: &str, project: &str) {
+    let _ = Tool::new("rite")
+        .args(&["statuses", "set", "--agent", agent, "Idle"])
+        .run();
+
+    eprintln!("No reviews pending. Exiting cleanly.");
+
+    let _ = Tool::new("rite")
+        .args(&[
+            "send",
+            "--agent",
+            agent,
+            project,
+            &format!("No reviews pending. Reviewer {agent} signing off."),
+            "-L",
+            "agent-idle",
+        ])
+        .run();
+}
+
 /// Main entry point for reviewer-loop.
+///
+/// # Errors
+///
+/// Returns `Err` if changing to the project root, loading config, resolving the
+/// journal path, or any required tool invocation fails.
+///
+/// # Panics
+///
+/// Panics if a successful claim refresh or stake result cannot be unwrapped.
 pub fn run_reviewer_loop(
     project_root: Option<PathBuf>,
     agent_override: Option<String>,
@@ -470,7 +614,7 @@ pub fn run_reviewer_loop(
         .agents
         .reviewer
         .clone()
-        .unwrap_or(ReviewerAgentConfig {
+        .unwrap_or_else(|| ReviewerAgentConfig {
             model: "opus".to_string(),
             max_loops: 20,
             pause: 2,
@@ -503,59 +647,10 @@ pub fn run_reviewer_loop(
     }
 
     // Try to refresh claim, otherwise stake
-    let refresh = Tool::new("rite")
-        .args(&[
-            "claims",
-            "refresh",
-            "--agent",
-            &agent,
-            &format!("agent://{agent}"),
-        ])
-        .run();
+    refresh_or_stake_claim(&agent, &project);
 
-    if refresh.is_err() || !refresh.as_ref().unwrap().success() {
-        let stake = Tool::new("rite")
-            .args(&[
-                "claims",
-                "stake",
-                "--agent",
-                &agent,
-                &format!("agent://{agent}"),
-                "-m",
-                &format!("reviewer-loop for {project}"),
-            ])
-            .run();
-
-        if stake.is_err() || !stake.as_ref().unwrap().success() {
-            eprintln!("Claim held by another agent, continuing");
-        }
-    }
-
-    // Announce
-    let _ = Tool::new("rite")
-        .args(&[
-            "send",
-            "--agent",
-            &agent,
-            &project,
-            &format!("Reviewer {agent} online, starting review loop"),
-            "-L",
-            "spawn-ack",
-        ])
-        .run();
-
-    // Set starting status
-    let _ = Tool::new("rite")
-        .args(&[
-            "statuses",
-            "set",
-            "--agent",
-            &agent,
-            "Starting loop",
-            "--ttl",
-            "10m",
-        ])
-        .run();
+    // Announce online and set starting status
+    announce_online(&agent, &project);
 
     // Truncate journal at start
     if journal_path.exists() {
@@ -566,7 +661,7 @@ pub fn run_reviewer_loop(
     let cleanup_agent = agent.clone();
     let cleanup_project = project.clone();
     let _ = ctrlc::set_handler(move || {
-        let _ = cleanup(&cleanup_agent, &cleanup_project, false);
+        cleanup(&cleanup_agent, &cleanup_project, false);
         std::process::exit(0);
     });
 
@@ -584,65 +679,19 @@ pub fn run_reviewer_loop(
         let work_items = find_work(&agent)?;
 
         if work_items.is_empty() {
-            let _ = Tool::new("rite")
-                .args(&["statuses", "set", "--agent", &agent, "Idle"])
-                .run();
-
-            eprintln!("No reviews pending. Exiting cleanly.");
-
-            let _ = Tool::new("rite")
-                .args(&[
-                    "send",
-                    "--agent",
-                    &agent,
-                    &project,
-                    &format!("No reviews pending. Reviewer {agent} signing off."),
-                    "-L",
-                    "agent-idle",
-                ])
-                .run();
-
+            announce_idle(&agent, &project);
             already_signed_off = true;
             break;
         }
 
-        let review_count = work_items.iter().filter(|w| !w.is_thread).count();
-        let thread_count = work_items.iter().filter(|w| w.is_thread).count();
-        eprintln!("  {review_count} reviews awaiting vote, {thread_count} threads with responses");
-
-        // Build prompt
-        let last_iteration = read_last_iteration(&journal_path);
-        let last_iter_ref = last_iteration
-            .as_ref()
-            .map(|(content, age)| (content.as_str(), age.as_str()));
-
-        let prompt = build_prompt(&agent, &project, &work_items, last_iter_ref)?;
-
-        // Run agent (auto-selects runner based on model provider)
-        let reviewer_start = crate::telemetry::metrics::time_start();
-        let run_agent_result = crate::commands::run_agent::run_agent(
-            "auto",
-            &prompt,
-            Some(&model),
+        run_one_iteration(
+            &agent,
+            &project,
+            &work_items,
+            &journal_path,
+            &model,
             timeout,
-            None,
-            true,
-        );
-        crate::telemetry::metrics::time_record(
-            "edict.reviewer.agent_run_duration_seconds",
-            reviewer_start,
-            &[("agent", &agent)],
-        );
-
-        match run_agent_result {
-            Ok(()) => {
-                eprintln!("✓ Review iteration complete");
-            }
-            Err(e) => {
-                eprintln!("Error running Claude: {e}");
-                // Continue to next iteration on error
-            }
-        }
+        )?;
 
         // Pause between iterations (except for the last one)
         if i < max_loops {
@@ -650,7 +699,7 @@ pub fn run_reviewer_loop(
         }
     }
 
-    cleanup(&agent, &project, already_signed_off)?;
+    cleanup(&agent, &project, already_signed_off);
 
     Ok(())
 }

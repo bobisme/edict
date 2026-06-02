@@ -4,6 +4,7 @@
 //! and performs $WS placeholder substitution for workspace names.
 
 use serde::{Deserialize, Serialize};
+use std::fmt::Write;
 use std::process::{Command, Stdio};
 use thiserror::Error;
 
@@ -36,8 +37,6 @@ pub struct ExecutionReport {
 pub enum ExecutionError {
     #[error("failed to spawn command: {0}")]
     SpawnFailed(String),
-    #[error("failed to capture command output: {0}")]
-    OutputCaptureFailed(String),
 }
 
 /// Execute a list of shell commands sequentially.
@@ -54,17 +53,19 @@ pub enum ExecutionError {
 /// - Step 1: `maw ws create bd-abc --description 'Fix bug' --from main` outputs "Creating workspace 'frost-castle'"
 /// - Step 2: `rite claims stake --agent $AGENT "workspace://project/$WS"` becomes
 ///   `rite claims stake --agent $AGENT "workspace://project/frost-castle"`
+///
+/// # Errors
+///
+/// Returns [`ExecutionError::SpawnFailed`] if a command cannot be spawned.
 pub fn execute_steps(steps: &[String]) -> Result<ExecutionReport, ExecutionError> {
     let mut results = Vec::new();
     let mut workspace_name: Option<String> = None;
 
     for (idx, step) in steps.iter().enumerate() {
         // Apply $WS substitution if workspace name is known
-        let effective_step = if let Some(ref ws) = workspace_name {
-            step.replace("$WS", ws)
-        } else {
-            step.clone()
-        };
+        let effective_step = workspace_name
+            .as_ref()
+            .map_or_else(|| step.clone(), |ws| step.replace("$WS", ws));
 
         // Execute the command via sh -c
         let output = Command::new("sh")
@@ -124,7 +125,11 @@ fn extract_workspace_name(stdout: &str) -> Option<String> {
                 && ws_name
                     .chars()
                     .all(|c| c.is_ascii_alphanumeric() || c == '-')
-                && ws_name.chars().next().unwrap().is_ascii_alphanumeric()
+                && ws_name
+                    .chars()
+                    .next()
+                    .expect("ws_name is non-empty")
+                    .is_ascii_alphanumeric()
             {
                 return Some(ws_name.to_string());
             }
@@ -138,7 +143,11 @@ fn extract_workspace_name(stdout: &str) -> Option<String> {
             && trimmed
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || c == '-')
-            && trimmed.chars().next().unwrap().is_ascii_alphanumeric()
+            && trimmed
+                .chars()
+                .next()
+                .expect("trimmed is non-empty")
+                .is_ascii_alphanumeric()
         {
             return Some(trimmed.to_string());
         }
@@ -179,17 +188,19 @@ fn render_text(report: &ExecutionReport) -> String {
         let step_num = idx + 1;
         let status = if result.success { "ok" } else { "FAILED" };
 
-        out.push_str(&format!(
+        write!(
+            out,
             "step {}/{}  {}  {}",
             step_num, total, result.command, status
-        ));
+        )
+        .expect("writing to a String is infallible");
 
         // If this was a workspace creation, show the workspace name
         if result.command.contains("maw ws create")
             && result.success
             && let Some(ws) = extract_workspace_name(&result.stdout)
         {
-            out.push_str(&format!("  ws={ws}"));
+            write!(out, "  ws={ws}").expect("writing to a String is infallible");
         }
 
         out.push('\n');
@@ -197,7 +208,8 @@ fn render_text(report: &ExecutionReport) -> String {
 
     for (idx, _remaining) in report.remaining.iter().enumerate() {
         let step_num = report.results.len() + idx + 1;
-        out.push_str(&format!("step {step_num}/{total}  (not executed)\n"));
+        writeln!(out, "step {step_num}/{total}  (not executed)")
+            .expect("writing to a String is infallible");
     }
 
     out
@@ -233,7 +245,7 @@ fn render_json(report: &ExecutionReport) -> String {
         "remaining": report.remaining,
     });
 
-    serde_json::to_string_pretty(&report_json).unwrap()
+    serde_json::to_string_pretty(&report_json).expect("report JSON is serializable")
 }
 
 /// Render execution report with color codes (TTY/human format).
@@ -256,17 +268,19 @@ fn render_pretty(report: &ExecutionReport) -> String {
             ("✗", red)
         };
 
-        out.push_str(&format!(
+        write!(
+            out,
             "step {}/{}  {}  {}{}{}",
             step_num, total, result.command, color, symbol, reset
-        ));
+        )
+        .expect("writing to a String is infallible");
 
         // If this was a workspace creation, show the workspace name
         if result.command.contains("maw ws create")
             && result.success
             && let Some(ws) = extract_workspace_name(&result.stdout)
         {
-            out.push_str(&format!("  {gray}ws={ws}{reset}"));
+            write!(out, "  {gray}ws={ws}{reset}").expect("writing to a String is infallible");
         }
 
         out.push('\n');
@@ -274,9 +288,8 @@ fn render_pretty(report: &ExecutionReport) -> String {
 
     for (idx, _remaining) in report.remaining.iter().enumerate() {
         let step_num = report.results.len() + idx + 1;
-        out.push_str(&format!(
-            "step {step_num}/{total}  {gray}(not executed){reset}\n"
-        ));
+        writeln!(out, "step {step_num}/{total}  {gray}(not executed){reset}")
+            .expect("writing to a String is infallible");
     }
 
     out

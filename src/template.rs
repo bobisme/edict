@@ -53,7 +53,7 @@ pub struct LayoutVars {
     pub trunk_path: String,
     /// Workspace path prefix with trailing slash (`.maw/workspaces/` or `ws/`).
     pub ws_prefix: String,
-    /// Trunk command prefix incl. trailing space (`` or `maw exec default -- `).
+    /// Trunk command prefix incl. trailing space (empty or `maw exec default -- `).
     pub default_prefix: String,
 }
 
@@ -76,6 +76,10 @@ impl LayoutVars {
 /// Workflow docs are plain Markdown that may contain `{{ bn }}`, `{{ ws_prefix }}`,
 /// `{% if is_root_layout %}` and the other [`LayoutVars`] fields. Docs with no
 /// directives render unchanged.
+///
+/// # Errors
+///
+/// Returns an error if the doc contains invalid jinja that fails to render.
 pub fn render_workflow_doc(content: &str, layout: Layout) -> anyhow::Result<String> {
     let mut env = Environment::new();
     // Preserve the doc's trailing newline (minijinja strips it by default), so
@@ -204,18 +208,21 @@ fn list_design_docs(project_types: &[String]) -> Vec<DocEntry> {
     let mut docs = Vec::new();
 
     // cli-conventions is eligible for all project types
-    for _project_type in project_types {
+    if !project_types.is_empty() {
         docs.push(DocEntry {
             name: "cli-conventions.md".to_string(),
             description: "CLI tool design for humans, agents, and machines".to_string(),
         });
-        break; // Add once, not per type
     }
 
     docs
 }
 
 /// Render the AGENTS.md managed section
+///
+/// # Errors
+///
+/// Returns an error if the managed-section template fails to load or render.
 pub fn render_managed_section(ctx: &TemplateContext) -> anyhow::Result<String> {
     let mut env = Environment::new();
     env.add_template("agents-managed", AGENTS_MANAGED_TEMPLATE)?;
@@ -227,6 +234,10 @@ pub fn render_managed_section(ctx: &TemplateContext) -> anyhow::Result<String> {
 }
 
 /// Render a complete AGENTS.md file for a new project
+///
+/// # Errors
+///
+/// Returns an error if the managed-section template fails to render.
 pub fn render_agents_md(config: &Config, layout: Layout) -> anyhow::Result<String> {
     let ctx = TemplateContext::from_config(config, layout);
 
@@ -263,6 +274,10 @@ pub fn render_agents_md(config: &Config, layout: Layout) -> anyhow::Result<Strin
 /// Handles both current (`edict:managed-*`) and legacy (`botbox:managed-*`) markers,
 /// always writing back with current markers. This enables automatic migration of
 /// AGENTS.md files from botbox-era projects on the next `edict sync`.
+///
+/// # Errors
+///
+/// Returns an error if the managed-section template fails to render.
 pub fn update_managed_section(content: &str, ctx: &TemplateContext) -> anyhow::Result<String> {
     let managed = render_managed_section(ctx)?;
     let full_managed = format!("{MANAGED_START}\n{managed}\n{MANAGED_END}");

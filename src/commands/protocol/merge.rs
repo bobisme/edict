@@ -22,6 +22,11 @@ use crate::config::Config;
 /// - If `provided` is `Some`, returns it as-is.
 /// - If stdin is not a TTY, returns an error asking for `--message`.
 /// - If stdin is a TTY, opens `$EDITOR` → `$VISUAL` → `vi` with a template, reads the result.
+///
+/// # Errors
+///
+/// Returns an error when no message is provided in non-interactive mode, the
+/// editor cannot be launched or exits non-zero, or the resulting message is empty.
 pub fn resolve_message(provided: Option<&str>) -> anyhow::Result<String> {
     if let Some(msg) = provided {
         return Ok(msg.to_string());
@@ -96,13 +101,12 @@ struct MergeCheckResult {
 
 impl MergeCheckResult {
     fn is_ready(&self) -> bool {
-        if let Some(ready) = self.ready {
-            ready
-        } else if let Some(status) = &self.status {
-            matches!(status.as_str(), "clean" | "ready" | "ok") && !self.has_conflicts
-        } else {
-            !self.has_conflicts && self.conflicts.is_empty() && !self.stale
-        }
+        self.ready.unwrap_or_else(|| {
+            self.status.as_ref().map_or_else(
+                || !self.has_conflicts && self.conflicts.is_empty() && !self.stale,
+                |status| matches!(status.as_str(), "clean" | "ready" | "ok") && !self.has_conflicts,
+            )
+        })
     }
 
     fn conflict_labels(&self) -> Vec<String> {
@@ -131,6 +135,15 @@ impl MergeCheckResult {
 }
 
 /// Execute the merge protocol command.
+///
+/// # Errors
+///
+/// Returns an error when guidance fails to render or, in execute mode, when
+/// the merge steps fail to run.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "CLI command entry point: each arg is a distinct user-facing option"
+)]
 pub fn execute(
     workspace: &str,
     message: &str,
@@ -184,49 +197,8 @@ pub fn execute(
     // Try to find the associated bone from workspace claims
     let bone_id = find_bone_for_workspace(&ctx, workspace);
 
-    if let Some(ref bone_id) = bone_id {
-        guidance.bone = Some(render::BoneRef {
-            id: bone_id.clone(),
-            title: String::new(), // filled below if bone found
-        });
-
-        // Check bone status
-        match ctx.bone_status(bone_id) {
-            Ok(bone_info) => {
-                guidance.bone = Some(render::BoneRef {
-                    id: bone_id.clone(),
-                    title: bone_info.title.clone(),
-                });
-
-                if bone_info.state != "done" && !force {
-                    guidance.status = ProtocolStatus::Blocked;
-                    guidance.diagnostic(format!(
-                        "Bone {} is '{}', expected 'done'. Worker may still be working.",
-                        bone_id, bone_info.state
-                    ));
-                    guidance.advise(format!(
-                        "Wait for worker to finish bone {bone_id}, or use --force to merge anyway."
-                    ));
-
-                    let mut steps = Vec::new();
-                    steps.push(format!("maw exec default -- bn show {bone_id}"));
-                    guidance.steps(steps);
-
-                    print_guidance(&guidance, format)?;
-                    return Ok(());
-                }
-            }
-            Err(_) => {
-                guidance.diagnostic(format!(
-                    "Could not fetch bone {bone_id} — it may have been deleted. Proceeding with merge."
-                ));
-            }
-        }
-    } else {
-        guidance.diagnostic(
-            "No associated bone found for this workspace. Proceeding without bone check."
-                .to_string(),
-        );
+    if check_bone_gate(&mut guidance, &ctx, bone_id.as_deref(), force, format)? {
+        return Ok(());
     }
 
     // Check review gate (if enabled)
@@ -238,128 +210,29 @@ pub fn execute(
         .collect();
     let review_enabled = config.review.enabled && !required_reviewers.is_empty();
 
-    if review_enabled && !force {
-        match find_review_for_workspace(&ctx, workspace) {
-            Some((review_id, review_detail)) => {
-                let decision =
-                    review_gate::evaluate_review_gate(&review_detail, &required_reviewers);
-                if merge_target.is_none() {
-                    merge_target = review_detail.change_id;
-                }
-                guidance.review = Some(render::ReviewRef {
-                    review_id: review_id.clone(),
-                    status: decision.status_str().to_string(),
-                });
-
-                match decision.status {
-                    ReviewGateStatus::Approved => {
-                        // Good — review approved, proceed to merge
-                    }
-                    ReviewGateStatus::Blocked => {
-                        guidance.status = ProtocolStatus::Blocked;
-                        guidance.diagnostic(format!(
-                            "Review {} is blocked by: {}. Resolve feedback before merging.",
-                            review_id,
-                            decision.blocked_by.join(", ")
-                        ));
-                        guidance.advise(
-                            "Address reviewer feedback, then re-request review.".to_string(),
-                        );
-
-                        let mut steps = Vec::new();
-                        steps.push(shell::seal_show_cmd(workspace, &review_id));
-                        guidance.steps(steps);
-
-                        print_guidance(&guidance, format)?;
-                        return Ok(());
-                    }
-                    ReviewGateStatus::NeedsReview => {
-                        guidance.status = ProtocolStatus::NeedsReview;
-                        guidance.diagnostic(format!(
-                            "Review {} still awaiting votes from: {}",
-                            review_id,
-                            decision.missing_approvals.join(", ")
-                        ));
-                        guidance.advise(
-                            "Wait for reviewers or re-request review before merging.".to_string(),
-                        );
-
-                        let mut steps = Vec::new();
-                        steps.push(shell::seal_show_cmd(workspace, &review_id));
-                        guidance.steps(steps);
-
-                        print_guidance(&guidance, format)?;
-                        return Ok(());
-                    }
-                }
-            }
-            None => {
-                if !force {
-                    guidance.status = ProtocolStatus::NeedsReview;
-                    guidance.diagnostic(
-                        "Review is enabled but no review exists for this workspace.".to_string(),
-                    );
-                    guidance.advise(
-                        "Create a review before merging, or use --force to skip review gate."
-                            .to_string(),
-                    );
-
-                    let mut steps = Vec::new();
-                    let title = bone_id.as_ref().map_or_else(
-                        || format!("Work from {workspace}"),
-                        |id| format!("Work from {id}"),
-                    );
-                    steps.push(shell::seal_create_cmd(
-                        workspace,
-                        "agent",
-                        &title,
-                        &required_reviewers.join(","),
-                    ));
-                    guidance.steps(steps);
-
-                    print_guidance(&guidance, format)?;
-                    return Ok(());
-                }
-            }
-        }
+    if review_enabled
+        && !force
+        && check_review_gate(
+            &mut guidance,
+            &ctx,
+            workspace,
+            bone_id.as_deref(),
+            &required_reviewers,
+            &mut merge_target,
+            format,
+        )?
+    {
+        return Ok(());
     }
 
-    // Pre-flight conflict check via `maw ws merge --into <target> --check`
-    match run_merge_check(workspace, merge_target.as_deref()) {
-        Ok(check) => {
-            if !check.is_ready() {
-                guidance.status = ProtocolStatus::Blocked;
-                let conflict_labels = check.conflict_labels();
-                if !conflict_labels.is_empty() {
-                    guidance.diagnostic(format!(
-                        "Merge would produce conflicts in {} file(s): {}",
-                        conflict_labels.len(),
-                        conflict_labels.join(", ")
-                    ));
-                }
-                if check.stale {
-                    guidance
-                        .diagnostic("Workspace is stale — run `maw ws sync` first.".to_string());
-                }
-                if let Some(message) = check.message.as_deref() {
-                    guidance.diagnostic(message.to_string());
-                }
-                add_conflict_recovery_guidance(
-                    &mut guidance,
-                    workspace,
-                    merge_target.as_deref(),
-                    message,
-                );
-                print_guidance(&guidance, format)?;
-                return Ok(());
-            }
-        }
-        Err(e) => {
-            // --check failed (maybe old maw version). Warn but proceed.
-            guidance.diagnostic(format!(
-                "Pre-flight check failed ({e}). Proceeding without conflict detection."
-            ));
-        }
+    if check_conflict_gate(
+        &mut guidance,
+        workspace,
+        merge_target.as_deref(),
+        message,
+        format,
+    )? {
+        return Ok(());
     }
 
     // All preconditions met — build merge steps
@@ -372,13 +245,15 @@ pub fn execute(
 
     build_merge_steps(
         &mut guidance,
-        workspace,
-        project,
-        message,
-        merge_target.as_deref(),
-        bone_id.as_deref(),
-        review_id.as_deref(),
-        config.push_main,
+        &MergeStepsParams {
+            workspace,
+            project,
+            message,
+            merge_target: merge_target.as_deref(),
+            bone_id: bone_id.as_deref(),
+            review_id: review_id.as_deref(),
+            push_main: config.push_main,
+        },
     );
 
     // Execute if --execute flag is set
@@ -401,6 +276,194 @@ pub fn execute(
     Ok(())
 }
 
+/// Check the bone-status gate. Returns `Ok(true)` when the caller should stop
+/// (guidance was printed), `Ok(false)` to continue.
+fn check_bone_gate(
+    guidance: &mut ProtocolGuidance,
+    ctx: &ProtocolContext,
+    bone_id: Option<&str>,
+    force: bool,
+    format: OutputFormat,
+) -> anyhow::Result<bool> {
+    let Some(bone_id) = bone_id else {
+        guidance.diagnostic(
+            "No associated bone found for this workspace. Proceeding without bone check."
+                .to_string(),
+        );
+        return Ok(false);
+    };
+
+    guidance.bone = Some(render::BoneRef {
+        id: bone_id.to_string(),
+        title: String::new(), // filled below if bone found
+    });
+
+    // Check bone status
+    match ctx.bone_status(bone_id) {
+        Ok(bone_info) => {
+            guidance.bone = Some(render::BoneRef {
+                id: bone_id.to_string(),
+                title: bone_info.title.clone(),
+            });
+
+            if bone_info.state != "done" && !force {
+                guidance.status = ProtocolStatus::Blocked;
+                guidance.diagnostic(format!(
+                    "Bone {} is '{}', expected 'done'. Worker may still be working.",
+                    bone_id, bone_info.state
+                ));
+                guidance.advise(format!(
+                    "Wait for worker to finish bone {bone_id}, or use --force to merge anyway."
+                ));
+
+                let mut steps = Vec::new();
+                steps.push(format!("maw exec default -- bn show {bone_id}"));
+                guidance.steps(steps);
+
+                print_guidance(guidance, format)?;
+                return Ok(true);
+            }
+        }
+        Err(_) => {
+            guidance.diagnostic(format!(
+                "Could not fetch bone {bone_id} — it may have been deleted. Proceeding with merge."
+            ));
+        }
+    }
+
+    Ok(false)
+}
+
+/// Check the review gate. Only called when review is enabled and not forced.
+/// Returns `Ok(true)` when the caller should stop (guidance was printed),
+/// `Ok(false)` to continue. May update `merge_target` from the review detail.
+fn check_review_gate(
+    guidance: &mut ProtocolGuidance,
+    ctx: &ProtocolContext,
+    workspace: &str,
+    bone_id: Option<&str>,
+    required_reviewers: &[String],
+    merge_target: &mut Option<String>,
+    format: OutputFormat,
+) -> anyhow::Result<bool> {
+    if let Some((review_id, review_detail)) = find_review_for_workspace(ctx, workspace) {
+        let decision = review_gate::evaluate_review_gate(&review_detail, required_reviewers);
+        if merge_target.is_none() {
+            *merge_target = review_detail.change_id;
+        }
+        guidance.review = Some(render::ReviewRef {
+            review_id: review_id.clone(),
+            status: decision.status_str().to_string(),
+        });
+
+        match decision.status {
+            ReviewGateStatus::Approved => {
+                // Good — review approved, proceed to merge
+            }
+            ReviewGateStatus::Blocked => {
+                guidance.status = ProtocolStatus::Blocked;
+                guidance.diagnostic(format!(
+                    "Review {} is blocked by: {}. Resolve feedback before merging.",
+                    review_id,
+                    decision.blocked_by.join(", ")
+                ));
+                guidance.advise("Address reviewer feedback, then re-request review.".to_string());
+
+                let steps = vec![shell::seal_show_cmd(workspace, &review_id)];
+                guidance.steps(steps);
+
+                print_guidance(guidance, format)?;
+                return Ok(true);
+            }
+            ReviewGateStatus::NeedsReview => {
+                guidance.status = ProtocolStatus::NeedsReview;
+                guidance.diagnostic(format!(
+                    "Review {} still awaiting votes from: {}",
+                    review_id,
+                    decision.missing_approvals.join(", ")
+                ));
+                guidance
+                    .advise("Wait for reviewers or re-request review before merging.".to_string());
+
+                let steps = vec![shell::seal_show_cmd(workspace, &review_id)];
+                guidance.steps(steps);
+
+                print_guidance(guidance, format)?;
+                return Ok(true);
+            }
+        }
+    } else {
+        guidance.status = ProtocolStatus::NeedsReview;
+        guidance
+            .diagnostic("Review is enabled but no review exists for this workspace.".to_string());
+        guidance.advise(
+            "Create a review before merging, or use --force to skip review gate.".to_string(),
+        );
+
+        let mut steps = Vec::new();
+        let title = bone_id.map_or_else(
+            || format!("Work from {workspace}"),
+            |id| format!("Work from {id}"),
+        );
+        steps.push(shell::seal_create_cmd(
+            workspace,
+            "agent",
+            &title,
+            &required_reviewers.join(","),
+        ));
+        guidance.steps(steps);
+
+        print_guidance(guidance, format)?;
+        return Ok(true);
+    }
+
+    Ok(false)
+}
+
+/// Run the pre-flight conflict check and apply guidance. Returns `Ok(true)`
+/// when the caller should stop (guidance was printed), `Ok(false)` to continue.
+fn check_conflict_gate(
+    guidance: &mut ProtocolGuidance,
+    workspace: &str,
+    merge_target: Option<&str>,
+    message: &str,
+    format: OutputFormat,
+) -> anyhow::Result<bool> {
+    match run_merge_check(workspace, merge_target) {
+        Ok(check) => {
+            if !check.is_ready() {
+                guidance.status = ProtocolStatus::Blocked;
+                let conflict_labels = check.conflict_labels();
+                if !conflict_labels.is_empty() {
+                    guidance.diagnostic(format!(
+                        "Merge would produce conflicts in {} file(s): {}",
+                        conflict_labels.len(),
+                        conflict_labels.join(", ")
+                    ));
+                }
+                if check.stale {
+                    guidance
+                        .diagnostic("Workspace is stale — run `maw ws sync` first.".to_string());
+                }
+                if let Some(message) = check.message.as_deref() {
+                    guidance.diagnostic(message.to_string());
+                }
+                add_conflict_recovery_guidance(guidance, workspace, merge_target, message);
+                print_guidance(guidance, format)?;
+                return Ok(true);
+            }
+        }
+        Err(e) => {
+            // --check failed (maybe old maw version). Warn but proceed.
+            guidance.diagnostic(format!(
+                "Pre-flight check failed ({e}). Proceeding without conflict detection."
+            ));
+        }
+    }
+
+    Ok(false)
+}
+
 /// Run `maw ws merge <ws> --into <target> --check --format json` before merging.
 fn run_merge_check(
     workspace: &str,
@@ -420,18 +483,30 @@ fn run_merge_check(
     serde_json::from_str(&stdout).map_err(|e| format!("failed to parse --check output: {e}"))
 }
 
+/// Parameters for [`build_merge_steps`].
+struct MergeStepsParams<'a> {
+    workspace: &'a str,
+    project: &'a str,
+    message: &'a str,
+    merge_target: Option<&'a str>,
+    bone_id: Option<&'a str>,
+    review_id: Option<&'a str>,
+    push_main: bool,
+}
+
 /// Build the merge steps: merge, mark-merged, sync, push.
 /// Also includes conflict recovery guidance as diagnostics.
-fn build_merge_steps(
-    guidance: &mut ProtocolGuidance,
-    workspace: &str,
-    project: &str,
-    message: &str,
-    merge_target: Option<&str>,
-    bone_id: Option<&str>,
-    review_id: Option<&str>,
-    push_main: bool,
-) {
+fn build_merge_steps(guidance: &mut ProtocolGuidance, params: &MergeStepsParams) {
+    let MergeStepsParams {
+        workspace,
+        project,
+        message,
+        merge_target,
+        bone_id,
+        review_id,
+        push_main,
+    } = *params;
+
     let mut steps = Vec::new();
 
     // 1. Merge workspace with the required commit message
@@ -451,11 +526,10 @@ fn build_merge_steps(
     }
 
     // 4. Announce merge
-    let announce_msg = if let Some(bid) = bone_id {
-        format!("Merged workspace {workspace} ({bid})")
-    } else {
-        format!("Merged workspace {workspace}")
-    };
+    let announce_msg = bone_id.map_or_else(
+        || format!("Merged workspace {workspace}"),
+        |bid| format!("Merged workspace {workspace} ({bid})"),
+    );
     steps.push(shell::rite_send_cmd(
         "agent",
         project,
@@ -636,13 +710,15 @@ mod tests {
 
         build_merge_steps(
             &mut guidance,
-            "frost-castle",
-            "myproject",
-            "feat: add login flow",
-            None,
-            Some("bd-abc"),
-            Some("cr-123"),
-            true,
+            &MergeStepsParams {
+                workspace: "frost-castle",
+                project: "myproject",
+                message: "feat: add login flow",
+                merge_target: None,
+                bone_id: Some("bd-abc"),
+                review_id: Some("cr-123"),
+                push_main: true,
+            },
         );
 
         // Should have merge, mark-merged, sync, push, announce
@@ -703,13 +779,15 @@ mod tests {
 
         build_merge_steps(
             &mut guidance,
-            "frost-castle",
-            "myproject",
-            "chore: update deps",
-            None,
-            None,
-            None,
-            false, // push_main = false
+            &MergeStepsParams {
+                workspace: "frost-castle",
+                project: "myproject",
+                message: "chore: update deps",
+                merge_target: None,
+                bone_id: None,
+                review_id: None,
+                push_main: false, // push_main = false
+            },
         );
 
         // Should NOT have push
@@ -761,13 +839,15 @@ mod tests {
 
         build_merge_steps(
             &mut guidance,
-            "frost-castle",
-            "myproject",
-            "feat: announce test",
-            Some("ch-123"),
-            Some("bd-abc"),
-            None,
-            false,
+            &MergeStepsParams {
+                workspace: "frost-castle",
+                project: "myproject",
+                message: "feat: announce test",
+                merge_target: Some("ch-123"),
+                bone_id: Some("bd-abc"),
+                review_id: None,
+                push_main: false,
+            },
         );
 
         let announce = guidance

@@ -121,9 +121,7 @@ pub fn evaluate_review_gate(
         || (required_reviewers.is_empty() && review.votes.is_empty())
     {
         ReviewGateStatus::NeedsReview
-    } else if !newer_block_after_lgtm.is_empty() {
-        ReviewGateStatus::Blocked
-    } else if !blocked_by.is_empty() {
+    } else if !newer_block_after_lgtm.is_empty() || !blocked_by.is_empty() {
         ReviewGateStatus::Blocked
     } else if approved_by.len() == required_reviewers.len() {
         ReviewGateStatus::Approved

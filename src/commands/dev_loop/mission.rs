@@ -69,15 +69,18 @@ impl MissionCheckpoint {
 
 /// Get the cache path for a mission checkpoint.
 fn checkpoint_path(mission_id: &str) -> PathBuf {
-    let cache_base = if let Ok(xdg) = std::env::var("XDG_CACHE_HOME") {
-        PathBuf::from(xdg)
-    } else if cfg!(target_os = "macos") {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-        PathBuf::from(home).join("Library/Caches")
-    } else {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-        PathBuf::from(home).join(".cache")
-    };
+    let cache_base = std::env::var("XDG_CACHE_HOME").map_or_else(
+        |_| {
+            if cfg!(target_os = "macos") {
+                let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+                PathBuf::from(home).join("Library/Caches")
+            } else {
+                let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+                PathBuf::from(home).join(".cache")
+            }
+        },
+        PathBuf::from,
+    );
 
     cache_base
         .join("edict")

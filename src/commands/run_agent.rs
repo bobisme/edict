@@ -23,7 +23,6 @@ impl OutputFormat {
         if let Some(fmt) = explicit {
             return match fmt {
                 "pretty" => Self::Pretty,
-                "text" => Self::Text,
                 _ => Self::Text,
             };
         }
@@ -130,6 +129,11 @@ fn parse_model_for_claude(model: &str) -> String {
 ///
 /// When `runner` is `"auto"`, the runner is derived from the model's provider prefix:
 /// `anthropic/...` uses Claude Code, everything else uses Pi.
+///
+/// # Errors
+///
+/// Returns an error if the runner is unsupported, the agent fails to spawn, the
+/// process times out, or the agent exits with a non-success status.
 pub fn run_agent(
     runner: &str,
     prompt: &str,
@@ -176,14 +180,14 @@ pub fn run_agent(
 
     thread::spawn(move || {
         let reader = BufReader::new(stdout);
-        for line in reader.lines().flatten() {
+        for line in reader.lines().map_while(Result::ok) {
             let _ = stdout_tx.send(line);
         }
     });
 
     thread::spawn(move || {
         let reader = BufReader::new(stderr);
-        for line in reader.lines().flatten() {
+        for line in reader.lines().map_while(Result::ok) {
             let _ = stderr_tx.send(line);
         }
     });
@@ -196,8 +200,8 @@ pub fn run_agent(
     // Process output
     let result = process_output(
         &mut child,
-        stdout_rx,
-        stderr_rx,
+        &stdout_rx,
+        &stderr_rx,
         style,
         Duration::from_secs(timeout_secs),
         tool_name,
@@ -320,8 +324,8 @@ fn spawn_pi(prompt: &str, model: Option<&str>) -> anyhow::Result<Child> {
 /// when a "completion" event is received (signaling the agent is done).
 fn process_output(
     child: &mut Child,
-    stdout_rx: Receiver<String>,
-    stderr_rx: Receiver<String>,
+    stdout_rx: &Receiver<String>,
+    stderr_rx: &Receiver<String>,
     style: &Style,
     timeout: Duration,
     tool_name: &str,
@@ -369,20 +373,18 @@ fn process_output(
 
                 if result_received || status.success() {
                     return Ok(());
-                } else {
-                    let code = status.code().unwrap_or(-1);
-                    let error_msg = if let Some(err) = detected_error {
-                        format!("{err} (exit code {code})")
-                    } else {
-                        format!("Agent exited with code {code}")
-                    };
-                    return Err(ExitError::ToolFailed {
-                        tool: tool_name.to_string(),
-                        code,
-                        message: error_msg,
-                    }
-                    .into());
                 }
+                let code = status.code().unwrap_or(-1);
+                let error_msg = detected_error.map_or_else(
+                    || format!("Agent exited with code {code}"),
+                    |err| format!("{err} (exit code {code})"),
+                );
+                return Err(ExitError::ToolFailed {
+                    tool: tool_name.to_string(),
+                    code,
+                    message: error_msg,
+                }
+                .into());
             }
             Ok(None) => {
                 // Still running
@@ -562,9 +564,9 @@ fn print_pi_text_delta(ae: &Value, style: &Style) {
             return;
         }
         if style.bold.is_empty() {
+            use std::io::Write;
             // Text mode: stream inline as before
             print!("{delta}");
-            use std::io::Write;
             let _ = std::io::stdout().flush();
         } else {
             // Pretty mode: buffer text for markdown rendering at text_end
@@ -781,19 +783,19 @@ fn print_pi_tool_result(event: &Value, style: &Style) {
 }
 
 fn print_pi_thinking_start(style: &Style) {
-    print!("{}  [thinking] {}", style.dim, style.reset);
     use std::io::Write;
+    print!("{}  [thinking] {}", style.dim, style.reset);
     let _ = std::io::stdout().flush();
 }
 
 fn print_pi_thinking_delta(ae: &Value, style: &Style) {
     if let Some(delta) = ae.get("delta").and_then(|d| d.as_str()) {
+        use std::io::Write;
         if delta.is_empty() {
             return;
         }
         // Show a dot per chunk to indicate thinking progress without dumping full reasoning
         print!("{}.", style.dim);
-        use std::io::Write;
         let _ = std::io::stdout().flush();
     }
 }
@@ -833,28 +835,30 @@ fn detect_api_error(stderr: &str) -> Option<String> {
 
 fn re_code_block() -> &'static regex::Regex {
     static RE: OnceLock<regex::Regex> = OnceLock::new();
-    RE.get_or_init(|| regex::Regex::new(r"```(\w+)?\n([\s\S]*?)```").unwrap())
+    RE.get_or_init(|| {
+        regex::Regex::new(r"```(\w+)?\n([\s\S]*?)```").expect("code block regex is valid")
+    })
 }
 
 fn re_inline_code() -> &'static regex::Regex {
     static RE: OnceLock<regex::Regex> = OnceLock::new();
-    RE.get_or_init(|| regex::Regex::new(r"`([^`]+)`").unwrap())
+    RE.get_or_init(|| regex::Regex::new(r"`([^`]+)`").expect("inline code regex is valid"))
 }
 
 fn re_bold() -> &'static regex::Regex {
     static RE: OnceLock<regex::Regex> = OnceLock::new();
-    RE.get_or_init(|| regex::Regex::new(r"\*\*([^*]+)\*\*").unwrap())
+    RE.get_or_init(|| regex::Regex::new(r"\*\*([^*]+)\*\*").expect("bold regex is valid"))
 }
 
 fn re_headers() -> &'static regex::Regex {
     static RE: OnceLock<regex::Regex> = OnceLock::new();
-    RE.get_or_init(|| regex::Regex::new(r"(?m)^#{1,3}\s+(.+)$").unwrap())
+    RE.get_or_init(|| regex::Regex::new(r"(?m)^#{1,3}\s+(.+)$").expect("headers regex is valid"))
 }
 
 fn format_markdown(text: &str, style: &Style) -> String {
+    let mut result = text.to_string();
     if style.bold.is_empty() {
         // Text mode: strip markdown
-        let mut result = text.to_string();
         result = re_code_block()
             .replace_all(&result, |caps: &regex::Captures| {
                 format!("\n{}\n", caps.get(2).map_or("", |m| m.as_str()).trim())
@@ -863,10 +867,8 @@ fn format_markdown(text: &str, style: &Style) -> String {
         result = re_inline_code().replace_all(&result, "$1").to_string();
         result = re_bold().replace_all(&result, "$1").to_string();
         result = re_headers().replace_all(&result, "$1").to_string();
-        result
     } else {
         // Pretty mode: ANSI colors
-        let mut result = text.to_string();
         result = re_code_block()
             .replace_all(&result, |caps: &regex::Captures| {
                 format!(
@@ -889,8 +891,8 @@ fn format_markdown(text: &str, style: &Style) -> String {
                 &format!("{}{} $1{}", style.bold, style.yellow, style.reset),
             )
             .to_string();
-        result
     }
+    result
 }
 
 #[cfg(test)]

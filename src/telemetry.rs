@@ -17,28 +17,28 @@ use tracing_subscriber::EnvFilter;
 /// Hold this in `main()` until exit.
 pub struct TelemetryGuard {
     #[cfg(feature = "otel")]
-    trace_provider: Option<opentelemetry_sdk::trace::SdkTracerProvider>,
+    trace: Option<opentelemetry_sdk::trace::SdkTracerProvider>,
     #[cfg(feature = "otel")]
-    log_provider: Option<opentelemetry_sdk::logs::SdkLoggerProvider>,
+    log: Option<opentelemetry_sdk::logs::SdkLoggerProvider>,
     #[cfg(feature = "otel")]
-    meter_provider: Option<opentelemetry_sdk::metrics::SdkMeterProvider>,
+    meter: Option<opentelemetry_sdk::metrics::SdkMeterProvider>,
 }
 
 impl Drop for TelemetryGuard {
     fn drop(&mut self) {
         #[cfg(feature = "otel")]
         {
-            if let Some(provider) = self.trace_provider.take()
+            if let Some(provider) = self.trace.take()
                 && let Err(e) = provider.shutdown()
             {
                 eprintln!("otel trace shutdown error: {e}");
             }
-            if let Some(provider) = self.log_provider.take()
+            if let Some(provider) = self.log.take()
                 && let Err(e) = provider.shutdown()
             {
                 eprintln!("otel log shutdown error: {e}");
             }
-            if let Some(provider) = self.meter_provider.take()
+            if let Some(provider) = self.meter.take()
                 && let Err(e) = provider.shutdown()
             {
                 eprintln!("otel meter shutdown error: {e}");
@@ -73,11 +73,11 @@ pub fn init() -> TelemetryGuard {
 const fn init_noop() -> TelemetryGuard {
     TelemetryGuard {
         #[cfg(feature = "otel")]
-        trace_provider: None,
+        trace: None,
         #[cfg(feature = "otel")]
-        log_provider: None,
+        log: None,
         #[cfg(feature = "otel")]
-        meter_provider: None,
+        meter: None,
     }
 }
 
@@ -100,11 +100,11 @@ fn init_stderr() -> TelemetryGuard {
 
     TelemetryGuard {
         #[cfg(feature = "otel")]
-        trace_provider: None,
+        trace: None,
         #[cfg(feature = "otel")]
-        log_provider: None,
+        log: None,
         #[cfg(feature = "otel")]
-        meter_provider: None,
+        meter: None,
     }
 }
 
@@ -192,9 +192,9 @@ fn init_otlp() -> TelemetryGuard {
         .init();
 
     TelemetryGuard {
-        trace_provider: Some(trace_provider),
-        log_provider: Some(log_provider),
-        meter_provider: Some(meter_provider),
+        trace: Some(trace_provider),
+        log: Some(log_provider),
+        meter: Some(meter_provider),
     }
 }
 
@@ -237,10 +237,10 @@ fn install_parent_context() {
         let cx = propagator.extract(&carrier);
         // Attach as the current context — tracing-opentelemetry's layer will
         // pick this up as the parent for root-level spans.
-        let _guard = cx.attach();
+        let guard = cx.attach();
         // The guard is intentionally leaked: we want this context to remain
         // active for the lifetime of the process.
-        std::mem::forget(_guard);
+        std::mem::forget(guard);
     }
 }
 

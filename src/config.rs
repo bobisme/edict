@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt::Write;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
@@ -51,6 +52,10 @@ pub fn find_config(dir: &Path) -> Option<PathBuf> {
 /// stale `.botbox.json` at the bare root (with wrong project name / agent identity) that
 /// would previously shadow the correct ws/default TOML. By checking ws/default TOML before
 /// root JSON we ensure agents always load the current, migrated config.
+///
+/// # Errors
+///
+/// Returns `Err` if no config file is found at the root or in `ws/default/`.
 pub fn find_config_in_project(root: &Path) -> anyhow::Result<(PathBuf, PathBuf)> {
     let ws_default = root.join("ws/default");
 
@@ -142,6 +147,10 @@ pub struct ProjectConfig {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "config flag struct for companion tools"
+)]
 pub struct ToolsConfig {
     #[serde(default, alias = "beads")]
     pub bones: bool,
@@ -395,9 +404,17 @@ const fn default_merge_timeout() -> u64 {
 const fn default_max_conversations() -> u32 {
     10
 }
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "serde `default` fn must return the field's `Option<MissionsConfig>` type"
+)]
 fn default_missions() -> Option<MissionsConfig> {
     Some(MissionsConfig::default())
 }
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "serde `default` fn must return the field's `Option<MultiLeadConfig>` type"
+)]
 fn default_multi_lead() -> Option<MultiLeadConfig> {
     Some(MultiLeadConfig::default())
 }
@@ -425,6 +442,10 @@ impl Default for MultiLeadConfig {
 
 impl Config {
     /// Load config from a file (TOML or JSON, auto-detected by extension).
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if the file cannot be read or its contents fail to parse.
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let contents =
             std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
@@ -440,19 +461,41 @@ impl Config {
     }
 
     /// Parse config from a TOML string.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if the string is not valid TOML for a `Config`.
     pub fn parse_toml(toml_str: &str) -> anyhow::Result<Self> {
         toml::from_str(toml_str)
             .map_err(|e| ExitError::Config(format!("invalid .edict.toml: {e}")).into())
     }
 
     /// Parse config from a JSON string (for backwards compatibility).
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if the string is not valid JSON for a `Config`.
     pub fn parse_json(json: &str) -> anyhow::Result<Self> {
         serde_json::from_str(json)
             .map_err(|e| ExitError::Config(format!("invalid .botbox.json: {e}")).into())
     }
 
     /// Serialize config to a TOML string with helpful comments.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if the config cannot be serialized to TOML or the
+    /// generated document fails to re-parse for comment injection.
     pub fn to_toml(&self) -> anyhow::Result<String> {
+        // Add comments before section headers using item decor
+        fn set_table_comment(doc: &mut toml_edit::DocumentMut, key: &str, comment: &str) {
+            if let Some(item) = doc.get_mut(key)
+                && let Some(tbl) = item.as_table_mut()
+            {
+                tbl.decor_mut().set_prefix(comment);
+            }
+        }
+
         let raw = toml::to_string_pretty(self).context("serializing config to TOML")?;
 
         // Use toml_edit to add comments for default values
@@ -466,15 +509,6 @@ impl Config {
              # Edict project configuration\n\
              # Schema: https://github.com/bobisme/edict/blob/main/schemas/edict.schema.json\n\n",
         );
-
-        // Add comments before section headers using item decor
-        fn set_table_comment(doc: &mut toml_edit::DocumentMut, key: &str, comment: &str) {
-            if let Some(item) = doc.get_mut(key)
-                && let Some(tbl) = item.as_table_mut()
-            {
-                tbl.decor_mut().set_prefix(comment);
-            }
-        }
 
         set_table_comment(&mut doc, "tools", "\n# Companion tools to enable\n");
         set_table_comment(&mut doc, "review", "\n# Code review configuration\n");
@@ -613,7 +647,7 @@ fn expand_env_value(value: &str) -> String {
                 if let Ok(val) = std::env::var(&var_name) {
                     result.push_str(&val);
                 } else {
-                    result.push_str(&format!("${{{var_name}}}"));
+                    write!(result, "${{{var_name}}}").expect("writing to a String is infallible");
                 }
             } else {
                 // $VAR syntax — peek-collect alphanumeric + underscore
@@ -645,6 +679,10 @@ fn expand_env_value(value: &str) -> String {
 
 /// Convert a JSON config string to TOML format.
 /// Used during migration from .botbox.json to .botbox.toml.
+///
+/// # Errors
+///
+/// Returns `Err` if the JSON fails to parse or the result cannot be serialized to TOML.
 pub fn json_to_toml(json: &str) -> anyhow::Result<String> {
     let config = Config::parse_json(json)?;
     config.to_toml()

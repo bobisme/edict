@@ -155,6 +155,12 @@ pub enum ProtocolCommand {
 }
 
 impl ProtocolCommand {
+    /// Dispatch the protocol subcommand to its handler.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if config loading, state collection, or the underlying
+    /// subcommand handler fails.
     pub fn execute(&self) -> anyhow::Result<()> {
         match self {
             Self::Start {
@@ -169,124 +175,148 @@ impl ProtocolCommand {
                 force,
                 execute,
                 args,
-            } => {
-                let project_root = match args.project_root.clone() {
-                    Some(p) => p,
-                    None => {
-                        std::env::current_dir().context("could not determine current directory")?
-                    }
-                };
-
-                let (config_path, _) = crate::config::find_config_in_project(&project_root)?;
-                let config = Config::load(&config_path)?;
-
-                let project = args.resolve_project(&config);
-                let agent = args.resolve_agent(&config);
-                let format = args.resolve_format();
-
-                finish::execute(
-                    bone_id, *no_merge, *force, *execute, &agent, &project, &config, format,
-                )
-            }
+            } => Self::execute_finish(bone_id, *no_merge, *force, *execute, args),
             Self::Review {
                 bone_id,
                 reviewers,
                 review_id,
                 execute,
                 args,
-            } => {
-                let project_root = match args.project_root.clone() {
-                    Some(p) => p,
-                    None => {
-                        std::env::current_dir().context("could not determine current directory")?
-                    }
-                };
-
-                let (config_path, _) = crate::config::find_config_in_project(&project_root)?;
-                let config = Config::load(&config_path)?;
-
-                let agent = args.resolve_agent(&config);
-                let project = args.resolve_project(&config);
-                let format = args.resolve_format();
-
-                review::execute(
-                    bone_id,
-                    reviewers.as_deref(),
-                    review_id.as_deref(),
-                    *execute,
-                    &agent,
-                    &project,
-                    &config,
-                    format,
-                )
-            }
-            Self::Cleanup { execute, args } => {
-                let project_root = match args.project_root.clone() {
-                    Some(p) => p,
-                    None => {
-                        std::env::current_dir().context("could not determine current directory")?
-                    }
-                };
-
-                let (config_path, _) = crate::config::find_config_in_project(&project_root)?;
-                let config = crate::config::Config::load(&config_path)?;
-
-                let agent = args.resolve_agent(&config);
-                let project = args.resolve_project(&config);
-                let format = args.resolve_format();
-                cleanup::execute(*execute, &agent, &project, format)
-            }
+            } => Self::execute_review(
+                bone_id,
+                reviewers.as_deref(),
+                review_id.as_deref(),
+                *execute,
+                args,
+            ),
+            Self::Cleanup { execute, args } => Self::execute_cleanup(*execute, args),
             Self::Merge {
                 workspace,
                 message,
                 force,
                 execute,
                 args,
-            } => {
-                let project_root = match args.project_root.clone() {
-                    Some(p) => p,
-                    None => {
-                        std::env::current_dir().context("could not determine current directory")?
-                    }
-                };
-
-                let (config_path, _) = crate::config::find_config_in_project(&project_root)?;
-                let config = Config::load(&config_path)?;
-
-                let project = args.resolve_project(&config);
-                let agent = args.resolve_agent(&config);
-                let format = args.resolve_format();
-
-                let resolved_message = merge::resolve_message(message.as_deref())?;
-
-                merge::execute(
-                    workspace,
-                    &resolved_message,
-                    *force,
-                    *execute,
-                    &agent,
-                    &project,
-                    &config,
-                    format,
-                )
-            }
-            Self::Resume { args } => {
-                let project_root = match args.project_root.clone() {
-                    Some(p) => p,
-                    None => {
-                        std::env::current_dir().context("could not determine current directory")?
-                    }
-                };
-
-                let (config_path, _) = crate::config::find_config_in_project(&project_root)?;
-                let config = crate::config::Config::load(&config_path)?;
-
-                let agent = args.resolve_agent(&config);
-                let project = args.resolve_project(&config);
-                let format = args.resolve_format();
-                resume::execute(&agent, &project, &config, format)
-            }
+            } => Self::execute_merge(workspace, message.as_deref(), *force, *execute, args),
+            Self::Resume { args } => Self::execute_resume(args),
         }
+    }
+
+    /// Determine the project root from args or the current directory.
+    fn resolve_project_root(args: &ProtocolArgs) -> anyhow::Result<PathBuf> {
+        args.project_root.clone().map_or_else(
+            || std::env::current_dir().context("could not determine current directory"),
+            Ok,
+        )
+    }
+
+    /// Handle the `Finish` subcommand.
+    fn execute_finish(
+        bone_id: &str,
+        no_merge: bool,
+        force: bool,
+        execute: bool,
+        args: &ProtocolArgs,
+    ) -> anyhow::Result<()> {
+        let project_root = Self::resolve_project_root(args)?;
+        let (config_path, _) = crate::config::find_config_in_project(&project_root)?;
+        let config = Config::load(&config_path)?;
+
+        let project = args.resolve_project(&config);
+        let agent = args.resolve_agent(&config);
+        let format = args.resolve_format();
+
+        finish::execute(&finish::ExecuteParams {
+            bone_id,
+            no_merge,
+            force,
+            execute,
+            agent: &agent,
+            project: &project,
+            config: &config,
+            format,
+        })
+    }
+
+    /// Handle the `Review` subcommand.
+    fn execute_review(
+        bone_id: &str,
+        reviewers: Option<&str>,
+        review_id: Option<&str>,
+        execute: bool,
+        args: &ProtocolArgs,
+    ) -> anyhow::Result<()> {
+        let project_root = Self::resolve_project_root(args)?;
+        let (config_path, _) = crate::config::find_config_in_project(&project_root)?;
+        let config = Config::load(&config_path)?;
+
+        let agent = args.resolve_agent(&config);
+        let project = args.resolve_project(&config);
+        let format = args.resolve_format();
+
+        review::execute(&review::ReviewParams {
+            bone_id,
+            reviewers_override: reviewers,
+            review_id_flag: review_id,
+            execute,
+            agent: &agent,
+            project: &project,
+            config: &config,
+            format,
+        })
+    }
+
+    /// Handle the `Cleanup` subcommand.
+    fn execute_cleanup(execute: bool, args: &ProtocolArgs) -> anyhow::Result<()> {
+        let project_root = Self::resolve_project_root(args)?;
+        let (config_path, _) = crate::config::find_config_in_project(&project_root)?;
+        let config = crate::config::Config::load(&config_path)?;
+
+        let agent = args.resolve_agent(&config);
+        let project = args.resolve_project(&config);
+        let format = args.resolve_format();
+        cleanup::execute(execute, &agent, &project, format)
+    }
+
+    /// Handle the `Merge` subcommand.
+    fn execute_merge(
+        workspace: &str,
+        message: Option<&str>,
+        force: bool,
+        execute: bool,
+        args: &ProtocolArgs,
+    ) -> anyhow::Result<()> {
+        let project_root = Self::resolve_project_root(args)?;
+        let (config_path, _) = crate::config::find_config_in_project(&project_root)?;
+        let config = Config::load(&config_path)?;
+
+        let project = args.resolve_project(&config);
+        let agent = args.resolve_agent(&config);
+        let format = args.resolve_format();
+
+        let resolved_message = merge::resolve_message(message)?;
+
+        merge::execute(
+            workspace,
+            &resolved_message,
+            force,
+            execute,
+            &agent,
+            &project,
+            &config,
+            format,
+        )
+    }
+
+    /// Handle the `Resume` subcommand.
+    fn execute_resume(args: &ProtocolArgs) -> anyhow::Result<()> {
+        let project_root = Self::resolve_project_root(args)?;
+        let (config_path, _) = crate::config::find_config_in_project(&project_root)?;
+        let config = crate::config::Config::load(&config_path)?;
+
+        let agent = args.resolve_agent(&config);
+        let project = args.resolve_project(&config);
+        let format = args.resolve_format();
+        resume::execute(&agent, &project, &config, format)
     }
 
     /// Execute the `edict protocol start <bone-id>` command.
@@ -332,9 +362,7 @@ impl ProtocolCommand {
         let ctx = context::ProtocolContext::collect(&project, &agent)?;
 
         // Check if bone exists and get its status
-        let bone_info = if let Ok(bone) = ctx.bone_status(bone_id) {
-            bone
-        } else {
+        let Ok(bone_info) = ctx.bone_status(bone_id) else {
             let mut guidance = render::ProtocolGuidance::new("start");
             guidance.blocked(format!(
                 "bone {bone_id} not found. Check the ID with: maw exec default -- bn show {bone_id}"
@@ -389,47 +417,8 @@ impl ProtocolCommand {
         guidance.status = render::ProtocolStatus::Ready;
 
         // Build command steps: claim, create workspace, announce
-        let mut steps = Vec::new();
-
-        // 1. Stake bone claim
-        steps.push(shell::claims_stake_cmd(
-            &agent,
-            &format!("bone://{project}/{bone_id}"),
-            bone_id,
-        ));
-
-        // 2. Create workspace named after the bone
-        steps.push(shell::ws_create_cmd(
-            bone_id,
-            &bone_info.title,
-            shell::WorkspaceSource::Main,
-        ));
-
-        // 3. Stake workspace claim
-        steps.push(shell::claims_stake_cmd(
-            &agent,
-            &format!("workspace://{project}/{bone_id}"),
-            bone_id,
-        ));
-
-        // 5. Update bone status
-        steps.push(shell::bn_do_cmd(bone_id));
-
-        // 5. Comment bone with workspace info
-        steps.push(shell::bn_comment_cmd(
-            bone_id,
-            &format!("Started in workspace {bone_id}"),
-        ));
-
-        // 7. Announce on rite (unless --dispatched)
-        if !dispatched {
-            steps.push(shell::rite_send_cmd(
-                &agent,
-                &project,
-                &format!("Working on {}: {}", bone_id, &bone_info.title),
-                "task-claim",
-            ));
-        }
+        let steps =
+            Self::build_start_steps(bone_id, &bone_info.title, &agent, &project, dispatched);
 
         guidance.steps(steps);
         guidance.advise(
@@ -459,5 +448,58 @@ impl ProtocolCommand {
             // Otherwise, render guidance as usual
             exit_policy::render_guidance(&guidance, format)
         }
+    }
+
+    /// Build the ordered shell command steps for starting work on a bone.
+    fn build_start_steps(
+        bone_id: &str,
+        bone_title: &str,
+        agent: &str,
+        project: &str,
+        dispatched: bool,
+    ) -> Vec<String> {
+        let mut steps = Vec::new();
+
+        // 1. Stake bone claim
+        steps.push(shell::claims_stake_cmd(
+            agent,
+            &format!("bone://{project}/{bone_id}"),
+            bone_id,
+        ));
+
+        // 2. Create workspace named after the bone
+        steps.push(shell::ws_create_cmd(
+            bone_id,
+            bone_title,
+            shell::WorkspaceSource::Main,
+        ));
+
+        // 3. Stake workspace claim
+        steps.push(shell::claims_stake_cmd(
+            agent,
+            &format!("workspace://{project}/{bone_id}"),
+            bone_id,
+        ));
+
+        // 5. Update bone status
+        steps.push(shell::bn_do_cmd(bone_id));
+
+        // 5. Comment bone with workspace info
+        steps.push(shell::bn_comment_cmd(
+            bone_id,
+            &format!("Started in workspace {bone_id}"),
+        ));
+
+        // 7. Announce on rite (unless --dispatched)
+        if !dispatched {
+            steps.push(shell::rite_send_cmd(
+                agent,
+                project,
+                &format!("Working on {bone_id}: {bone_title}"),
+                "task-claim",
+            ));
+        }
+
+        steps
     }
 }

@@ -64,7 +64,6 @@ pub fn claim_workspace(agent: &str, project: &str, ws: &str, memo: &str) -> anyh
 pub fn model_timeout(model: &str) -> u64 {
     match model {
         "strong" | "opus" => 900,
-        "balanced" | "sonnet" => 600,
         "fast" | "haiku" => 300,
         _ => 600,
     }

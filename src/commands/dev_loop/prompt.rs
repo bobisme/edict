@@ -5,6 +5,10 @@ use super::{LoopContext, SiblingLead};
 ///
 /// This is the main prompt that tells the lead agent what to do each iteration.
 /// It includes status context, sibling awareness, and the full instruction set.
+#[allow(
+    clippy::too_many_lines,
+    reason = "cohesive prompt builder dominated by one large format! template literal"
+)]
 pub fn build(
     ctx: &LoopContext,
     last_iteration: Option<&LastIteration>,
@@ -53,64 +57,11 @@ pub fn build(
         .map(|s| format!("\n## CURRENT STATUS (pre-gathered — no need to re-fetch)\n\n{s}\n"))
         .unwrap_or_default();
 
-    let sibling_section = if sibling_leads.is_empty() {
-        String::new()
-    } else {
-        let leads_list: String = sibling_leads
-            .iter()
-            .map(|s| {
-                let memo = if s.memo.is_empty() {
-                    String::new()
-                } else {
-                    format!(" ({})", s.memo)
-                };
-                format!("- {}{memo}", s.name)
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        format!(
-            r"
-    ## SIBLING LEADS (multi-lead mode active)
-
-    Other lead agents are currently active on this project. Coordinate through claims — do NOT duplicate work.
-
-    Active leads:
-    {leads_list}
-
-    **Bone claim rule**: Before starting work on ANY bone, check if it is already claimed:
-      rite claims list --format json
-      Look for `bone://{project}/<id>` — if claimed by another agent, SKIP that bone and pick the next one.
-      Only work on bones you can successfully claim.
-    "
-        )
-    };
+    let sibling_section = build_sibling_section(sibling_leads, project);
 
     let edict_mission_env = std::env::var("EDICT_MISSION").ok();
 
-    let mission_triage = if missions_enabled {
-        let mission_focus = edict_mission_env
-            .as_deref()
-            .map(|m| format!("EDICT_MISSION=\"{m}\" — prioritize this mission's children."))
-            .unwrap_or_default();
-        format!(
-            r#"
-### Mission-Aware Triage
-
-Check for active missions (bones with label "mission" that are doing):
-  maw exec default -- bn list -l mission --state doing --json
-{mission_focus}
-For each active mission:
-  1. List children: maw exec default -- bn list -l "mission:<mission-id>" --json
-  2. Count status: N open, M doing, K done, J blocked
-  3. If any children are ready (open, unblocked): include them in the dispatch plan
-  4. If all children are done: close the mission bone (see step 5c "Closing a Mission")
-  5. If children are blocked: investigate — can you unblock them? Reassign?
-"#
-        )
-    } else {
-        String::new()
-    };
+    let mission_triage = build_mission_triage(missions_enabled, edict_mission_env.as_deref());
 
     let mission_level4_disabled = if missions_enabled {
         String::new()
@@ -130,104 +81,15 @@ For each active mission:
         ""
     };
 
-    let mission_section_5c = if missions_enabled {
-        let mission_env_note = edict_mission_env
-            .as_deref()
-            .map(|m| format!("\nEDICT_MISSION is set to \"{m}\" — focus on this mission.\n"))
-            .unwrap_or_default();
-
-        format!(
-            r#"
-## 5c. MISSION (Level 4 — large task decomposition)
-
-Use when: a large coherent task needs decomposition into related bones with shared context.
-{mission_env_note}
-### Creating a Mission
-
-1. Create the mission bone (if not already created by !mission handler):
-   maw exec default -- bn create \
-     --title "<mission title>" --labels mission --kind task --urgency default \
-     --description "Outcome: <what done looks like>\nSuccess metric: <how to verify>\nConstraints: <scope/budget/forbidden>\nStop criteria: <when to stop>"
-2. Plan decomposition: break the mission into {max_children} or fewer child bones.
-   Consider dependencies between children — which can run in parallel, which are sequential.
-3. Create child bones:
-   For each child:
-   maw exec default -- bn create \
-     --title "<child title>" --parent <mission-id> \
-     --labels "mission:<mission-id>" --kind task --urgency default
-4. Wire dependencies between children if needed:
-   maw exec default -- bn dep add <blocked-child> <blocker-child>
-5. Post plan to channel:
-   rite send --agent {agent} {project} "Mission <mission-id>: <title> — created N child bones" -L task-claim
-
-### Dispatch Mission Workers
-
-IMPORTANT: You MUST dispatch workers for independent children. Do NOT implement them yourself sequentially.
-The whole point of missions is parallel execution — doing children sequentially defeats the purpose and wastes time.
-Use `vessel spawn` for mission workers — NOT the Task tool. See step 5b for why.
-
-For independent children (unblocked), dispatch workers (max {max_workers} concurrent):
-- Follow the same dispatch pattern as step 5b — INCLUDING claim staking for EACH worker:
-  rite claims stake --agent {agent} "bone://{project}/<child-id>" -m "dispatched to <worker-name>"
-  rite claims stake --agent {agent} "workspace://{project}/$WS" -m "<child-id>"
-- Add mission labels and sibling context env vars:
-    --label "mission:<mission-id>" \
-    --env "EDICT_MISSION=<mission-id>" \
-    --env "EDICT_MISSION_OUTCOME=<outcome from mission bone description>" \
-    --env "EDICT_SIBLINGS=<sibling-id> (<title>) [owner:<owner>, status:<status>]\n..." \
-    --env "EDICT_FILE_HINTS=<sibling-id>: likely edits <files>\n..." \
-
-Build the sibling context BEFORE dispatching:
-1. List all children: maw exec default -- bn list -l "mission:<mission-id>" --json
-2. For each child: extract id, title, owner, status
-3. Format EDICT_SIBLINGS as one line per child: "<id> (<title>) [owner:<owner>, status:<status>]"
-4. Estimate file ownership hints from bone titles/descriptions (advisory, not enforced)
-5. Extract the Outcome line from the mission bone description for EDICT_MISSION_OUTCOME
-
-- Include mission context in each worker's bone comment:
-  maw exec default -- bn bone comment add <child-id> \
-    "Mission context: <mission-id> — <outcome>. Siblings: <sibling-ids>."
-
-### Checkpoint Loop (step 17)
-
-After dispatching workers, enter a checkpoint loop. Run checkpoints every {checkpoint_interval} seconds.
-
-Each checkpoint:
-1. Count children by status:
-   maw exec default -- bn list --all -l "mission:<mission-id>" --json
-   Tally: N open, M doing, K done, J blocked
-2. Check alive workers:
-   vessel list --format json
-   Cross-reference with dispatched worker names ({agent}/<suffix>)
-3. Check for completions (cursor-based — track last-seen message ID to avoid rescanning):
-   rite history {project} -n 20 -L task-done --since <last-checkpoint-time>
-   Look for "Completed <bone-id>" messages from workers
-4. Post checkpoint to channel (REQUIRED — crash recovery depends on this):
-   rite send --agent {agent} {project} "Mission <mission-id> checkpoint: K/$TOTAL done, J blocked, M active" -L feedback
-   If this session crashes, the next iteration uses these messages to reconstruct mission state.
-5. Detect failures:
-   If a worker is not in vessel list but its bone is still doing → crash recovery (see step 6)
-6. Decide:
-   - All children closed → exit checkpoint loop, proceed to Mission Close (step 18)
-   - Some blocked, none doing → investigate blockers or rescope
-   - Workers still alive → continue checkpoint loop
-
-Exit the checkpoint loop when: all children are closed, OR no workers alive and all remaining bones are blocked.
-
-### Mission Close and Synthesis (step 18)
-
-When all children are closed:
-1. Verify: maw exec default -- bn list -l "mission:<mission-id>" — all should be closed
-2. Write mission log as a bone comment (synthesis of what happened):
-   maw exec default -- bn bone comment add <mission-id> \
-     "Mission complete.\n\nChildren: N total, all closed.\nKey decisions: <what changed during execution>\nWhat worked: <patterns that succeeded>\nWhat to avoid: <patterns that failed>\nKey artifacts: <files/modules created or modified>"
-3. Close the mission: maw exec default -- bn done <mission-id> --reason "All children completed"
-4. Announce: rite send --agent {agent} {project} "Mission <mission-id> complete: <title> — N children, all done" -L task-done
-"#
-        )
-    } else {
-        String::new()
-    };
+    let mission_section_5c = build_mission_section_5c(
+        missions_enabled,
+        edict_mission_env.as_deref(),
+        agent,
+        project,
+        max_workers,
+        max_children,
+        checkpoint_interval,
+    );
 
     let multi_lead_rules = if ctx.multi_lead_enabled {
         "\n- MULTI-LEAD: Other leads may be active. Always check bone claims before picking work. Use rite claims stake to claim bones atomically — if it fails, another lead got there first. Skip to the next bone.".to_string()
@@ -235,17 +97,13 @@ When all children are closed:
         String::new()
     };
 
-    let mission_rules = if missions_enabled {
-        let mission_focus = edict_mission_env
-            .as_deref()
-            .map(|m| format!(" Focus on mission: {m}"))
-            .unwrap_or_default();
-        format!(
-            "\n- MISSIONS: Enabled. Max {max_workers} concurrent workers, max {max_children} children per mission. Checkpoint every {checkpoint_interval}s.{mission_focus}\n- COORDINATION: Watch for coord:interface, coord:blocker, coord:handoff labels on rite messages from workers. React to coord:blocker by unblocking or reassigning."
-        )
-    } else {
-        String::new()
-    };
+    let mission_rules = build_mission_rules(
+        missions_enabled,
+        edict_mission_env.as_deref(),
+        max_workers,
+        max_children,
+        checkpoint_interval,
+    );
 
     // Worker dispatch command (built into edict binary)
     let worker_cmd = "edict run worker-loop";
@@ -273,23 +131,7 @@ When all children are closed:
     // COMMAND PATTERN explainer is the one block that can't be mechanically
     // rewritten (it contrasts trunk vs workspace), so it is layout-specific here.
     let layout = crate::layout::Layout::detect(std::path::Path::new(project_dir.as_str()));
-    let command_pattern = if layout.is_root() {
-        "COMMAND PATTERN: bn runs against the trunk at the repo root; seal runs in its workspace.\n  \
-         bn:   bn <args>                              (directly at the repo root, no prefix)\n  \
-         seal: maw exec $WS -- seal <args>\n  \
-         git:  maw exec $WS -- git <args>\n  \
-         other: maw exec $WS -- <command>           (cargo test, etc.)\n\
-         Inside `maw exec <ws>`, CWD is already `.maw/workspaces/<ws>/`. At the repo root, run `bn`, `cargo`, etc. directly.\n\
-         For file reads/edits in a workspace, use the full path: `.maw/workspaces/<ws>/src/...`; trunk files are at the repo root (`src/...`)."
-    } else {
-        "COMMAND PATTERN — maw exec: All bn commands run in the default workspace. All seal commands run in their workspace.\n  \
-         bn:   maw exec default -- bn <args>\n  \
-         seal: maw exec $WS -- seal <args>\n  \
-         git:  maw exec $WS -- git <args>\n  \
-         other: maw exec $WS -- <command>           (cargo test, etc.)\n\
-         Inside `maw exec <ws>`, CWD is already `ws/<ws>/`. Use `maw exec default -- ls src/`, NOT `maw exec default -- ls ws/default/src/`\n\
-         For file reads/edits outside maw exec, use the full absolute path: `ws/<ws>/src/...`"
-    };
+    let command_pattern = command_pattern(layout);
 
     let prompt = format!(
         r#"You are lead dev agent "{agent}" for project "{project}".
@@ -775,6 +617,214 @@ Key rules:
 - Output completion signal at end"#
     );
     layout.rewrite_prompt(prompt)
+}
+
+/// Build the SIBLING LEADS section (empty when no sibling leads are active).
+fn build_sibling_section(sibling_leads: &[SiblingLead], project: &str) -> String {
+    if sibling_leads.is_empty() {
+        return String::new();
+    }
+    let leads_list: String = sibling_leads
+        .iter()
+        .map(|s| {
+            let memo = if s.memo.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", s.memo)
+            };
+            format!("- {}{memo}", s.name)
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    format!(
+        r"
+    ## SIBLING LEADS (multi-lead mode active)
+
+    Other lead agents are currently active on this project. Coordinate through claims — do NOT duplicate work.
+
+    Active leads:
+    {leads_list}
+
+    **Bone claim rule**: Before starting work on ANY bone, check if it is already claimed:
+      rite claims list --format json
+      Look for `bone://{project}/<id>` — if claimed by another agent, SKIP that bone and pick the next one.
+      Only work on bones you can successfully claim.
+    "
+    )
+}
+
+/// Build the Mission-Aware Triage section (empty when missions are disabled).
+fn build_mission_triage(missions_enabled: bool, edict_mission_env: Option<&str>) -> String {
+    if !missions_enabled {
+        return String::new();
+    }
+    let mission_focus = edict_mission_env
+        .map(|m| format!("EDICT_MISSION=\"{m}\" — prioritize this mission's children."))
+        .unwrap_or_default();
+    format!(
+        r#"
+### Mission-Aware Triage
+
+Check for active missions (bones with label "mission" that are doing):
+  maw exec default -- bn list -l mission --state doing --json
+{mission_focus}
+For each active mission:
+  1. List children: maw exec default -- bn list -l "mission:<mission-id>" --json
+  2. Count status: N open, M doing, K done, J blocked
+  3. If any children are ready (open, unblocked): include them in the dispatch plan
+  4. If all children are done: close the mission bone (see step 5c "Closing a Mission")
+  5. If children are blocked: investigate — can you unblock them? Reassign?
+"#
+    )
+}
+
+/// Build the step 5c MISSION section (empty when missions are disabled).
+fn build_mission_section_5c(
+    missions_enabled: bool,
+    edict_mission_env: Option<&str>,
+    agent: &str,
+    project: &str,
+    max_workers: u32,
+    max_children: u32,
+    checkpoint_interval: u64,
+) -> String {
+    if !missions_enabled {
+        return String::new();
+    }
+    let mission_env_note = edict_mission_env
+        .map(|m| format!("\nEDICT_MISSION is set to \"{m}\" — focus on this mission.\n"))
+        .unwrap_or_default();
+
+    format!(
+        r#"
+## 5c. MISSION (Level 4 — large task decomposition)
+
+Use when: a large coherent task needs decomposition into related bones with shared context.
+{mission_env_note}
+### Creating a Mission
+
+1. Create the mission bone (if not already created by !mission handler):
+   maw exec default -- bn create \
+     --title "<mission title>" --labels mission --kind task --urgency default \
+     --description "Outcome: <what done looks like>\nSuccess metric: <how to verify>\nConstraints: <scope/budget/forbidden>\nStop criteria: <when to stop>"
+2. Plan decomposition: break the mission into {max_children} or fewer child bones.
+   Consider dependencies between children — which can run in parallel, which are sequential.
+3. Create child bones:
+   For each child:
+   maw exec default -- bn create \
+     --title "<child title>" --parent <mission-id> \
+     --labels "mission:<mission-id>" --kind task --urgency default
+4. Wire dependencies between children if needed:
+   maw exec default -- bn dep add <blocked-child> <blocker-child>
+5. Post plan to channel:
+   rite send --agent {agent} {project} "Mission <mission-id>: <title> — created N child bones" -L task-claim
+
+### Dispatch Mission Workers
+
+IMPORTANT: You MUST dispatch workers for independent children. Do NOT implement them yourself sequentially.
+The whole point of missions is parallel execution — doing children sequentially defeats the purpose and wastes time.
+Use `vessel spawn` for mission workers — NOT the Task tool. See step 5b for why.
+
+For independent children (unblocked), dispatch workers (max {max_workers} concurrent):
+- Follow the same dispatch pattern as step 5b — INCLUDING claim staking for EACH worker:
+  rite claims stake --agent {agent} "bone://{project}/<child-id>" -m "dispatched to <worker-name>"
+  rite claims stake --agent {agent} "workspace://{project}/$WS" -m "<child-id>"
+- Add mission labels and sibling context env vars:
+    --label "mission:<mission-id>" \
+    --env "EDICT_MISSION=<mission-id>" \
+    --env "EDICT_MISSION_OUTCOME=<outcome from mission bone description>" \
+    --env "EDICT_SIBLINGS=<sibling-id> (<title>) [owner:<owner>, status:<status>]\n..." \
+    --env "EDICT_FILE_HINTS=<sibling-id>: likely edits <files>\n..." \
+
+Build the sibling context BEFORE dispatching:
+1. List all children: maw exec default -- bn list -l "mission:<mission-id>" --json
+2. For each child: extract id, title, owner, status
+3. Format EDICT_SIBLINGS as one line per child: "<id> (<title>) [owner:<owner>, status:<status>]"
+4. Estimate file ownership hints from bone titles/descriptions (advisory, not enforced)
+5. Extract the Outcome line from the mission bone description for EDICT_MISSION_OUTCOME
+
+- Include mission context in each worker's bone comment:
+  maw exec default -- bn bone comment add <child-id> \
+    "Mission context: <mission-id> — <outcome>. Siblings: <sibling-ids>."
+
+### Checkpoint Loop (step 17)
+
+After dispatching workers, enter a checkpoint loop. Run checkpoints every {checkpoint_interval} seconds.
+
+Each checkpoint:
+1. Count children by status:
+   maw exec default -- bn list --all -l "mission:<mission-id>" --json
+   Tally: N open, M doing, K done, J blocked
+2. Check alive workers:
+   vessel list --format json
+   Cross-reference with dispatched worker names ({agent}/<suffix>)
+3. Check for completions (cursor-based — track last-seen message ID to avoid rescanning):
+   rite history {project} -n 20 -L task-done --since <last-checkpoint-time>
+   Look for "Completed <bone-id>" messages from workers
+4. Post checkpoint to channel (REQUIRED — crash recovery depends on this):
+   rite send --agent {agent} {project} "Mission <mission-id> checkpoint: K/$TOTAL done, J blocked, M active" -L feedback
+   If this session crashes, the next iteration uses these messages to reconstruct mission state.
+5. Detect failures:
+   If a worker is not in vessel list but its bone is still doing → crash recovery (see step 6)
+6. Decide:
+   - All children closed → exit checkpoint loop, proceed to Mission Close (step 18)
+   - Some blocked, none doing → investigate blockers or rescope
+   - Workers still alive → continue checkpoint loop
+
+Exit the checkpoint loop when: all children are closed, OR no workers alive and all remaining bones are blocked.
+
+### Mission Close and Synthesis (step 18)
+
+When all children are closed:
+1. Verify: maw exec default -- bn list -l "mission:<mission-id>" — all should be closed
+2. Write mission log as a bone comment (synthesis of what happened):
+   maw exec default -- bn bone comment add <mission-id> \
+     "Mission complete.\n\nChildren: N total, all closed.\nKey decisions: <what changed during execution>\nWhat worked: <patterns that succeeded>\nWhat to avoid: <patterns that failed>\nKey artifacts: <files/modules created or modified>"
+3. Close the mission: maw exec default -- bn done <mission-id> --reason "All children completed"
+4. Announce: rite send --agent {agent} {project} "Mission <mission-id> complete: <title> — N children, all done" -L task-done
+"#
+    )
+}
+
+/// Build the MISSIONS line for the Key rules section (empty when disabled).
+fn build_mission_rules(
+    missions_enabled: bool,
+    edict_mission_env: Option<&str>,
+    max_workers: u32,
+    max_children: u32,
+    checkpoint_interval: u64,
+) -> String {
+    if !missions_enabled {
+        return String::new();
+    }
+    let mission_focus = edict_mission_env
+        .map(|m| format!(" Focus on mission: {m}"))
+        .unwrap_or_default();
+    format!(
+        "\n- MISSIONS: Enabled. Max {max_workers} concurrent workers, max {max_children} children per mission. Checkpoint every {checkpoint_interval}s.{mission_focus}\n- COORDINATION: Watch for coord:interface, coord:blocker, coord:handoff labels on rite messages from workers. React to coord:blocker by unblocking or reassigning."
+    )
+}
+
+/// Build the layout-specific COMMAND PATTERN explainer block.
+const fn command_pattern(layout: crate::layout::Layout) -> &'static str {
+    if layout.is_root() {
+        "COMMAND PATTERN: bn runs against the trunk at the repo root; seal runs in its workspace.\n  \
+         bn:   bn <args>                              (directly at the repo root, no prefix)\n  \
+         seal: maw exec $WS -- seal <args>\n  \
+         git:  maw exec $WS -- git <args>\n  \
+         other: maw exec $WS -- <command>           (cargo test, etc.)\n\
+         Inside `maw exec <ws>`, CWD is already `.maw/workspaces/<ws>/`. At the repo root, run `bn`, `cargo`, etc. directly.\n\
+         For file reads/edits in a workspace, use the full path: `.maw/workspaces/<ws>/src/...`; trunk files are at the repo root (`src/...`)."
+    } else {
+        "COMMAND PATTERN — maw exec: All bn commands run in the default workspace. All seal commands run in their workspace.\n  \
+         bn:   maw exec default -- bn <args>\n  \
+         seal: maw exec $WS -- seal <args>\n  \
+         git:  maw exec $WS -- git <args>\n  \
+         other: maw exec $WS -- <command>           (cargo test, etc.)\n\
+         Inside `maw exec <ws>`, CWD is already `ws/<ws>/`. Use `maw exec default -- ls src/`, NOT `maw exec default -- ls ws/default/src/`\n\
+         For file reads/edits outside maw exec, use the full absolute path: `ws/<ws>/src/...`"
+    }
 }
 
 #[cfg(test)]

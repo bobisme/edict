@@ -51,7 +51,7 @@ pub fn acquire_merge_mutex(
 
                 // Exponential backoff with jitter, capped at 15s
                 let base_delay = delays[attempt.min(delays.len() - 1)];
-                let jitter_range = (base_delay as f64 * 0.3) as u64;
+                let jitter_range = base_delay * 3 / 10;
                 let jitter = if jitter_range > 0 {
                     (attempt as u64 * 7 + 3) % (2 * jitter_range + 1)
                 } else {

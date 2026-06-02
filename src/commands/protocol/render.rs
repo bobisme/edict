@@ -147,6 +147,11 @@ use super::shell::{
 };
 
 /// Validate all dynamic values in a guidance before rendering.
+///
+/// # Errors
+///
+/// Returns `Err` if any dynamic value (bone id, workspace name, or review id)
+/// fails validation.
 pub fn validate_guidance(guidance: &ProtocolGuidance) -> Result<(), ValidationError> {
     if let Some(ref bone) = guidance.bone {
         validate_bone_id(&bone.id)?;
@@ -182,65 +187,72 @@ pub fn render_text(guidance: &ProtocolGuidance) -> String {
     let mut out = String::new();
 
     // Header
-    writeln!(&mut out, "Command: {}", guidance.command).unwrap();
-    writeln!(&mut out, "Status: {}", format_status(guidance.status)).unwrap();
+    writeln!(&mut out, "Command: {}", guidance.command).expect("writing to a String is infallible");
+    writeln!(&mut out, "Status: {}", format_status(guidance.status))
+        .expect("writing to a String is infallible");
     writeln!(
         &mut out,
         "Snapshot: {} (valid for {}s)",
         guidance.snapshot_at, guidance.valid_for_sec
     )
-    .unwrap();
+    .expect("writing to a String is infallible");
 
     if let Some(ref bone) = guidance.bone {
-        writeln!(&mut out, "Bone: {} ({})", bone.id, bone.title).unwrap();
+        writeln!(&mut out, "Bone: {} ({})", bone.id, bone.title)
+            .expect("writing to a String is infallible");
     }
     if let Some(ref ws) = guidance.workspace {
-        writeln!(&mut out, "Workspace: {ws}").unwrap();
+        writeln!(&mut out, "Workspace: {ws}").expect("writing to a String is infallible");
     }
     if let Some(ref review) = guidance.review {
-        writeln!(&mut out, "Review: {} ({})", review.review_id, review.status).unwrap();
+        writeln!(&mut out, "Review: {} ({})", review.review_id, review.status)
+            .expect("writing to a String is infallible");
     }
 
     if let Some(ref cmd) = guidance.revalidate_cmd {
-        writeln!(&mut out, "Revalidate: {cmd}").unwrap();
+        writeln!(&mut out, "Revalidate: {cmd}").expect("writing to a String is infallible");
     }
 
     if !guidance.diagnostics.is_empty() {
-        writeln!(&mut out).unwrap();
-        writeln!(&mut out, "Diagnostics:").unwrap();
+        writeln!(&mut out).expect("writing to a String is infallible");
+        writeln!(&mut out, "Diagnostics:").expect("writing to a String is infallible");
         for (i, diag) in guidance.diagnostics.iter().enumerate() {
-            writeln!(&mut out, "  {}. {}", i + 1, diag).unwrap();
+            writeln!(&mut out, "  {}. {}", i + 1, diag).expect("writing to a String is infallible");
         }
     }
 
     // Show execution results if --execute was used
     if guidance.executed {
         if let Some(ref report) = guidance.execution_report {
-            writeln!(&mut out).unwrap();
-            writeln!(&mut out, "Execution:").unwrap();
+            writeln!(&mut out).expect("writing to a String is infallible");
+            writeln!(&mut out, "Execution:").expect("writing to a String is infallible");
             let exec_output = super::executor::render_report(report, OutputFormat::Text);
             for line in exec_output.lines() {
-                writeln!(&mut out, "  {line}").unwrap();
+                writeln!(&mut out, "  {line}").expect("writing to a String is infallible");
             }
         }
     } else if !guidance.steps.is_empty() {
         // Show steps only if not executed
-        writeln!(&mut out).unwrap();
-        writeln!(&mut out, "Steps:").unwrap();
+        writeln!(&mut out).expect("writing to a String is infallible");
+        writeln!(&mut out, "Steps:").expect("writing to a String is infallible");
         for (i, step) in guidance.steps.iter().enumerate() {
-            writeln!(&mut out, "  {}. {}", i + 1, step).unwrap();
+            writeln!(&mut out, "  {}. {}", i + 1, step).expect("writing to a String is infallible");
         }
     }
 
     if let Some(ref advice) = guidance.advice {
-        writeln!(&mut out).unwrap();
-        writeln!(&mut out, "Advice: {advice}").unwrap();
+        writeln!(&mut out).expect("writing to a String is infallible");
+        writeln!(&mut out, "Advice: {advice}").expect("writing to a String is infallible");
     }
 
     out
 }
 
 /// Render guidance as JSON with schema version and structured data.
+///
+/// # Errors
+///
+/// Returns `Err` if the guidance cannot be serialized to JSON.
 pub fn render_json(guidance: &ProtocolGuidance) -> Result<String, serde_json::Error> {
     let json = serde_json::to_string_pretty(guidance)?;
     Ok(json)
@@ -268,7 +280,8 @@ pub fn render_pretty(guidance: &ProtocolGuidance) -> String {
     };
 
     // Header
-    writeln!(&mut out, "{}Command:{} {}", bold, reset, guidance.command).unwrap();
+    writeln!(&mut out, "{}Command:{} {}", bold, reset, guidance.command)
+        .expect("writing to a String is infallible");
     writeln!(
         &mut out,
         "{}Status:{} {}{}{}\n",
@@ -278,14 +291,14 @@ pub fn render_pretty(guidance: &ProtocolGuidance) -> String {
         format_status(guidance.status),
         reset
     )
-    .unwrap();
+    .expect("writing to a String is infallible");
 
     writeln!(
         &mut out,
         "{}Snapshot:{} {} (valid for {}s)",
         bold, reset, guidance.snapshot_at, guidance.valid_for_sec
     )
-    .unwrap();
+    .expect("writing to a String is infallible");
 
     if let Some(ref bone) = guidance.bone {
         writeln!(
@@ -293,10 +306,11 @@ pub fn render_pretty(guidance: &ProtocolGuidance) -> String {
             "{}Bone:{} {} ({})",
             bold, reset, bone.id, bone.title
         )
-        .unwrap();
+        .expect("writing to a String is infallible");
     }
     if let Some(ref ws) = guidance.workspace {
-        writeln!(&mut out, "{bold}Workspace:{reset} {ws}").unwrap();
+        writeln!(&mut out, "{bold}Workspace:{reset} {ws}")
+            .expect("writing to a String is infallible");
     }
     if let Some(ref review) = guidance.review {
         writeln!(
@@ -304,39 +318,43 @@ pub fn render_pretty(guidance: &ProtocolGuidance) -> String {
             "{}Review:{} {} ({})",
             bold, reset, review.review_id, review.status
         )
-        .unwrap();
+        .expect("writing to a String is infallible");
     }
 
     if let Some(ref cmd) = guidance.revalidate_cmd {
-        writeln!(&mut out, "{bold}Revalidate:{reset} {cmd}").unwrap();
+        writeln!(&mut out, "{bold}Revalidate:{reset} {cmd}")
+            .expect("writing to a String is infallible");
     }
 
     if !guidance.diagnostics.is_empty() {
-        writeln!(&mut out, "\n{bold}Diagnostics:{reset}").unwrap();
+        writeln!(&mut out, "\n{bold}Diagnostics:{reset}")
+            .expect("writing to a String is infallible");
         for diag in &guidance.diagnostics {
-            writeln!(&mut out, "  {red}{diag}{reset}").unwrap();
+            writeln!(&mut out, "  {red}{diag}{reset}").expect("writing to a String is infallible");
         }
     }
 
     // Show execution results if --execute was used
     if guidance.executed {
         if let Some(ref report) = guidance.execution_report {
-            writeln!(&mut out, "\n{bold}Execution:{reset}").unwrap();
+            writeln!(&mut out, "\n{bold}Execution:{reset}")
+                .expect("writing to a String is infallible");
             let exec_output = super::executor::render_report(report, OutputFormat::Pretty);
             for line in exec_output.lines() {
-                writeln!(&mut out, "  {line}").unwrap();
+                writeln!(&mut out, "  {line}").expect("writing to a String is infallible");
             }
         }
     } else if !guidance.steps.is_empty() {
         // Show steps only if not executed
-        writeln!(&mut out, "\n{bold}Steps:{reset}").unwrap();
+        writeln!(&mut out, "\n{bold}Steps:{reset}").expect("writing to a String is infallible");
         for (i, step) in guidance.steps.iter().enumerate() {
-            writeln!(&mut out, "  {}. {}", i + 1, step).unwrap();
+            writeln!(&mut out, "  {}. {}", i + 1, step).expect("writing to a String is infallible");
         }
     }
 
     if let Some(ref advice) = guidance.advice {
-        writeln!(&mut out, "\n{bold}Advice:{reset} {advice}").unwrap();
+        writeln!(&mut out, "\n{bold}Advice:{reset} {advice}")
+            .expect("writing to a String is infallible");
     }
 
     out
@@ -357,6 +375,10 @@ const fn format_status(status: ProtocolStatus) -> &'static str {
 }
 
 /// Render guidance using the specified format.
+///
+/// # Errors
+///
+/// Returns `Err` if the guidance fails validation or cannot be serialized.
 pub fn render(guidance: &ProtocolGuidance, format: OutputFormat) -> Result<String, String> {
     // Validate before rendering
     validate_guidance(guidance).map_err(|e| e.to_string())?;

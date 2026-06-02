@@ -11,17 +11,39 @@ use super::shell;
 use crate::commands::doctor::OutputFormat;
 use crate::config::Config;
 
+/// Parameters for [`execute`].
+pub struct ReviewParams<'a> {
+    pub bone_id: &'a str,
+    pub reviewers_override: Option<&'a str>,
+    pub review_id_flag: Option<&'a str>,
+    pub execute: bool,
+    pub agent: &'a str,
+    pub project: &'a str,
+    pub config: &'a Config,
+    pub format: OutputFormat,
+}
+
 /// Execute review protocol: check state and output review guidance.
-pub fn execute(
-    bone_id: &str,
-    reviewers_override: Option<&str>,
-    review_id_flag: Option<&str>,
-    execute: bool,
-    agent: &str,
-    project: &str,
-    config: &Config,
-    format: OutputFormat,
-) -> anyhow::Result<()> {
+///
+/// # Errors
+///
+/// Returns `Err` if collecting protocol context, resolving reviewers, or
+/// rendering/executing the review steps fails.
+#[allow(
+    clippy::too_many_lines,
+    reason = "sequential review-protocol state machine; sub-steps already extracted into helpers"
+)]
+pub fn execute(params: &ReviewParams) -> anyhow::Result<()> {
+    let &ReviewParams {
+        bone_id,
+        reviewers_override,
+        review_id_flag,
+        execute,
+        agent,
+        project,
+        config,
+        format,
+    } = params;
     // Early input validation before any subprocess calls
     if let Err(e) = shell::validate_bone_id(bone_id) {
         anyhow::bail!("invalid bone ID: {e}");
@@ -129,14 +151,41 @@ pub fn execute(
     }
 
     // No review exists: output seal reviews create + rite announce commands
+    build_new_review_guidance(
+        &mut guidance,
+        &workspace,
+        &reviewer_names,
+        bone_id,
+        &bone_info.title,
+        project,
+        agent,
+        execute,
+    )?;
+
+    print_guidance(&guidance, format)?;
+    Ok(())
+}
+
+/// Build guidance for creating a new review (no existing review found).
+#[allow(clippy::too_many_arguments)]
+fn build_new_review_guidance(
+    guidance: &mut ProtocolGuidance,
+    workspace: &str,
+    reviewer_names: &[String],
+    bone_id: &str,
+    bone_title: &str,
+    project: &str,
+    agent: &str,
+    execute: bool,
+) -> anyhow::Result<()> {
     guidance.status = ProtocolStatus::NeedsReview;
 
     let reviewers_str = reviewer_names.join(",");
-    let title = format!("{bone_id}: {}", bone_info.title);
+    let title = format!("{bone_id}: {bone_title}");
 
     let mut steps = Vec::new();
     steps.push(shell::seal_create_cmd(
-        &workspace,
+        workspace,
         agent,
         &title,
         &reviewers_str,
@@ -169,7 +218,6 @@ pub fn execute(
         reviewer_names.join(", ")
     ));
 
-    print_guidance(&guidance, format)?;
     Ok(())
 }
 
@@ -216,113 +264,156 @@ fn handle_existing_review(
             ));
         }
         ReviewGateStatus::Blocked => {
-            // Blocked — output seal review (read feedback) + re-request commands
-            guidance.status = ProtocolStatus::Blocked;
-
-            let mut steps = Vec::new();
-
-            // Step 1: Read review feedback
-            steps.push(shell::seal_show_cmd(workspace, review_id));
-
-            // Step 2: After addressing feedback, re-request review
-            let reviewers_str = reviewer_names.join(",");
-            steps.push(shell::seal_request_cmd(
-                workspace,
+            build_blocked_guidance(
+                guidance,
+                &decision,
+                &review_detail,
                 review_id,
-                &reviewers_str,
-                agent,
-            ));
-
-            // Step 3: Announce re-request on rite
-            let mentions: Vec<String> = decision
-                .blocked_by
-                .iter()
-                .map(|r| format!("@{r}"))
-                .collect();
-            let announce_msg = format!(
-                "Review updated: {review_id} — addressed feedback, re-requesting {}",
-                mentions.join(" ")
-            );
-            steps.push(shell::rite_send_cmd(
-                agent,
+                workspace,
+                reviewer_names,
                 project,
-                &announce_msg,
-                "review-request",
-            ));
-
-            if execute {
-                // Execute the steps
-                let report = executor::execute_steps(&steps)?;
-                guidance.executed = true;
-                guidance.execution_report = Some(report);
-            } else {
-                // Just output guidance
-                for step in steps {
-                    guidance.step(step);
-                }
-            }
-
-            guidance.diagnostic(format!(
-                "Blocked by: {}. Open threads: {}",
-                decision.blocked_by.join(", "),
-                review_detail.open_thread_count,
-            ));
-            guidance.advise(
-                "Read review feedback, address issues, then re-request review.".to_string(),
-            );
+                agent,
+                execute,
+            )?;
         }
         ReviewGateStatus::NeedsReview => {
-            // Still waiting for reviews
-            guidance.status = ProtocolStatus::NeedsReview;
-
-            if !decision.missing_approvals.is_empty() {
-                let mut steps = Vec::new();
-
-                // Re-request from missing reviewers
-                let missing_str = decision.missing_approvals.join(",");
-                steps.push(shell::seal_request_cmd(
-                    workspace,
-                    review_id,
-                    &missing_str,
-                    agent,
-                ));
-
-                let mentions: Vec<String> = decision
-                    .missing_approvals
-                    .iter()
-                    .map(|r| format!("@{r}"))
-                    .collect();
-                let announce_msg = format!("Review requested: {review_id} {}", mentions.join(" "));
-                steps.push(shell::rite_send_cmd(
-                    agent,
-                    project,
-                    &announce_msg,
-                    "review-request",
-                ));
-
-                if execute {
-                    // Execute the steps
-                    let report = executor::execute_steps(&steps)?;
-                    guidance.executed = true;
-                    guidance.execution_report = Some(report);
-                } else {
-                    // Just output guidance
-                    for step in steps {
-                        guidance.step(step);
-                    }
-                }
-            }
-
-            guidance.advise(format!(
-                "Awaiting review from: {}. {} of {} required reviewers have voted.",
-                decision.missing_approvals.join(", "),
-                decision.approved_by.len(),
-                decision.total_required,
-            ));
+            build_needs_review_guidance(
+                guidance, &decision, review_id, workspace, project, agent, execute,
+            )?;
         }
     }
 
     print_guidance(guidance, format)?;
+    Ok(())
+}
+
+/// Build guidance for a blocked review: read feedback + re-request commands.
+#[allow(clippy::too_many_arguments)]
+fn build_blocked_guidance(
+    guidance: &mut ProtocolGuidance,
+    decision: &review_gate::ReviewGateDecision,
+    review_detail: &super::adapters::ReviewDetail,
+    review_id: &str,
+    workspace: &str,
+    reviewer_names: &[String],
+    project: &str,
+    agent: &str,
+    execute: bool,
+) -> anyhow::Result<()> {
+    // Blocked — output seal review (read feedback) + re-request commands
+    guidance.status = ProtocolStatus::Blocked;
+
+    let mut steps = Vec::new();
+
+    // Step 1: Read review feedback
+    steps.push(shell::seal_show_cmd(workspace, review_id));
+
+    // Step 2: After addressing feedback, re-request review
+    let reviewers_str = reviewer_names.join(",");
+    steps.push(shell::seal_request_cmd(
+        workspace,
+        review_id,
+        &reviewers_str,
+        agent,
+    ));
+
+    // Step 3: Announce re-request on rite
+    let mentions: Vec<String> = decision
+        .blocked_by
+        .iter()
+        .map(|r| format!("@{r}"))
+        .collect();
+    let announce_msg = format!(
+        "Review updated: {review_id} — addressed feedback, re-requesting {}",
+        mentions.join(" ")
+    );
+    steps.push(shell::rite_send_cmd(
+        agent,
+        project,
+        &announce_msg,
+        "review-request",
+    ));
+
+    if execute {
+        // Execute the steps
+        let report = executor::execute_steps(&steps)?;
+        guidance.executed = true;
+        guidance.execution_report = Some(report);
+    } else {
+        // Just output guidance
+        for step in steps {
+            guidance.step(step);
+        }
+    }
+
+    guidance.diagnostic(format!(
+        "Blocked by: {}. Open threads: {}",
+        decision.blocked_by.join(", "),
+        review_detail.open_thread_count,
+    ));
+    guidance.advise("Read review feedback, address issues, then re-request review.".to_string());
+
+    Ok(())
+}
+
+/// Build guidance for a review still awaiting required approvals.
+fn build_needs_review_guidance(
+    guidance: &mut ProtocolGuidance,
+    decision: &review_gate::ReviewGateDecision,
+    review_id: &str,
+    workspace: &str,
+    project: &str,
+    agent: &str,
+    execute: bool,
+) -> anyhow::Result<()> {
+    // Still waiting for reviews
+    guidance.status = ProtocolStatus::NeedsReview;
+
+    if !decision.missing_approvals.is_empty() {
+        let mut steps = Vec::new();
+
+        // Re-request from missing reviewers
+        let missing_str = decision.missing_approvals.join(",");
+        steps.push(shell::seal_request_cmd(
+            workspace,
+            review_id,
+            &missing_str,
+            agent,
+        ));
+
+        let mentions: Vec<String> = decision
+            .missing_approvals
+            .iter()
+            .map(|r| format!("@{r}"))
+            .collect();
+        let announce_msg = format!("Review requested: {review_id} {}", mentions.join(" "));
+        steps.push(shell::rite_send_cmd(
+            agent,
+            project,
+            &announce_msg,
+            "review-request",
+        ));
+
+        if execute {
+            // Execute the steps
+            let report = executor::execute_steps(&steps)?;
+            guidance.executed = true;
+            guidance.execution_report = Some(report);
+        } else {
+            // Just output guidance
+            for step in steps {
+                guidance.step(step);
+            }
+        }
+    }
+
+    guidance.advise(format!(
+        "Awaiting review from: {}. {} of {} required reviewers have voted.",
+        decision.missing_approvals.join(", "),
+        decision.approved_by.len(),
+        decision.total_required,
+    ));
+
     Ok(())
 }
 
@@ -337,20 +428,23 @@ fn resolve_reviewers(
     config: &Config,
     project: &str,
 ) -> anyhow::Result<Vec<String>> {
-    let names: Vec<String> = if let Some(override_str) = reviewers_override {
-        override_str
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect()
-    } else {
-        config
-            .review
-            .reviewers
-            .iter()
-            .map(|role| format!("{project}-{role}"))
-            .collect()
-    };
+    let names: Vec<String> = reviewers_override.map_or_else(
+        || {
+            config
+                .review
+                .reviewers
+                .iter()
+                .map(|role| format!("{project}-{role}"))
+                .collect()
+        },
+        |override_str| {
+            override_str
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        },
+    );
 
     // Validate all reviewer names
     for name in &names {

@@ -4,6 +4,12 @@
 //! Each adapter handles optional/new fields gracefully and produces clear
 //! parse errors. `ProtocolContext` consumes these instead of ad-hoc parsing.
 
+// These structs intentionally model the full JSON shape of each companion
+// tool's output for forward-compatibility and documentation, even though only
+// a subset of fields is read today; likewise some parsers are retained (with
+// tests) for not-yet-wired call sites.
+#![allow(dead_code)]
+
 use serde::Deserialize;
 
 // --- Bus Claims ---
@@ -114,6 +120,10 @@ pub struct BoneInfo {
 }
 
 /// Parse `bn show --format json` output. Returns the bone info.
+///
+/// # Errors
+///
+/// Returns `Err` if the JSON cannot be deserialized into a `BoneInfo`.
 pub fn parse_bone_show(json: &str) -> Result<BoneInfo, AdapterError> {
     // bn show returns a single object
     serde_json::from_str(json).map_err(|e| AdapterError::ParseFailed {
@@ -236,6 +246,10 @@ impl std::error::Error for AdapterError {}
 // --- Convenience parsers ---
 
 /// Parse `rite claims list --format json`.
+///
+/// # Errors
+///
+/// Returns `Err` if the JSON cannot be deserialized into a `ClaimsResponse`.
 pub fn parse_claims(json: &str) -> Result<ClaimsResponse, AdapterError> {
     serde_json::from_str(json).map_err(|e| AdapterError::ParseFailed {
         tool: "rite claims list",
@@ -244,6 +258,10 @@ pub fn parse_claims(json: &str) -> Result<ClaimsResponse, AdapterError> {
 }
 
 /// Parse `maw ws list --format json`.
+///
+/// # Errors
+///
+/// Returns `Err` if the JSON cannot be deserialized into a `WorkspacesResponse`.
 pub fn parse_workspaces(json: &str) -> Result<WorkspacesResponse, AdapterError> {
     serde_json::from_str(json).map_err(|e| AdapterError::ParseFailed {
         tool: "maw ws list",
@@ -252,6 +270,10 @@ pub fn parse_workspaces(json: &str) -> Result<WorkspacesResponse, AdapterError> 
 }
 
 /// Parse `seal reviews list --format json`.
+///
+/// # Errors
+///
+/// Returns `Err` if the JSON cannot be deserialized into a `ReviewsListResponse`.
 pub fn parse_reviews_list(json: &str) -> Result<ReviewsListResponse, AdapterError> {
     serde_json::from_str(json).map_err(|e| AdapterError::ParseFailed {
         tool: "seal reviews list",
@@ -260,6 +282,10 @@ pub fn parse_reviews_list(json: &str) -> Result<ReviewsListResponse, AdapterErro
 }
 
 /// Parse `seal review <id> --format json`.
+///
+/// # Errors
+///
+/// Returns `Err` if the JSON cannot be deserialized into a `ReviewDetailResponse`.
 pub fn parse_review_detail(json: &str) -> Result<ReviewDetailResponse, AdapterError> {
     serde_json::from_str(json).map_err(|e| AdapterError::ParseFailed {
         tool: "seal review",

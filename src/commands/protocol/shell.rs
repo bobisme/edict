@@ -31,6 +31,10 @@ pub fn shell_escape(s: &str) -> String {
 ///
 /// Bone ID prefixes vary by project, so we validate the format
 /// (short alphanumeric with hyphens) without hardcoding a prefix.
+///
+/// # Errors
+///
+/// Returns `Err` if the ID is empty or does not match the expected format.
 pub fn validate_bone_id(id: &str) -> Result<(), ValidationError> {
     if id.is_empty() {
         return Err(ValidationError::Empty("bone ID"));
@@ -49,6 +53,10 @@ pub fn validate_bone_id(id: &str) -> Result<(), ValidationError> {
 }
 
 /// Validate a workspace name.
+///
+/// # Errors
+///
+/// Returns `Err` if the name is empty, too long, or does not match the expected format.
 pub fn validate_workspace_name(name: &str) -> Result<(), ValidationError> {
     if name.is_empty() {
         return Err(ValidationError::Empty("workspace name"));
@@ -77,6 +85,10 @@ pub fn validate_workspace_name(name: &str) -> Result<(), ValidationError> {
 
 /// Validate an identifier (agent name, project name).
 /// Must be non-empty and contain no shell metacharacters.
+///
+/// # Errors
+///
+/// Returns `Err` if the value is empty or contains shell metacharacters.
 pub fn validate_identifier(field: &'static str, value: &str) -> Result<(), ValidationError> {
     if value.is_empty() {
         return Err(ValidationError::Empty(field));
@@ -166,6 +178,10 @@ impl std::fmt::Display for ValidationError {
 impl std::error::Error for ValidationError {}
 
 /// Validate a review ID (e.g., `cr-2rnh`).
+///
+/// # Errors
+///
+/// Returns `Err` if the ID is empty or does not match the `cr-[a-z0-9]+` format.
 pub fn validate_review_id(id: &str) -> Result<(), ValidationError> {
     if id.is_empty() {
         return Err(ValidationError::Empty("review ID"));
@@ -239,6 +255,10 @@ impl MergeTarget<'_> {
 // for defense-in-depth against unvalidated callers.
 
 /// Build: `rite claims stake --agent <agent> "bone://<project>/<id>" -m "<memo>"`
+///
+/// # Panics
+///
+/// Panics if `agent` is not a valid identifier.
 #[must_use]
 pub fn claims_stake_cmd(agent: &str, uri: &str, memo: &str) -> String {
     validate_identifier("agent", agent).expect("invalid agent name");
@@ -250,14 +270,18 @@ pub fn claims_stake_cmd(agent: &str, uri: &str, memo: &str) -> String {
         agent_safe,
         shell_escape(uri)
     )
-    .unwrap();
+    .expect("writing to a String is infallible");
     if !memo.is_empty() {
-        write!(cmd, " -m {}", shell_escape(memo)).unwrap();
+        write!(cmd, " -m {}", shell_escape(memo)).expect("writing to a String is infallible");
     }
     cmd
 }
 
 /// Build: `rite claims release --agent <agent> "<uri>"`
+///
+/// # Panics
+///
+/// Panics if `agent` is not a valid identifier.
 #[allow(dead_code)]
 #[must_use]
 pub fn claims_release_cmd(agent: &str, uri: &str) -> String {
@@ -271,6 +295,10 @@ pub fn claims_release_cmd(agent: &str, uri: &str) -> String {
 }
 
 /// Build: `rite claims release --agent <agent> --all`
+///
+/// # Panics
+///
+/// Panics if `agent` is not a valid identifier.
 #[must_use]
 pub fn claims_release_all_cmd(agent: &str) -> String {
     validate_identifier("agent", agent).expect("invalid agent name");
@@ -279,6 +307,10 @@ pub fn claims_release_all_cmd(agent: &str) -> String {
 }
 
 /// Build: `rite send --agent <agent> <project> '<message>' -L <label>`
+///
+/// # Panics
+///
+/// Panics if `agent` is not a valid identifier.
 #[must_use]
 pub fn rite_send_cmd(agent: &str, project: &str, message: &str, label: &str) -> String {
     validate_identifier("agent", agent).expect("invalid agent name");
@@ -295,9 +327,9 @@ pub fn rite_send_cmd(agent: &str, project: &str, message: &str, label: &str) -> 
             shell_escape(project),
             shell_escape(message)
         )
-        .unwrap();
+        .expect("writing to a String is infallible");
         if !label.is_empty() {
-            write!(cmd, " -L {}", shell_escape(label)).unwrap();
+            write!(cmd, " -L {}", shell_escape(label)).expect("writing to a String is infallible");
         }
         return cmd;
     }
@@ -310,13 +342,13 @@ pub fn rite_send_cmd(agent: &str, project: &str, message: &str, label: &str) -> 
         safe_ident(project),
         shell_escape(message)
     )
-    .unwrap();
+    .expect("writing to a String is infallible");
     if !label.is_empty() {
         // Apply same validate+escape fallback as project parameter
         if validate_identifier("label", label).is_ok() {
-            write!(cmd, " -L {}", safe_ident(label)).unwrap();
+            write!(cmd, " -L {}", safe_ident(label)).expect("writing to a String is infallible");
         } else {
-            write!(cmd, " -L {}", shell_escape(label)).unwrap();
+            write!(cmd, " -L {}", shell_escape(label)).expect("writing to a String is infallible");
         }
     }
     cmd
@@ -366,7 +398,8 @@ pub fn bn_done_cmd(bone_id: &str, reason: &str) -> String {
 
     let mut cmd = format!("maw exec default -- bn done {bone_id_safe}");
     if !reason.is_empty() {
-        write!(cmd, " --reason {}", shell_escape(reason)).unwrap();
+        write!(cmd, " --reason {}", shell_escape(reason))
+            .expect("writing to a String is infallible");
     }
     cmd
 }
@@ -426,6 +459,10 @@ pub fn ws_merge_cmd(workspace: &str, target: MergeTarget<'_>, message: &str) -> 
 }
 
 /// Build: `maw exec <ws> -- seal reviews create --agent <agent> --title '<title>' --reviewers <reviewers>`
+///
+/// # Panics
+///
+/// Panics if `agent` is not a valid identifier.
 #[must_use]
 pub fn seal_create_cmd(workspace: &str, agent: &str, title: &str, reviewers: &str) -> String {
     validate_identifier("agent", agent).expect("invalid agent name");
@@ -454,6 +491,10 @@ pub fn seal_create_cmd(workspace: &str, agent: &str, title: &str, reviewers: &st
 }
 
 /// Build: `maw exec <ws> -- seal reviews request <id> --reviewers <reviewers> --agent <agent>`
+///
+/// # Panics
+///
+/// Panics if `agent` is not a valid identifier.
 #[must_use]
 pub fn seal_request_cmd(workspace: &str, review_id: &str, reviewers: &str, agent: &str) -> String {
     validate_identifier("agent", agent).expect("invalid agent name");
@@ -503,6 +544,10 @@ pub fn seal_show_cmd(workspace: &str, review_id: &str) -> String {
 }
 
 /// Build: `rite statuses clear --agent <agent>`
+///
+/// # Panics
+///
+/// Panics if `agent` is not a valid identifier.
 #[must_use]
 pub fn rite_statuses_clear_cmd(agent: &str) -> String {
     validate_identifier("agent", agent).expect("invalid agent name");

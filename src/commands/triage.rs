@@ -4,6 +4,10 @@
 use crate::subprocess::Tool;
 
 /// Run triage: delegates to `bn triage` in the default workspace
+///
+/// # Errors
+/// Returns an error if the default workspace cannot be resolved or the
+/// `bn triage` subprocess fails.
 pub fn run_triage() -> anyhow::Result<()> {
     let output = Tool::new("bn")
         .arg("triage")

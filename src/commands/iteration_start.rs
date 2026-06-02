@@ -108,63 +108,41 @@ fn load_config() -> anyhow::Result<Config> {
 
 /// Helper to run a tool and parse JSON output, returning None on failure
 fn run_json_tool(tool: &str, args: &[&str]) -> Option<String> {
-    if tool == "bn" || tool == "seal" {
+    let mut output = Tool::new(tool);
+    for arg in args {
+        output = output.arg(arg);
+    }
+    output = output.arg("--format").arg("json");
+
+    let result = if tool == "bn" || tool == "seal" {
         // These need to be run in the default workspace
-        let mut output = Tool::new(tool);
-        for arg in args {
-            output = output.arg(arg);
-        }
-        output = output.arg("--format").arg("json");
-
-        let result = output.in_workspace("default").ok()?.run().ok()?;
-
-        if result.success() {
-            Some(result.stdout)
-        } else {
-            None
-        }
+        output.in_workspace("default").ok()?.run().ok()?
     } else {
         // Direct tool execution
-        let mut output = Tool::new(tool);
-        for arg in args {
-            output = output.arg(arg);
-        }
-        output = output.arg("--format").arg("json");
+        output.run().ok()?
+    };
 
-        let result = output.run().ok()?;
-        if result.success() {
-            Some(result.stdout)
-        } else {
-            None
-        }
+    if result.success() {
+        Some(result.stdout)
+    } else {
+        None
     }
 }
 
-/// Run iteration-start with optional overrides
-pub fn run_iteration_start(agent_override: Option<&str>) -> anyhow::Result<()> {
-    let config = load_config()?;
-    let default_agent = config.default_agent();
-    let agent = agent_override.unwrap_or(default_agent.as_str());
-    let project = config.channel();
-    let c = Colors::detect();
-    let layout = crate::layout::Layout::detect(&std::env::current_dir().unwrap_or_default());
-
-    println!("{}", h1(&c, &format!("Iteration Start: {agent}")));
-    println!();
-
-    // 1. Unread rite messages
-    let inbox_output = run_json_tool("rite", &["inbox", "--agent", agent, "--channels", &project]);
-    let mut unread_count = 0;
-
-    if let Some(output) = &inbox_output
+/// Render the unread bus messages section, returning the unread count.
+fn print_messages_section(c: &Colors, agent: &str, project: &str) -> i32 {
+    let inbox_output = run_json_tool("rite", &["inbox", "--agent", agent, "--channels", project]);
+    let unread_count = if let Some(output) = &inbox_output
         && let Ok(inbox) = serde_json::from_str::<InboxResponse>(output)
     {
-        unread_count = inbox.total_unread;
-    }
+        inbox.total_unread
+    } else {
+        0
+    };
 
     println!(
         "{}",
-        h2(&c, &format!("Unread Bus Messages ({unread_count})"))
+        h2(c, &format!("Unread Bus Messages ({unread_count})"))
     );
 
     if let Some(output) = inbox_output {
@@ -203,14 +181,12 @@ pub fn run_iteration_start(agent_override: Option<&str>) -> anyhow::Result<()> {
     }
     println!();
 
-    // 2. Bones (via bn triage)
-    if let Err(e) = super::triage::run_triage() {
-        println!("   {}Could not fetch triage data: {}{}", c.dim, e, c.reset);
-    }
-    println!();
+    unread_count
+}
 
-    // 3. Pending reviews
-    println!("{}", h2(&c, "Pending Reviews"));
+/// Render the pending reviews section, returning whether any reviews exist.
+fn print_reviews_section(c: &Colors, agent: &str) -> bool {
+    println!("{}", h2(c, "Pending Reviews"));
     let reviews_output = run_json_tool("seal", &["inbox", "--agent", agent]);
     let mut has_reviews = false;
 
@@ -247,8 +223,12 @@ pub fn run_iteration_start(agent_override: Option<&str>) -> anyhow::Result<()> {
     }
     println!();
 
-    // 4. Active claims
-    println!("{}", h2(&c, "Active Claims"));
+    has_reviews
+}
+
+/// Render the active claims section.
+fn print_claims_section(c: &Colors, agent: &str) {
+    println!("{}", h2(c, "Active Claims"));
     let claims_output = run_json_tool("rite", &["claims", "list", "--agent", agent, "--mine"]);
 
     if let Some(output) = claims_output {
@@ -294,13 +274,22 @@ pub fn run_iteration_start(agent_override: Option<&str>) -> anyhow::Result<()> {
         println!("   {}No active claims{}", c.dim, c.reset);
     }
     println!();
+}
 
-    // Summary hint
+/// Render the closing summary hint based on pending work.
+fn print_summary_hint(
+    c: &Colors,
+    layout: crate::layout::Layout,
+    agent: &str,
+    project: &str,
+    unread_count: i32,
+    has_reviews: bool,
+) {
     if unread_count > 0 {
         println!(
             "{}",
             hint(
-                &c,
+                c,
                 &format!(
                     "Get unread messages and mark them as read: rite inbox --agent {agent} --channels {project} --mark-read"
                 )
@@ -310,15 +299,50 @@ pub fn run_iteration_start(agent_override: Option<&str>) -> anyhow::Result<()> {
         println!(
             "{}",
             hint(
-                &c,
+                c,
                 &layout.rewrite_prompt(format!(
                     "Start review: maw exec default -- seal inbox --agent {agent}"
                 ))
             )
         );
     } else {
-        println!("{}", hint(&c, "No work pending"));
+        println!("{}", hint(c, "No work pending"));
     }
+}
+
+/// Run iteration-start with optional overrides
+///
+/// # Errors
+///
+/// Returns an error if the project config cannot be located or loaded.
+pub fn run_iteration_start(agent_override: Option<&str>) -> anyhow::Result<()> {
+    let config = load_config()?;
+    let default_agent = config.default_agent();
+    let agent = agent_override.unwrap_or(default_agent.as_str());
+    let project = config.channel();
+    let c = Colors::detect();
+    let layout = crate::layout::Layout::detect(&std::env::current_dir().unwrap_or_default());
+
+    println!("{}", h1(&c, &format!("Iteration Start: {agent}")));
+    println!();
+
+    // 1. Unread rite messages
+    let unread_count = print_messages_section(&c, agent, &project);
+
+    // 2. Bones (via bn triage)
+    if let Err(e) = super::triage::run_triage() {
+        println!("   {}Could not fetch triage data: {}{}", c.dim, e, c.reset);
+    }
+    println!();
+
+    // 3. Pending reviews
+    let has_reviews = print_reviews_section(&c, agent);
+
+    // 4. Active claims
+    print_claims_section(&c, agent);
+
+    // Summary hint
+    print_summary_hint(&c, layout, agent, &project, unread_count, has_reviews);
 
     Ok(())
 }

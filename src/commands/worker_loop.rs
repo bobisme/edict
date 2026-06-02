@@ -25,6 +25,10 @@ pub struct WorkerLoop {
 
 impl WorkerLoop {
     /// Create a new worker loop instance.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the project root cannot be determined or the config fails to load.
     pub fn new(
         project_root: Option<PathBuf>,
         agent: Option<String>,
@@ -148,6 +152,10 @@ impl WorkerLoop {
     }
 
     /// Run one iteration of the worker loop.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if running the agent fails for all models in the pool.
     pub fn run_once(&self) -> anyhow::Result<LoopStatus> {
         // Set up cleanup handlers
         register_cleanup_handlers(&self.agent, &self.project);
@@ -180,39 +188,72 @@ impl WorkerLoop {
         // Prompt is authored in bare form (`maw exec default -- bn ...`); for the
         // root layout, rewrite_prompt() strips the trunk prefix at the end.
         let layout = crate::layout::Layout::detect(&self.project_root);
-        let dispatched_section = if let (Some(bone), Some(ws)) =
-            (&self.dispatched_bone, &self.dispatched_workspace)
-        {
-            let mission_section = if let Some(ref mission) = self.dispatched_mission {
-                let outcome = if let Some(ref outcome) = self.dispatched_mission_outcome {
-                    format!("Mission outcome: {outcome}")
-                } else {
-                    format!("Read mission context: maw exec default -- bn show {mission}")
-                };
+        let dispatched_section = self.build_dispatched_section(layout);
 
-                let siblings = if let Some(ref sibs) = self.dispatched_siblings {
-                    format!("\nSibling bones (other workers in this mission):\n{sibs}")
-                } else {
-                    String::new()
-                };
+        let dispatched_intro = if self.dispatched_bone.is_some() {
+            "You are a dispatched worker — follow the FAST PATH section below."
+        } else {
+            r"Execute exactly ONE cycle of the worker loop. Complete one task (or determine there is no work),
+then STOP. Do not start a second task — the outer loop handles iteration."
+        };
 
-                let file_hints = if let Some(ref hints) = self.dispatched_file_hints {
-                    format!(
-                        "\nAdvisory file ownership (avoid editing files owned by siblings):\n{hints}"
-                    )
-                } else {
-                    String::new()
-                };
+        let review_step_6 = self.build_review_step();
+        let finish_step_7 = self.build_finish_step();
+
+        let review_status_str = if self.review_enabled { "true" } else { "false" };
+        let review_note = if self.review_enabled {
+            "risk:low (evals, docs, tests, config) skips security review — self-review and merge directly. risk:medium gets standard review. risk:high requires failure-mode checklist. risk:critical requires human approval."
+        } else {
+            "Review is disabled. Skip review and proceed to FINISH after describing commit."
+        };
+
+        let prompt = self.assemble_prompt(&PromptSections {
+            dispatched: &dispatched_section,
+            dispatched_intro,
+            review_step: &review_step_6,
+            finish_step: &finish_step_7,
+            review_status: review_status_str,
+            review_note,
+        });
+        layout.rewrite_prompt(prompt)
+    }
+
+    /// Build the dispatched-worker fast-path section (empty unless dispatched).
+    fn build_dispatched_section(&self, layout: crate::layout::Layout) -> String {
+        let (Some(bone), Some(ws)) = (&self.dispatched_bone, &self.dispatched_workspace) else {
+            return String::new();
+        };
+
+        let mission_section = self.dispatched_mission.as_ref().map_or_else(
+            String::new,
+            |mission| {
+                let outcome = self.dispatched_mission_outcome.as_ref().map_or_else(
+                    || format!("Read mission context: maw exec default -- bn show {mission}"),
+                    |outcome| format!("Mission outcome: {outcome}"),
+                );
+
+                let siblings = self.dispatched_siblings.as_ref().map_or_else(
+                    String::new,
+                    |sibs| format!("\nSibling bones (other workers in this mission):\n{sibs}"),
+                );
+
+                let file_hints = self.dispatched_file_hints.as_ref().map_or_else(
+                    String::new,
+                    |hints| {
+                        format!(
+                            "\nAdvisory file ownership (avoid editing files owned by siblings):\n{hints}"
+                        )
+                    },
+                );
 
                 format!("Mission: {mission}\n{outcome}{siblings}{file_hints}")
-            } else {
-                String::new()
-            };
+            },
+        );
 
-            let ws_path = self.project_root.join(layout.ws_path(ws));
+        let ws_path = self.project_root.join(layout.ws_path(ws));
 
-            format!(
-                r"## DISPATCHED WORKER — FAST PATH
+        format!(
+            r"## DISPATCHED WORKER — FAST PATH
 
 You were dispatched by a lead dev agent with a pre-assigned bone and workspace.
 Skip steps 0 (RESUME CHECK), 1 (INBOX), and 2 (TRIAGE) entirely.
@@ -230,23 +271,16 @@ Go directly to:
    For commands in workspace: maw exec {ws} -- <command>
 
 ",
-                bone = bone,
-                ws = ws,
-                ws_path = ws_path.display(),
-                mission_section = mission_section,
-            )
-        } else {
-            String::new()
-        };
+            bone = bone,
+            ws = ws,
+            ws_path = ws_path.display(),
+            mission_section = mission_section,
+        )
+    }
 
-        let dispatched_intro = if self.dispatched_bone.is_some() {
-            "You are a dispatched worker — follow the FAST PATH section below."
-        } else {
-            r"Execute exactly ONE cycle of the worker loop. Complete one task (or determine there is no work),
-then STOP. Do not start a second task — the outer loop handles iteration."
-        };
-
-        let review_step_6 = if self.review_enabled {
+    /// Build step 6 (REVIEW REQUEST) of the worker prompt.
+    fn build_review_step(&self) -> String {
+        if self.review_enabled {
             format!(
                 r#"6. REVIEW REQUEST (risk-aware):
    First, check the bone's risk label: maw exec default -- bn show <id> — look for risk:low, risk:high, or risk:critical labels.
@@ -300,9 +334,12 @@ then STOP. Do not start a second task — the outer loop handles iteration."
             r"   REVIEW is disabled. Skip code review.
    Proceed directly to step 7 (FINISH)."
                 .to_string()
-        };
+        }
+    }
 
-        let finish_step_7 = if self.dispatched_bone.is_some() {
+    /// Build step 7 (FINISH) of the worker prompt.
+    fn build_finish_step(&self) -> String {
+        if self.dispatched_bone.is_some() {
             format!(
                 r#"7. FINISH (dispatched worker — lead handles merge):
    Try protocol command: edict protocol finish <bone-id> --agent {agent} --no-merge
@@ -338,16 +375,24 @@ then STOP. Do not start a second task — the outer loop handles iteration."
                 agent = self.agent,
                 project = self.project,
             )
-        };
+        }
+    }
 
-        let review_status_str = if self.review_enabled { "true" } else { "false" };
-        let review_note = if self.review_enabled {
-            "risk:low (evals, docs, tests, config) skips security review — self-review and merge directly. risk:medium gets standard review. risk:high requires failure-mode checklist. risk:critical requires human approval."
-        } else {
-            "Review is disabled. Skip review and proceed to FINISH after describing commit."
-        };
-
-        let prompt = format!(
+    /// Assemble the final worker prompt from its pre-built sections.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "cohesive prompt assembler dominated by one large format! template literal"
+    )]
+    fn assemble_prompt(&self, sections: &PromptSections) -> String {
+        let PromptSections {
+            dispatched,
+            dispatched_intro,
+            review_step,
+            finish_step,
+            review_status,
+            review_note,
+        } = *sections;
+        format!(
             r#"You are worker agent "{agent}" for project "{project}".
 
 IMPORTANT: Use --agent {agent} on ALL rite and seal commands. bn resolves agent identity from $AGENT/$RITE_AGENT env automatically. Set EDICT_PROJECT={project}.
@@ -500,15 +545,24 @@ Key rules:
 - RISK LABELS: Check bone risk labels before review. REVIEW={review_status}. {review_note}"#,
             agent = self.agent,
             project = self.project,
-            dispatched = dispatched_section,
+            dispatched = dispatched,
             dispatched_intro = dispatched_intro,
-            review_step = review_step_6,
-            finish_step = finish_step_7,
-            review_status = review_status_str,
+            review_step = review_step,
+            finish_step = finish_step,
+            review_status = review_status,
             review_note = review_note,
-        );
-        layout.rewrite_prompt(prompt)
+        )
     }
+}
+
+/// Pre-built sections of the worker prompt, assembled by [`WorkerLoop::assemble_prompt`].
+struct PromptSections<'a> {
+    dispatched: &'a str,
+    dispatched_intro: &'a str,
+    review_step: &'a str,
+    finish_step: &'a str,
+    review_status: &'a str,
+    review_note: &'a str,
 }
 
 /// Status of a loop iteration.
@@ -823,6 +877,10 @@ fn cleanup(agent: &str, project: &str) -> anyhow::Result<()> {
 }
 
 /// Run the worker loop.
+///
+/// # Errors
+///
+/// Returns an error if the worker loop fails to initialize or the iteration errors.
 pub fn run_worker_loop(
     project_root: Option<PathBuf>,
     agent: Option<String>,

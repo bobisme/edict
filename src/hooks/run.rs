@@ -46,7 +46,7 @@ impl HookContext {
 }
 
 /// Run session-start hook: maw guidance + agent identity + stake claim
-pub fn run_session_start() -> Result<()> {
+pub fn run_session_start() {
     let ctx = HookContext::detect();
 
     // 1. Maw repo guidance (layout-aware)
@@ -81,11 +81,13 @@ pub fn run_session_start() -> Result<()> {
     if let Some(ref agent) = ctx.agent {
         stake_claim(agent);
     }
-
-    Ok(())
 }
 
 /// Run post-tool-call hook: check rite inbox + refresh claim
+///
+/// # Errors
+///
+/// Returns `Err` if checking the rite inbox fails (e.g. emitting hook output).
 pub fn run_post_tool_call(hook_input: Option<&str>) -> Result<()> {
     let ctx = HookContext::detect();
 
@@ -103,14 +105,14 @@ pub fn run_post_tool_call(hook_input: Option<&str>) -> Result<()> {
 }
 
 /// Run session-end hook: release claim + clear status
-pub fn run_session_end() -> Result<()> {
+pub fn run_session_end() {
     let agent = std::env::var("AGENT")
         .or_else(|_| std::env::var("RITE_AGENT"))
         .ok()
         .filter(|a| validate_agent_name(a));
 
     let Some(agent) = agent else {
-        return Ok(());
+        return;
     };
 
     let claim_uri = format!("agent://{agent}");
@@ -124,8 +126,6 @@ pub fn run_session_end() -> Result<()> {
         &["statuses", "clear", "--agent", &agent, "-q"],
         None,
     );
-
-    Ok(())
 }
 
 // --- Internal helpers ---
@@ -177,9 +177,8 @@ fn refresh_claim_if_needed(agent: &str) {
 }
 
 fn check_rite_inbox(ctx: &HookContext, agent: &str, _hook_input: Option<&str>) -> Result<()> {
-    let channel = match ctx.channel() {
-        Some(ch) => ch,
-        None => return Ok(()), // No edict project, skip inbox check
+    let Some(channel) = ctx.channel() else {
+        return Ok(()); // No edict project, skip inbox check
     };
 
     let agent_flag = format!("--agent={agent}");
@@ -312,15 +311,18 @@ fn parse_inbox_previews(inbox_json: &str, agent: Option<&str>) -> String {
     let mut previews = Vec::new();
 
     let messages: Vec<&serde_json::Map<String, serde_json::Value>> =
-        if let Some(arr) = data["mentions"].as_array() {
-            arr.iter()
-                .filter_map(|m| m["message"].as_object())
-                .collect()
-        } else if let Some(arr) = data["messages"].as_array() {
-            arr.iter().filter_map(|m| m.as_object()).collect()
-        } else {
-            Vec::new()
-        };
+        data["mentions"].as_array().map_or_else(
+            || {
+                data["messages"].as_array().map_or_else(Vec::new, |arr| {
+                    arr.iter().filter_map(|m| m.as_object()).collect()
+                })
+            },
+            |arr| {
+                arr.iter()
+                    .filter_map(|m| m["message"].as_object())
+                    .collect()
+            },
+        );
 
     for msg in messages {
         let sender = msg
@@ -329,15 +331,13 @@ fn parse_inbox_previews(inbox_json: &str, agent: Option<&str>) -> String {
             .unwrap_or("unknown");
         let body = msg.get("body").and_then(|v| v.as_str()).unwrap_or("");
 
-        let tag = if let Some(a) = agent {
+        let tag = agent.map_or("", |a| {
             if body.contains(&format!("@{a}")) {
                 "[MENTIONS YOU] "
             } else {
                 ""
             }
-        } else {
-            ""
-        };
+        });
 
         let mut preview = format!("{tag}{sender}: {body}");
         if preview.len() > 100 {

@@ -92,6 +92,16 @@ pub const REVIEWER_PROMPTS: &[(&str, &str)] = &[
 ];
 
 impl SyncArgs {
+    /// Run the sync command: detect staleness and update managed files, hooks, and docs.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if config loading, file I/O, or a subprocess invocation fails,
+    /// or if `--check` is set and components are out of sync.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the current working directory cannot be determined.
     pub fn execute(&self) -> Result<()> {
         let project_root = self
             .project_root
@@ -166,10 +176,10 @@ impl SyncArgs {
         };
 
         // Check staleness for each component
-        let docs_stale = self.check_docs_staleness(&agents_dir)?;
-        let managed_stale = self.check_managed_section_staleness(&project_root, &config, layout)?;
-        let prompts_stale = self.check_prompts_staleness(&agents_dir)?;
-        let design_docs_stale = self.check_design_docs_staleness(&agents_dir)?;
+        let docs_stale = Self::check_docs_staleness(&agents_dir)?;
+        let managed_stale = Self::check_managed_section_staleness(&project_root, &config, layout)?;
+        let prompts_stale = Self::check_prompts_staleness(&agents_dir)?;
+        let design_docs_stale = Self::check_design_docs_staleness(&agents_dir)?;
 
         let any_stale = docs_stale || managed_stale || prompts_stale || design_docs_stale;
 
@@ -202,25 +212,25 @@ impl SyncArgs {
         let mut changed_files = Vec::new();
 
         if docs_stale {
-            self.sync_workflow_docs(&agents_dir, layout)?;
+            Self::sync_workflow_docs(&agents_dir, layout)?;
             changed_files.push(".agents/edict/*.md");
             println!("Updated workflow docs");
         }
 
         if managed_stale {
-            self.sync_managed_section(&project_root, &config, layout)?;
+            Self::sync_managed_section(&project_root, &config, layout)?;
             changed_files.push("AGENTS.md");
             println!("Updated AGENTS.md managed section");
         }
 
         if prompts_stale {
-            self.sync_prompts(&agents_dir)?;
+            Self::sync_prompts(&agents_dir)?;
             changed_files.push(".agents/edict/prompts/*.md");
             println!("Updated reviewer prompts");
         }
 
         if design_docs_stale {
-            self.sync_design_docs(&agents_dir)?;
+            Self::sync_design_docs(&agents_dir)?;
             changed_files.push(".agents/edict/design/*.md");
             println!("Updated design docs");
         }
@@ -262,7 +272,7 @@ impl SyncArgs {
 
         // Auto-commit if changes were made
         if !changed_files.is_empty() && !self.no_commit {
-            self.auto_commit(&project_root, &changed_files)?;
+            Self::auto_commit(&project_root, &changed_files)?;
         }
 
         println!("Sync complete");
@@ -344,10 +354,8 @@ impl SyncArgs {
 
         if ws_claude_dir.exists() {
             // Check if already a correct symlink
-            let needs_symlink = match fs::read_link(&root_claude_dir) {
-                Ok(target) => target != Path::new("ws/default/.claude"),
-                Err(_) => true,
-            };
+            let needs_symlink = fs::read_link(&root_claude_dir)
+                .map_or(true, |target| target != Path::new("ws/default/.claude"));
 
             if needs_symlink {
                 // Use atomic rename pattern: create temp symlink, then rename over target
@@ -372,10 +380,8 @@ impl SyncArgs {
         let ws_pi_dir = project_root.join("ws/default/.pi");
 
         if ws_pi_dir.exists() {
-            let needs_symlink = match fs::read_link(&root_pi_dir) {
-                Ok(target) => target != Path::new("ws/default/.pi"),
-                Err(_) => true,
-            };
+            let needs_symlink = fs::read_link(&root_pi_dir)
+                .map_or(true, |target| target != Path::new("ws/default/.pi"));
 
             if needs_symlink {
                 let tmp_link = project_root.join(".pi.tmp");
@@ -441,7 +447,7 @@ impl SyncArgs {
         }
     }
 
-    fn check_docs_staleness(&self, agents_dir: &Path) -> Result<bool> {
+    fn check_docs_staleness(agents_dir: &Path) -> Result<bool> {
         let version_file = agents_dir.join(".version");
         let current = compute_docs_version();
 
@@ -454,7 +460,6 @@ impl SyncArgs {
     }
 
     fn check_managed_section_staleness(
-        &self,
         project_root: &Path,
         config: &Config,
         layout: Layout,
@@ -471,7 +476,7 @@ impl SyncArgs {
         Ok(content != updated)
     }
 
-    fn check_prompts_staleness(&self, agents_dir: &Path) -> Result<bool> {
+    fn check_prompts_staleness(agents_dir: &Path) -> Result<bool> {
         let version_file = agents_dir.join("prompts/.prompts-version");
         let current = compute_prompts_version();
 
@@ -504,16 +509,17 @@ impl SyncArgs {
                                 !entry["hooks"].as_array().is_some_and(|hooks| {
                                     hooks.iter().any(|h| {
                                         let cmd = &h["command"];
-                                        if let Some(s) = cmd.as_str() {
-                                            s.contains("botbox hooks run")
-                                        } else if let Some(a) = cmd.as_array() {
-                                            a.len() >= 3
-                                                && a[0].as_str() == Some("botbox")
-                                                && a[1].as_str() == Some("hooks")
-                                                && a[2].as_str() == Some("run")
-                                        } else {
-                                            false
-                                        }
+                                        cmd.as_str().map_or_else(
+                                            || {
+                                                cmd.as_array().is_some_and(|a| {
+                                                    a.len() >= 3
+                                                        && a[0].as_str() == Some("botbox")
+                                                        && a[1].as_str() == Some("hooks")
+                                                        && a[2].as_str() == Some("run")
+                                                })
+                                            },
+                                            |s| s.contains("botbox hooks run"),
+                                        )
                                     })
                                 })
                             });
@@ -533,7 +539,10 @@ impl SyncArgs {
                         .and_then(|h| h.as_object())
                         .is_some_and(serde_json::Map::is_empty)
                     {
-                        settings.as_object_mut().unwrap().remove("hooks");
+                        settings
+                            .as_object_mut()
+                            .expect("settings is a JSON object")
+                            .remove("hooks");
                     }
 
                     // Only write back if there's other content; delete if empty
@@ -575,7 +584,7 @@ impl SyncArgs {
         Ok(())
     }
 
-    fn check_design_docs_staleness(&self, agents_dir: &Path) -> Result<bool> {
+    fn check_design_docs_staleness(agents_dir: &Path) -> Result<bool> {
         let version_file = agents_dir.join("design/.design-docs-version");
         let current = compute_design_docs_version();
 
@@ -587,7 +596,7 @@ impl SyncArgs {
         Ok(installed != current)
     }
 
-    fn sync_workflow_docs(&self, agents_dir: &Path, layout: Layout) -> Result<()> {
+    fn sync_workflow_docs(agents_dir: &Path, layout: Layout) -> Result<()> {
         for (name, content) in WORKFLOW_DOCS {
             let path = agents_dir.join(name);
             let rendered = render_workflow_doc(content, layout)
@@ -602,12 +611,7 @@ impl SyncArgs {
         Ok(())
     }
 
-    fn sync_managed_section(
-        &self,
-        project_root: &Path,
-        config: &Config,
-        layout: Layout,
-    ) -> Result<()> {
+    fn sync_managed_section(project_root: &Path, config: &Config, layout: Layout) -> Result<()> {
         let agents_md = project_root.join("AGENTS.md");
         if !agents_md.exists() {
             return Ok(()); // Skip if no AGENTS.md
@@ -621,7 +625,7 @@ impl SyncArgs {
         Ok(())
     }
 
-    fn sync_prompts(&self, agents_dir: &Path) -> Result<()> {
+    fn sync_prompts(agents_dir: &Path) -> Result<()> {
         let prompts_dir = agents_dir.join("prompts");
         fs::create_dir_all(&prompts_dir)?;
 
@@ -639,7 +643,7 @@ impl SyncArgs {
 
     // sync_hooks removed — hooks are now installed globally via `botbox hooks install`
 
-    fn sync_design_docs(&self, agents_dir: &Path) -> Result<()> {
+    fn sync_design_docs(agents_dir: &Path) -> Result<()> {
         let design_dir = agents_dir.join("design");
         fs::create_dir_all(&design_dir)?;
 
@@ -655,7 +659,7 @@ impl SyncArgs {
         Ok(())
     }
 
-    fn auto_commit(&self, project_root: &Path, changed_files: &[&str]) -> Result<()> {
+    fn auto_commit(project_root: &Path, changed_files: &[&str]) -> Result<()> {
         // Detect VCS: prefer jj if available, fall back to git
         let vcs = detect_vcs(project_root);
         if vcs == Vcs::None {
@@ -739,9 +743,8 @@ fn migrate_botbox_rite_hooks_to_edict(config: &Config, project_root: &Path) {
         Err(_) => return,
     };
 
-    let hooks = match parsed.get("hooks").and_then(|h| h.as_array()) {
-        Some(h) => h,
-        None => return,
+    let Some(hooks) = parsed.get("hooks").and_then(|h| h.as_array()) else {
+        return;
     };
 
     let name = &config.project.name;
@@ -773,9 +776,8 @@ fn migrate_botbox_rite_hooks_to_edict(config: &Config, project_root: &Path) {
             continue;
         }
 
-        let id = match hook.get("id").and_then(|i| i.as_str()) {
-            Some(id) => id,
-            None => continue,
+        let Some(id) = hook.get("id").and_then(|i| i.as_str()) else {
+            continue;
         };
 
         // Remove old botbox hook
@@ -837,9 +839,8 @@ fn migrate_rite_hooks(config: &Config) {
         Err(_) => return,
     };
 
-    let hooks = match parsed.get("hooks").and_then(|h| h.as_array()) {
-        Some(h) => h,
-        None => return,
+    let Some(hooks) = parsed.get("hooks").and_then(|h| h.as_array()) else {
+        return;
     };
 
     let name = &config.project.name;
@@ -869,10 +870,8 @@ fn migrate_rite_hooks(config: &Config) {
             continue;
         }
 
-        let cmd = hook.get("command").and_then(|c| c.as_array());
-        let cmd = match cmd {
-            Some(c) => c,
-            None => continue,
+        let Some(cmd) = hook.get("command").and_then(|c| c.as_array()) else {
+            continue;
         };
 
         let cmd_strs: Vec<&str> = cmd.iter().filter_map(|v| v.as_str()).collect();
@@ -898,59 +897,13 @@ fn migrate_rite_hooks(config: &Config) {
         // but these legacy hooks have no description so we remove manually)
         let remove = Tool::new("rite").args(&["hooks", "remove", &id]).run();
 
-        if remove.is_err() || !remove.as_ref().unwrap().success() {
+        if remove.is_err() || !remove.as_ref().expect("remove is Ok here").success() {
             tracing::warn!(hook_id = %id, "failed to remove legacy hook");
             continue;
         }
 
         if is_router {
-            let claim_uri = format!("agent://{name}-dev");
-            let spawn_name = format!("{name}-responder");
-            let description = format!("edict:{name}:responder");
-            let responder_ml = config
-                .agents
-                .responder
-                .as_ref()
-                .and_then(|r| r.memory_limit.as_deref());
-
-            let mut router_args: Vec<&str> = vec![
-                "--agent",
-                &agent,
-                "--channel",
-                name,
-                "--claim",
-                &claim_uri,
-                "--claim-owner",
-                &agent,
-                "--cwd",
-                spawn_cwd,
-                "--ttl",
-                "600",
-                "--",
-                "vessel",
-                "spawn",
-                "--env-inherit",
-                env_inherit,
-            ];
-            if let Some(limit) = responder_ml {
-                router_args.push("--memory-limit");
-                router_args.push(limit);
-            }
-            router_args.extend_from_slice(&[
-                "--name",
-                &spawn_name,
-                "--cwd",
-                spawn_cwd,
-                "--",
-                "edict",
-                "run",
-                "responder",
-            ]);
-
-            match crate::subprocess::ensure_rite_hook(&description, &router_args) {
-                Ok(_) => println!("  Migrated router hook {id} → edict run responder"),
-                Err(e) => tracing::warn!("failed to re-register router hook: {e}"),
-            }
+            reregister_legacy_router_hook(config, name, &agent, env_inherit, spawn_cwd, &id);
         } else if is_reviewer {
             let reviewer_agent = hook
                 .get("condition")
@@ -964,65 +917,144 @@ fn migrate_rite_hooks(config: &Config) {
                 continue;
             }
 
-            let role = reviewer_agent
-                .strip_prefix(&format!("{name}-"))
-                .unwrap_or(&reviewer_agent);
-            let claim_uri = format!("agent://{reviewer_agent}");
-            let description = format!("edict:{name}:reviewer-{role}");
-            let reviewer_ml = config
-                .agents
-                .reviewer
-                .as_ref()
-                .and_then(|r| r.memory_limit.as_deref());
-
-            let mut reviewer_args: Vec<&str> = vec![
-                "--agent",
-                &agent,
-                "--channel",
+            reregister_legacy_reviewer_hook(
+                config,
                 name,
-                "--mention",
-                &reviewer_agent,
-                "--claim",
-                &claim_uri,
-                "--claim-owner",
-                &reviewer_agent,
-                "--ttl",
-                "600",
-                "--priority",
-                "1",
-                "--cwd",
-                spawn_cwd,
-                "--",
-                "vessel",
-                "spawn",
-                "--env-inherit",
+                &agent,
                 env_inherit,
-            ];
-            if let Some(limit) = reviewer_ml {
-                reviewer_args.push("--memory-limit");
-                reviewer_args.push(limit);
-            }
-            reviewer_args.extend_from_slice(&[
-                "--name",
-                &reviewer_agent,
-                "--cwd",
                 spawn_cwd,
-                "--",
-                "edict",
-                "run",
-                "reviewer-loop",
-                "--agent",
+                &id,
                 &reviewer_agent,
-            ]);
+            );
+        }
+    }
+}
 
-            match crate::subprocess::ensure_rite_hook(&description, &reviewer_args) {
-                Ok(_) => println!(
-                    "  Migrated reviewer hook {id} → edict run reviewer-loop --agent {reviewer_agent}"
-                ),
-                Err(e) => {
-                    tracing::warn!(agent = %reviewer_agent, "failed to re-register reviewer hook: {e}");
-                }
-            }
+/// Re-register a legacy router hook with the current `edict run responder` command.
+fn reregister_legacy_router_hook(
+    config: &Config,
+    name: &str,
+    agent: &str,
+    env_inherit: &str,
+    spawn_cwd: &str,
+    id: &str,
+) {
+    let claim_uri = format!("agent://{name}-dev");
+    let spawn_name = format!("{name}-responder");
+    let description = format!("edict:{name}:responder");
+    let responder_ml = config
+        .agents
+        .responder
+        .as_ref()
+        .and_then(|r| r.memory_limit.as_deref());
+
+    let mut router_args: Vec<&str> = vec![
+        "--agent",
+        agent,
+        "--channel",
+        name,
+        "--claim",
+        &claim_uri,
+        "--claim-owner",
+        agent,
+        "--cwd",
+        spawn_cwd,
+        "--ttl",
+        "600",
+        "--",
+        "vessel",
+        "spawn",
+        "--env-inherit",
+        env_inherit,
+    ];
+    if let Some(limit) = responder_ml {
+        router_args.push("--memory-limit");
+        router_args.push(limit);
+    }
+    router_args.extend_from_slice(&[
+        "--name",
+        &spawn_name,
+        "--cwd",
+        spawn_cwd,
+        "--",
+        "edict",
+        "run",
+        "responder",
+    ]);
+
+    match crate::subprocess::ensure_rite_hook(&description, &router_args) {
+        Ok(_) => println!("  Migrated router hook {id} → edict run responder"),
+        Err(e) => tracing::warn!("failed to re-register router hook: {e}"),
+    }
+}
+
+/// Re-register a legacy reviewer hook with the current `edict run reviewer-loop` command.
+fn reregister_legacy_reviewer_hook(
+    config: &Config,
+    name: &str,
+    agent: &str,
+    env_inherit: &str,
+    spawn_cwd: &str,
+    id: &str,
+    reviewer_agent: &str,
+) {
+    let role = reviewer_agent
+        .strip_prefix(&format!("{name}-"))
+        .unwrap_or(reviewer_agent);
+    let claim_uri = format!("agent://{reviewer_agent}");
+    let description = format!("edict:{name}:reviewer-{role}");
+    let reviewer_ml = config
+        .agents
+        .reviewer
+        .as_ref()
+        .and_then(|r| r.memory_limit.as_deref());
+
+    let mut reviewer_args: Vec<&str> = vec![
+        "--agent",
+        agent,
+        "--channel",
+        name,
+        "--mention",
+        reviewer_agent,
+        "--claim",
+        &claim_uri,
+        "--claim-owner",
+        reviewer_agent,
+        "--ttl",
+        "600",
+        "--priority",
+        "1",
+        "--cwd",
+        spawn_cwd,
+        "--",
+        "vessel",
+        "spawn",
+        "--env-inherit",
+        env_inherit,
+    ];
+    if let Some(limit) = reviewer_ml {
+        reviewer_args.push("--memory-limit");
+        reviewer_args.push(limit);
+    }
+    reviewer_args.extend_from_slice(&[
+        "--name",
+        reviewer_agent,
+        "--cwd",
+        spawn_cwd,
+        "--",
+        "edict",
+        "run",
+        "reviewer-loop",
+        "--agent",
+        reviewer_agent,
+    ]);
+
+    match crate::subprocess::ensure_rite_hook(&description, &reviewer_args) {
+        Ok(_) => println!(
+            "  Migrated reviewer hook {id} → edict run reviewer-loop --agent {reviewer_agent}"
+        ),
+        Err(e) => {
+            tracing::warn!(agent = %reviewer_agent, "failed to re-register reviewer hook: {e}");
         }
     }
 }
@@ -1063,9 +1095,8 @@ fn migrate_hook_cwd(config: &Config, project_root: &Path) {
         Err(_) => return,
     };
 
-    let hooks = match parsed.get("hooks").and_then(|h| h.as_array()) {
-        Some(h) => h,
-        None => return,
+    let Some(hooks) = parsed.get("hooks").and_then(|h| h.as_array()) else {
+        return;
     };
 
     let name = &config.project.name;
@@ -1089,9 +1120,8 @@ fn migrate_hook_cwd(config: &Config, project_root: &Path) {
             continue;
         }
 
-        let cmd = match hook.get("command").and_then(|c| c.as_array()) {
-            Some(c) => c,
-            None => continue,
+        let Some(cmd) = hook.get("command").and_then(|c| c.as_array()) else {
+            continue;
         };
         let cmd_strs: Vec<&str> = cmd.iter().filter_map(|v| v.as_str()).collect();
 
@@ -1104,9 +1134,8 @@ fn migrate_hook_cwd(config: &Config, project_root: &Path) {
         }
 
         // Re-register with the correct cwd via the init helpers
-        let id = match hook.get("id").and_then(|i| i.as_str()) {
-            Some(id) => id,
-            None => continue,
+        let Some(id) = hook.get("id").and_then(|i| i.as_str()) else {
+            continue;
         };
 
         // Remove old hook first
@@ -1172,9 +1201,8 @@ fn migrate_router_hook_claim(config: &Config, project_root: &Path) {
         Err(_) => return,
     };
 
-    let hooks = match parsed.get("hooks").and_then(|h| h.as_array()) {
-        Some(h) => h,
-        None => return,
+    let Some(hooks) = parsed.get("hooks").and_then(|h| h.as_array()) else {
+        return;
     };
 
     let name = &config.project.name;
@@ -1199,9 +1227,8 @@ fn migrate_router_hook_claim(config: &Config, project_root: &Path) {
             continue;
         }
 
-        let id = match hook.get("id").and_then(|i| i.as_str()) {
-            Some(id) => id,
-            None => continue,
+        let Some(id) = hook.get("id").and_then(|i| i.as_str()) else {
+            continue;
         };
 
         // Remove old hook and re-register with new claim pattern
@@ -1572,15 +1599,7 @@ fn migrate_beads_to_bones(project_root: &Path, config_path: &Path) -> Result<()>
             // Remove the .beads/** line and set to empty array if it was the only entry
             let updated = content
                 .lines()
-                .map(|line| {
-                    if line.contains(".beads/") {
-                        // Skip this line
-                        None
-                    } else {
-                        Some(line)
-                    }
-                })
-                .flatten()
+                .filter(|line| !line.contains(".beads/"))
                 .collect::<Vec<_>>()
                 .join("\n");
             // If the array is now effectively empty, replace with empty

@@ -16,10 +16,14 @@ use crate::commands::doctor::OutputFormat;
 /// Execute cleanup protocol: check for held resources and output cleanup guidance.
 ///
 /// Returns Ok(()) with guidance on stdout (exit 0) for all status outcomes.
-/// `ProtocolContext::collect` errors propagate as `anyhow::Error` → exit 1.
 ///
 /// When `execute` is true and status is `HasResources`, runs the cleanup steps
 /// via the executor instead of outputting them as guidance.
+///
+/// # Errors
+///
+/// Returns `Err` when collecting state from rite/maw fails, or when executing
+/// or rendering the cleanup steps fails.
 pub fn execute(
     execute: bool,
     agent: &str,

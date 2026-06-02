@@ -6,8 +6,8 @@ use anyhow::{Context, Result};
 use clap::Args;
 
 use crate::config::{
-    self, AgentsConfig, Config, DevAgentConfig, MissionsConfig, ProjectConfig, ReviewConfig,
-    ReviewerAgentConfig, ToolsConfig, WorkerAgentConfig,
+    self, AgentsConfig, Config, DevAgentConfig, MissionsConfig, ModelsConfig, ProjectConfig,
+    ReviewConfig, ReviewerAgentConfig, ToolsConfig, WorkerAgentConfig,
 };
 use crate::error::ExitError;
 use crate::layout::Layout;
@@ -67,6 +67,7 @@ fn validate_name(name: &str, label: &str) -> Result<()> {
 }
 
 #[derive(Debug, Args)]
+#[allow(clippy::struct_excessive_bools, reason = "CLI argument flag struct")]
 pub struct InitArgs {
     /// Project name
     #[arg(long)]
@@ -123,6 +124,16 @@ struct InitChoices {
 }
 
 impl InitArgs {
+    /// Run the `init` command, generating config, docs, and tool integrations.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if filesystem operations, config generation, or required
+    /// subcommands fail.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the current working directory cannot be determined.
     pub fn execute(&self) -> Result<()> {
         let project_dir = self
             .project_root
@@ -208,81 +219,30 @@ impl InitArgs {
 
         // Initialize bones
         if choices.init_bones && choices.tools.contains(&"bones".to_string()) {
-            if let Ok(_) = run_command("bn", &["init"], Some(&project_dir)) {
-                println!("Initialized bones")
+            if run_command("bn", &["init"], Some(&project_dir)).is_ok() {
+                println!("Initialized bones");
             } else {
-                tracing::warn!("bn init failed (is bones installed?)")
+                tracing::warn!("bn init failed (is bones installed?)");
             }
         }
 
         // Initialize maw
         if choices.tools.contains(&"maw".to_string()) {
-            if let Ok(_) = run_command("maw", &["init"], Some(&project_dir)) {
-                println!("Initialized maw")
+            if run_command("maw", &["init"], Some(&project_dir)).is_ok() {
+                println!("Initialized maw");
             } else {
-                tracing::warn!("maw init failed (is maw installed?)")
+                tracing::warn!("maw init failed (is maw installed?)");
             }
         }
 
         // Initialize seal
         if choices.tools.contains(&"seal".to_string()) {
-            if let Ok(_) = run_command("seal", &["init"], Some(&project_dir)) {
-                println!("Initialized seal")
-            } else {
-                tracing::warn!("seal init failed (is seal installed?)")
-            }
-
-            // Create .sealignore
-            let sealignore_path = project_dir.join(".sealignore");
-            if !sealignore_path.exists() {
-                fs::write(
-                    &sealignore_path,
-                    "# Ignore edict-managed files (prompts, scripts, hooks, journals)\n\
-                     .agents/edict/\n\
-                     \n\
-                     # Ignore tool config and data files\n\
-                     .seal/\n\
-                     .maw.toml\n\
-                     .edict.toml\n\
-                     .botbox.json\n\
-                     .claude/\n\
-                     opencode.json\n",
-                )?;
-                println!("Created .sealignore");
-            }
+            init_seal(&project_dir)?;
         }
 
         // Register project on #projects channel (skip on re-init)
         if choices.tools.contains(&"rite".to_string()) && !is_reinit {
-            let abs_path = project_dir
-                .canonicalize()
-                .unwrap_or_else(|_| project_dir.clone());
-            let tools_list = choices.tools.join(", ");
-            let agent = format!("{}-dev", choices.name);
-            let msg = format!(
-                "project: {}  repo: {}  lead: {}  tools: {}",
-                choices.name,
-                abs_path.display(),
-                agent,
-                tools_list
-            );
-            match Tool::new("rite")
-                .args(&[
-                    "send",
-                    "--agent",
-                    &agent,
-                    "projects",
-                    &msg,
-                    "-L",
-                    "project-registry",
-                ])
-                .run()
-            {
-                Ok(output) if output.success() => {
-                    println!("Registered project on #projects channel");
-                }
-                _ => tracing::warn!("failed to register on #projects (is rite installed?)"),
-            }
+            register_project_channel(&project_dir, &choices);
         }
 
         // Seed initial work bones
@@ -301,23 +261,12 @@ impl InitArgs {
 
         // Generate .gitignore
         if !choices.languages.is_empty() {
-            let gitignore_path = project_dir.join(".gitignore");
-            if gitignore_path.exists() {
-                println!(".gitignore already exists, skipping generation");
-            } else {
-                match fetch_gitignore(&choices.languages) {
-                    Ok(content) => {
-                        fs::write(&gitignore_path, content)?;
-                        println!("Generated .gitignore for: {}", choices.languages.join(", "));
-                    }
-                    Err(e) => tracing::warn!("failed to generate .gitignore: {e}"),
-                }
-            }
+            generate_gitignore(&project_dir, &choices.languages)?;
         }
 
         // Auto-commit
         if !is_reinit && !self.no_commit {
-            auto_commit(&project_dir, &config)?;
+            auto_commit(&project_dir, &config);
         }
 
         println!("Done.");
@@ -402,10 +351,8 @@ impl InitArgs {
         let root_claude_dir = project_dir.join(".claude");
         let ws_claude_dir = project_dir.join("ws/default/.claude");
         if ws_claude_dir.exists() {
-            let needs_symlink = match fs::read_link(&root_claude_dir) {
-                Ok(target) => target != Path::new("ws/default/.claude"),
-                Err(_) => true,
-            };
+            let needs_symlink = fs::read_link(&root_claude_dir)
+                .map_or(true, |target| target != Path::new("ws/default/.claude"));
             if needs_symlink {
                 let tmp_link = project_dir.join(".claude.tmp");
                 let _ = fs::remove_file(&tmp_link);
@@ -425,10 +372,8 @@ impl InitArgs {
         let root_pi_dir = project_dir.join(".pi");
         let ws_pi_dir = project_dir.join("ws/default/.pi");
         if ws_pi_dir.exists() {
-            let needs_symlink = match fs::read_link(&root_pi_dir) {
-                Ok(target) => target != Path::new("ws/default/.pi"),
-                Err(_) => true,
-            };
+            let needs_symlink = fs::read_link(&root_pi_dir)
+                .map_or(true, |target| target != Path::new("ws/default/.pi"));
             if needs_symlink {
                 let tmp_link = project_dir.join(".pi.tmp");
                 let _ = fs::remove_file(&tmp_link);
@@ -489,60 +434,13 @@ impl InitArgs {
         };
 
         // Tools
-        let tools = if !self.tools.is_empty() {
-            validate_values(&self.tools, AVAILABLE_TOOLS, "tool")?;
-            self.tools.clone()
-        } else if interactive {
-            let defaults: Vec<bool> = AVAILABLE_TOOLS
-                .iter()
-                .map(|t| {
-                    if detected.tools.is_empty() {
-                        true // all enabled by default
-                    } else {
-                        detected.tools.contains(&t.to_string())
-                    }
-                })
-                .collect();
-            prompt_multi_select("Tools to enable", AVAILABLE_TOOLS, &defaults)?
-        } else if detected.tools.is_empty() {
-            AVAILABLE_TOOLS
-                .iter()
-                .map(std::string::ToString::to_string)
-                .collect()
-        } else {
-            detected.tools.clone()
-        };
+        let tools = self.gather_tools(interactive, detected)?;
 
         // Reviewers
-        let reviewers = if !self.reviewers.is_empty() {
-            validate_values(&self.reviewers, REVIEWER_ROLES, "reviewer role")?;
-            for r in &self.reviewers {
-                validate_name(r, "reviewer role")?;
-            }
-            self.reviewers.clone()
-        } else if interactive {
-            let defaults: Vec<bool> = REVIEWER_ROLES
-                .iter()
-                .map(|r| detected.reviewers.contains(&r.to_string()))
-                .collect();
-            prompt_multi_select("Reviewer roles", REVIEWER_ROLES, &defaults)?
-        } else {
-            detected.reviewers.clone()
-        };
+        let reviewers = self.gather_reviewers(interactive, detected)?;
 
         // Languages
-        let languages = if !self.language.is_empty() {
-            validate_values(&self.language, LANGUAGES, "language")?;
-            self.language.clone()
-        } else if interactive {
-            prompt_multi_select(
-                "Languages/frameworks (for .gitignore generation)",
-                LANGUAGES,
-                &vec![false; LANGUAGES.len()],
-            )?
-        } else {
-            Vec::new()
-        };
+        let languages = self.gather_languages(interactive)?;
 
         // Init bones
         let init_bones = if self.no_init_bones {
@@ -563,33 +461,10 @@ impl InitArgs {
         };
 
         // Install command
-        let install_command = if let Some(ref cmd) = self.install_command {
-            Some(cmd.clone())
-        } else if interactive {
-            if prompt_confirm("Install locally after releases? (for CLI tools)", false)? {
-                Some(prompt_input("Install command", Some("just install"))?)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
+        let install_command = self.gather_install_command(interactive)?;
 
         // Check command (auto-detect from language, allow override)
-        let check_command = if let Some(ref cmd) = self.check_command {
-            Some(cmd.clone())
-        } else {
-            let auto = detect_check_command(&languages);
-            if interactive {
-                let default = auto.as_deref().unwrap_or("just check");
-                Some(prompt_input(
-                    "Build/check command (run before merging)",
-                    Some(default),
-                )?)
-            } else {
-                auto
-            }
-        };
+        let check_command = self.gather_check_command(interactive, &languages)?;
 
         Ok(InitChoices {
             name,
@@ -603,6 +478,183 @@ impl InitArgs {
             seed_work,
         })
     }
+
+    fn gather_tools(&self, interactive: bool, detected: &DetectedConfig) -> Result<Vec<String>> {
+        if !self.tools.is_empty() {
+            validate_values(&self.tools, AVAILABLE_TOOLS, "tool")?;
+            Ok(self.tools.clone())
+        } else if interactive {
+            let defaults: Vec<bool> = AVAILABLE_TOOLS
+                .iter()
+                .map(|t| {
+                    if detected.tools.is_empty() {
+                        true // all enabled by default
+                    } else {
+                        detected.tools.contains(&t.to_string())
+                    }
+                })
+                .collect();
+            prompt_multi_select("Tools to enable", AVAILABLE_TOOLS, &defaults)
+        } else if detected.tools.is_empty() {
+            Ok(AVAILABLE_TOOLS
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect())
+        } else {
+            Ok(detected.tools.clone())
+        }
+    }
+
+    fn gather_reviewers(
+        &self,
+        interactive: bool,
+        detected: &DetectedConfig,
+    ) -> Result<Vec<String>> {
+        if !self.reviewers.is_empty() {
+            validate_values(&self.reviewers, REVIEWER_ROLES, "reviewer role")?;
+            for r in &self.reviewers {
+                validate_name(r, "reviewer role")?;
+            }
+            Ok(self.reviewers.clone())
+        } else if interactive {
+            let defaults: Vec<bool> = REVIEWER_ROLES
+                .iter()
+                .map(|r| detected.reviewers.contains(&r.to_string()))
+                .collect();
+            prompt_multi_select("Reviewer roles", REVIEWER_ROLES, &defaults)
+        } else {
+            Ok(detected.reviewers.clone())
+        }
+    }
+
+    fn gather_languages(&self, interactive: bool) -> Result<Vec<String>> {
+        if !self.language.is_empty() {
+            validate_values(&self.language, LANGUAGES, "language")?;
+            Ok(self.language.clone())
+        } else if interactive {
+            prompt_multi_select(
+                "Languages/frameworks (for .gitignore generation)",
+                LANGUAGES,
+                &vec![false; LANGUAGES.len()],
+            )
+        } else {
+            Ok(Vec::new())
+        }
+    }
+
+    fn gather_install_command(&self, interactive: bool) -> Result<Option<String>> {
+        if let Some(ref cmd) = self.install_command {
+            Ok(Some(cmd.clone()))
+        } else if interactive {
+            if prompt_confirm("Install locally after releases? (for CLI tools)", false)? {
+                Ok(Some(prompt_input("Install command", Some("just install"))?))
+            } else {
+                Ok(None)
+            }
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn gather_check_command(
+        &self,
+        interactive: bool,
+        languages: &[String],
+    ) -> Result<Option<String>> {
+        if let Some(ref cmd) = self.check_command {
+            Ok(Some(cmd.clone()))
+        } else {
+            let auto = detect_check_command(languages);
+            if interactive {
+                let default = auto.as_deref().unwrap_or("just check");
+                Ok(Some(prompt_input(
+                    "Build/check command (run before merging)",
+                    Some(default),
+                )?))
+            } else {
+                Ok(auto)
+            }
+        }
+    }
+}
+
+/// Initialize seal and write the `.sealignore` file.
+fn init_seal(project_dir: &Path) -> Result<()> {
+    if run_command("seal", &["init"], Some(project_dir)).is_ok() {
+        println!("Initialized seal");
+    } else {
+        tracing::warn!("seal init failed (is seal installed?)");
+    }
+
+    // Create .sealignore
+    let sealignore_path = project_dir.join(".sealignore");
+    if !sealignore_path.exists() {
+        fs::write(
+            &sealignore_path,
+            "# Ignore edict-managed files (prompts, scripts, hooks, journals)\n\
+             .agents/edict/\n\
+             \n\
+             # Ignore tool config and data files\n\
+             .seal/\n\
+             .maw.toml\n\
+             .edict.toml\n\
+             .botbox.json\n\
+             .claude/\n\
+             opencode.json\n",
+        )?;
+        println!("Created .sealignore");
+    }
+    Ok(())
+}
+
+/// Register the project on the rite #projects channel.
+fn register_project_channel(project_dir: &Path, choices: &InitChoices) {
+    let abs_path = project_dir
+        .canonicalize()
+        .unwrap_or_else(|_| project_dir.to_path_buf());
+    let tools_list = choices.tools.join(", ");
+    let agent = format!("{}-dev", choices.name);
+    let msg = format!(
+        "project: {}  repo: {}  lead: {}  tools: {}",
+        choices.name,
+        abs_path.display(),
+        agent,
+        tools_list
+    );
+    match Tool::new("rite")
+        .args(&[
+            "send",
+            "--agent",
+            &agent,
+            "projects",
+            &msg,
+            "-L",
+            "project-registry",
+        ])
+        .run()
+    {
+        Ok(output) if output.success() => {
+            println!("Registered project on #projects channel");
+        }
+        _ => tracing::warn!("failed to register on #projects (is rite installed?)"),
+    }
+}
+
+/// Generate a `.gitignore` for the selected languages, skipping if one exists.
+fn generate_gitignore(project_dir: &Path, languages: &[String]) -> Result<()> {
+    let gitignore_path = project_dir.join(".gitignore");
+    if gitignore_path.exists() {
+        println!(".gitignore already exists, skipping generation");
+    } else {
+        match fetch_gitignore(languages) {
+            Ok(content) => {
+                fs::write(&gitignore_path, content)?;
+                println!("Generated .gitignore for: {}", languages.join(", "));
+            }
+            Err(e) => tracing::warn!("failed to generate .gitignore: {e}"),
+        }
+    }
+    Ok(())
 }
 
 // --- Interactive prompts using dialoguer ---
@@ -761,7 +813,7 @@ fn build_config(choices: &InitChoices) -> Config {
             }),
             responder: None,
         },
-        models: Default::default(),
+        models: ModelsConfig::default(),
         env: build_default_env(&choices.languages),
     }
 }
@@ -784,6 +836,8 @@ fn build_default_env(languages: &[String]) -> std::collections::HashMap<String, 
 use crate::commands::sync::{DESIGN_DOCS, REVIEWER_PROMPTS, WORKFLOW_DOCS};
 
 fn sync_workflow_docs(agents_dir: &Path, layout: Layout) -> Result<()> {
+    use sha2::{Digest, Sha256};
+
     for (name, content) in WORKFLOW_DOCS {
         let path = agents_dir.join(name);
         let rendered = crate::template::render_workflow_doc(content, layout)
@@ -792,7 +846,6 @@ fn sync_workflow_docs(agents_dir: &Path, layout: Layout) -> Result<()> {
     }
 
     // Write version marker
-    use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     for (name, content) in WORKFLOW_DOCS {
         hasher.update(name.as_bytes());
@@ -805,6 +858,8 @@ fn sync_workflow_docs(agents_dir: &Path, layout: Layout) -> Result<()> {
 }
 
 fn sync_prompts(agents_dir: &Path) -> Result<()> {
+    use sha2::{Digest, Sha256};
+
     let prompts_dir = agents_dir.join("prompts");
     fs::create_dir_all(&prompts_dir)?;
 
@@ -813,7 +868,6 @@ fn sync_prompts(agents_dir: &Path) -> Result<()> {
         fs::write(&path, content).with_context(|| format!("writing {}", path.display()))?;
     }
 
-    use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     for (name, content) in REVIEWER_PROMPTS {
         hasher.update(name.as_bytes());
@@ -826,6 +880,8 @@ fn sync_prompts(agents_dir: &Path) -> Result<()> {
 }
 
 fn sync_design_docs(agents_dir: &Path) -> Result<()> {
+    use sha2::{Digest, Sha256};
+
     let design_dir = agents_dir.join("design");
     fs::create_dir_all(&design_dir)?;
 
@@ -834,7 +890,6 @@ fn sync_design_docs(agents_dir: &Path) -> Result<()> {
         fs::write(&path, content).with_context(|| format!("writing {}", path.display()))?;
     }
 
-    use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     for (name, content) in DESIGN_DOCS {
         hasher.update(name.as_bytes());
@@ -1109,7 +1164,7 @@ fn fetch_gitignore(languages: &[String]) -> Result<String> {
 
 // --- Auto-commit ---
 
-fn auto_commit(project_dir: &Path, config: &Config) -> Result<()> {
+fn auto_commit(project_dir: &Path, config: &Config) {
     let message = format!("chore: initialize edict v{}", config.version);
 
     // Try git first, fall back to jj for legacy projects
@@ -1129,8 +1184,6 @@ fn auto_commit(project_dir: &Path, config: &Config) -> Result<()> {
             Err(_) => eprintln!("Warning: Failed to auto-commit (jj error)"),
         }
     }
-
-    Ok(())
 }
 
 #[cfg(test)]

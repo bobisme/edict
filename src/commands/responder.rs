@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use anyhow::{Context, anyhow};
@@ -7,7 +7,7 @@ use serde::Deserialize;
 
 fn ansi_escape_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"\x1b\[[0-9;]*[A-Za-z]").unwrap())
+    RE.get_or_init(|| Regex::new(r"\x1b\[[0-9;]*[A-Za-z]").expect("ANSI escape regex is valid"))
 }
 
 use crate::config::Config;
@@ -29,7 +29,7 @@ pub enum RouteType {
 
 #[derive(Debug, Clone)]
 pub struct Route {
-    pub route_type: RouteType,
+    pub kind: RouteType,
     pub body: String,
     pub model: Option<String>,
 }
@@ -45,141 +45,155 @@ pub struct Route {
 pub fn route_message(body: &str) -> Route {
     let trimmed = body.trim();
 
-    // --- ! prefix commands ---
-
-    // !oneshot [message]
-    if let Some(rest) = strip_prefix_ci(trimmed, "!oneshot") {
-        return Route {
-            route_type: RouteType::Oneshot,
-            body: rest,
-            model: None,
-        };
+    if let Some(route) = route_bang_prefix(trimmed) {
+        return route;
     }
 
-    // !mission [description]
-    if let Some(rest) = strip_prefix_ci(trimmed, "!mission") {
-        return Route {
-            route_type: RouteType::Mission,
-            body: rest,
-            model: None,
-        };
-    }
-
-    // !leads [message] — alias for !dev (multi-lead via count arg)
-    if let Some(rest) = strip_prefix_ci(trimmed, "!leads") {
-        return Route {
-            route_type: RouteType::Dev,
-            body: rest,
-            model: None,
-        };
-    }
-
-    // !dev [message]
-    if let Some(rest) = strip_prefix_ci(trimmed, "!dev") {
-        return Route {
-            route_type: RouteType::Dev,
-            body: rest,
-            model: None,
-        };
-    }
-
-    // !bone [description] (also accepts legacy !bead)
-    if let Some(rest) = strip_prefix_ci(trimmed, "!bone") {
-        return Route {
-            route_type: RouteType::Bone,
-            body: rest,
-            model: None,
-        };
-    }
-
-    if let Some(rest) = strip_prefix_ci(trimmed, "!bead") {
-        return Route {
-            route_type: RouteType::Bone,
-            body: rest,
-            model: None,
-        };
-    }
-
-    // !q(model) [question] — must check before !q
-    if let Some((model, rest)) = match_explicit_model(trimmed, "!q") {
-        return Route {
-            route_type: RouteType::Question,
-            body: rest,
-            model: Some(model),
-        };
-    }
-
-    // !bigq [question]
-    if let Some(rest) = strip_prefix_ci(trimmed, "!bigq") {
-        return Route {
-            route_type: RouteType::Question,
-            body: rest,
-            model: Some("opus".into()),
-        };
-    }
-
-    // !qq [question] — must check before !q
-    if let Some(rest) = strip_prefix_ci(trimmed, "!qq") {
-        return Route {
-            route_type: RouteType::Question,
-            body: rest,
-            model: Some("haiku".into()),
-        };
-    }
-
-    // !q [question]
-    if let Some(rest) = strip_prefix_ci(trimmed, "!q") {
-        return Route {
-            route_type: RouteType::Question,
-            body: rest,
-            model: Some("sonnet".into()),
-        };
-    }
-
-    // --- Backwards compat: old colon-prefixed convention ---
-
-    // q(model): [question]
-    if let Some((model, rest)) = match_explicit_model_colon(trimmed) {
-        return Route {
-            route_type: RouteType::Question,
-            body: rest,
-            model: Some(model),
-        };
-    }
-
-    // big q: [question]
-    if let Some(rest) = strip_prefix_colon_ci(trimmed, "big q") {
-        return Route {
-            route_type: RouteType::Question,
-            body: rest,
-            model: Some("opus".into()),
-        };
-    }
-
-    // qq: [question] — must check before q:
-    if let Some(rest) = strip_prefix_colon_ci(trimmed, "qq") {
-        return Route {
-            route_type: RouteType::Question,
-            body: rest,
-            model: Some("haiku".into()),
-        };
-    }
-
-    // q: [question]
-    if let Some(rest) = strip_prefix_colon_ci(trimmed, "q") {
-        return Route {
-            route_type: RouteType::Question,
-            body: rest,
-            model: Some("sonnet".into()),
-        };
+    if let Some(route) = route_colon_prefix(trimmed) {
+        return route;
     }
 
     // --- No prefix → triage ---
     Route {
-        route_type: RouteType::Triage,
+        kind: RouteType::Triage,
         body: trimmed.to_string(),
         model: None,
     }
+}
+
+/// Match the `!`-prefixed command convention.
+fn route_bang_prefix(trimmed: &str) -> Option<Route> {
+    // !oneshot [message]
+    if let Some(rest) = strip_prefix_ci(trimmed, "!oneshot") {
+        return Some(Route {
+            kind: RouteType::Oneshot,
+            body: rest,
+            model: None,
+        });
+    }
+
+    // !mission [description]
+    if let Some(rest) = strip_prefix_ci(trimmed, "!mission") {
+        return Some(Route {
+            kind: RouteType::Mission,
+            body: rest,
+            model: None,
+        });
+    }
+
+    // !leads [message] — alias for !dev (multi-lead via count arg)
+    if let Some(rest) = strip_prefix_ci(trimmed, "!leads") {
+        return Some(Route {
+            kind: RouteType::Dev,
+            body: rest,
+            model: None,
+        });
+    }
+
+    // !dev [message]
+    if let Some(rest) = strip_prefix_ci(trimmed, "!dev") {
+        return Some(Route {
+            kind: RouteType::Dev,
+            body: rest,
+            model: None,
+        });
+    }
+
+    // !bone [description] (also accepts legacy !bead)
+    if let Some(rest) = strip_prefix_ci(trimmed, "!bone") {
+        return Some(Route {
+            kind: RouteType::Bone,
+            body: rest,
+            model: None,
+        });
+    }
+
+    if let Some(rest) = strip_prefix_ci(trimmed, "!bead") {
+        return Some(Route {
+            kind: RouteType::Bone,
+            body: rest,
+            model: None,
+        });
+    }
+
+    // !q(model) [question] — must check before !q
+    if let Some((model, rest)) = match_explicit_model(trimmed, "!q") {
+        return Some(Route {
+            kind: RouteType::Question,
+            body: rest,
+            model: Some(model),
+        });
+    }
+
+    // !bigq [question]
+    if let Some(rest) = strip_prefix_ci(trimmed, "!bigq") {
+        return Some(Route {
+            kind: RouteType::Question,
+            body: rest,
+            model: Some("opus".into()),
+        });
+    }
+
+    // !qq [question] — must check before !q
+    if let Some(rest) = strip_prefix_ci(trimmed, "!qq") {
+        return Some(Route {
+            kind: RouteType::Question,
+            body: rest,
+            model: Some("haiku".into()),
+        });
+    }
+
+    // !q [question]
+    if let Some(rest) = strip_prefix_ci(trimmed, "!q") {
+        return Some(Route {
+            kind: RouteType::Question,
+            body: rest,
+            model: Some("sonnet".into()),
+        });
+    }
+
+    None
+}
+
+/// Match the legacy colon-prefixed command convention.
+fn route_colon_prefix(trimmed: &str) -> Option<Route> {
+    // q(model): [question]
+    if let Some((model, rest)) = match_explicit_model_colon(trimmed) {
+        return Some(Route {
+            kind: RouteType::Question,
+            body: rest,
+            model: Some(model),
+        });
+    }
+
+    // big q: [question]
+    if let Some(rest) = strip_prefix_colon_ci(trimmed, "big q") {
+        return Some(Route {
+            kind: RouteType::Question,
+            body: rest,
+            model: Some("opus".into()),
+        });
+    }
+
+    // qq: [question] — must check before q:
+    if let Some(rest) = strip_prefix_colon_ci(trimmed, "qq") {
+        return Some(Route {
+            kind: RouteType::Question,
+            body: rest,
+            model: Some("haiku".into()),
+        });
+    }
+
+    // q: [question]
+    if let Some(rest) = strip_prefix_colon_ci(trimmed, "q") {
+        return Some(Route {
+            kind: RouteType::Question,
+            body: rest,
+            model: Some("sonnet".into()),
+        });
+    }
+
+    None
 }
 
 /// Strip a case-insensitive word prefix followed by optional whitespace.
@@ -213,11 +227,7 @@ fn strip_prefix_colon_ci(input: &str, prefix: &str) -> Option<String> {
         return None;
     }
     let after = &input[prefix.len()..];
-    if after.starts_with(':') {
-        Some(after[1..].trim().to_string())
-    } else {
-        None
-    }
+    after.strip_prefix(':').map(|rest| rest.trim().to_string())
 }
 
 /// Match `!q(model)` pattern: `{bang_prefix}({model}) rest`
@@ -268,11 +278,9 @@ fn match_explicit_model_colon(input: &str) -> Option<(String, String)> {
         return None;
     }
     let after_paren = &after_q[close + 1..];
-    if after_paren.starts_with(':') {
-        Some((model, after_paren[1..].trim().to_string()))
-    } else {
-        None
-    }
+    after_paren
+        .strip_prefix(':')
+        .map(|rest| (model, rest.trim().to_string()))
 }
 
 // ---------------------------------------------------------------------------
@@ -387,10 +395,10 @@ fn now_iso() -> String {
 const fn days_to_ymd(days: u64) -> (u64, u64, u64) {
     // Compute year/month/day from days since 1970-01-01
     // Algorithm from http://howardhinnant.github.io/date_algorithms.html
-    let z = days + 719468;
-    let era = z / 146097;
-    let doe = z - era * 146097;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let z = days + 719_468;
+    let era = z / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
     let y = yoe + era * 400;
     let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
     let mp = (5 * doy + 2) / 153;
@@ -481,12 +489,12 @@ struct Responder {
 
 impl Responder {
     fn new(
-        project_root: PathBuf,
+        project_root: &Path,
         agent: Option<String>,
         model: Option<String>,
     ) -> anyhow::Result<Self> {
         // Load config using canonical priority order
-        let config = crate::config::find_config_in_project(&project_root)
+        let config = crate::config::find_config_in_project(project_root)
             .ok()
             .and_then(|(p, _)| Config::load(&p).ok());
 
@@ -634,7 +642,7 @@ impl Responder {
 
     // --- Bones helpers (via maw exec default) ---
 
-    fn bn(&self, args: &[&str]) -> anyhow::Result<String> {
+    fn bn(args: &[&str]) -> anyhow::Result<String> {
         let output = Tool::new("bn")
             .args(args)
             .in_workspace("default")?
@@ -642,12 +650,7 @@ impl Responder {
         Ok(output.stdout.trim().to_string())
     }
 
-    fn bn_create(
-        &self,
-        title: &str,
-        description: &str,
-        labels: Option<&str>,
-    ) -> anyhow::Result<String> {
+    fn bn_create(title: &str, description: &str, labels: Option<&str>) -> anyhow::Result<String> {
         // Sanitize title: strip ANSI escape sequences, then collapse whitespace
         let stripped = ansi_escape_re().replace_all(title, "");
         let sanitized = stripped.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -660,7 +663,7 @@ impl Responder {
             args.push("--labels");
             args.push(&labels_arg);
         }
-        let output = self.bn(&args)?;
+        let output = Self::bn(&args)?;
         extract_bone_id(&output).ok_or_else(|| anyhow!("could not parse bone ID from: {output}"))
     }
 
@@ -880,7 +883,7 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
                     }
                     if let Some(reason) = Self::extract_escalation(&output) {
                         eprintln!("Escalation detected: {reason}");
-                        match self.bn_create(&reason, &reason, None) {
+                        match Self::bn_create(&reason, &reason, None) {
                             Ok(bone_id) => {
                                 let _ = self.rite_send(
                                     &format!("Filed {bone_id}: {reason}"),
@@ -912,9 +915,7 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
             let ttl = format!("{}s", self.wait_timeout + 60);
             self.rite_set_status("Waiting for follow-up", &ttl);
 
-            let follow_up = if let Some(msg) = self.wait_for_follow_up() {
-                msg
-            } else {
+            let Some(follow_up) = self.wait_for_follow_up() else {
                 eprintln!("No follow-up received, ending conversation");
                 break;
             };
@@ -928,7 +929,7 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
 
             // Re-route in case of new prefix
             let re_parsed = route_message(&follow_up.body);
-            match re_parsed.route_type {
+            match re_parsed.kind {
                 RouteType::Dev => {
                     self.transcript
                         .add("user", &follow_up.agent, &follow_up.body);
@@ -976,7 +977,7 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
             .collect();
         if !keywords.is_empty() {
             let search_query = keywords.join(" ");
-            if let Ok(result) = self.bn(&["search", &search_query])
+            if let Ok(result) = Self::bn(&["search", &search_query])
                 && !result.contains("Found 0")
             {
                 let matches: Vec<&str> = result
@@ -1013,7 +1014,7 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
             description.push_str(&transcript_ctx);
         }
 
-        match self.bn_create(&title, &description, None) {
+        match Self::bn_create(&title, &description, None) {
             Ok(bone_id) => {
                 self.rite_send(&format!("Created {bone_id}: {title}"), Some("feedback"))?;
             }
@@ -1072,74 +1073,12 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
             match claim_result {
                 Ok(output) if output.success() => {
                     eprintln!("Acquired slot {slot}, spawning lead: {lead_name}");
-                    let mut spawn_args: Vec<String> = vec![
-                        "spawn".into(),
-                        "--env-inherit".into(),
-                        "SSH_AUTH_SOCK,OTEL_EXPORTER_OTLP_ENDPOINT".into(),
-                    ];
-                    if let Some(limit) = self
-                        .config
-                        .as_ref()
-                        .and_then(|c| c.agents.dev.as_ref())
-                        .and_then(|d| d.memory_limit.as_deref())
-                    {
-                        spawn_args.push("--memory-limit".into());
-                        spawn_args.push(limit.to_string());
-                    }
-                    spawn_args.extend([
-                        "--env".into(),
-                        format!("AGENT={lead_name}"),
-                        "--env".into(),
-                        format!("RITE_CHANNEL={}", self.channel),
-                    ]);
-                    if let Some(tp) = crate::telemetry::current_traceparent() {
-                        spawn_args.push("--env".into());
-                        spawn_args.push(format!("TRACEPARENT={tp}"));
-                    }
-                    if let Some(bone) = mission_bone {
-                        spawn_args.push("--env".into());
-                        spawn_args.push(format!("EDICT_MISSION={bone}"));
-                    }
-                    for (k, v) in &self.spawn_env {
-                        spawn_args.push("--env".into());
-                        spawn_args.push(format!("{k}={v}"));
-                    }
-                    spawn_args.extend([
-                        "--name".into(),
-                        lead_name.clone(),
-                        "--cwd".into(),
-                        cwd.clone(),
-                        "--".into(),
-                        "edict".into(),
-                        "run".into(),
-                        "dev-loop".into(),
-                        "--agent".into(),
-                        lead_name.clone(),
-                    ]);
-                    let spawn_arg_refs: Vec<&str> =
-                        spawn_args.iter().map(std::string::String::as_str).collect();
-                    let spawn_result = Tool::new("vessel").args(&spawn_arg_refs).run();
-
-                    match spawn_result {
-                        Ok(out) if out.success() => {
-                            spawned += 1;
-                            let _ = self.rite_send(
-                                &format!("Lead {lead_name} spawned ({spawned}/{cap})."),
-                                Some("spawn-ack"),
-                            );
-                        }
-                        Ok(out) => {
-                            eprintln!("Failed to spawn lead {lead_name}: {}", out.stderr);
-                            let _ = Tool::new("rite")
-                                .args(&["claims", "release", "--agent", &lead_name, &claim_uri])
-                                .run();
-                        }
-                        Err(e) => {
-                            eprintln!("Failed to spawn lead {lead_name}: {e}");
-                            let _ = Tool::new("rite")
-                                .args(&["claims", "release", "--agent", &lead_name, &claim_uri])
-                                .run();
-                        }
+                    if self.try_spawn_lead(&lead_name, &claim_uri, &cwd, mission_bone) {
+                        spawned += 1;
+                        let _ = self.rite_send(
+                            &format!("Lead {lead_name} spawned ({spawned}/{cap})."),
+                            Some("spawn-ack"),
+                        );
                     }
                 }
                 _ => {
@@ -1153,6 +1092,93 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
         }
 
         Ok(())
+    }
+
+    /// Build the `vessel spawn` argument vector for a single lead slot.
+    fn build_spawn_args(
+        &self,
+        lead_name: &str,
+        cwd: &str,
+        mission_bone: Option<&str>,
+    ) -> Vec<String> {
+        let mut spawn_args: Vec<String> = vec![
+            "spawn".into(),
+            "--env-inherit".into(),
+            "SSH_AUTH_SOCK,OTEL_EXPORTER_OTLP_ENDPOINT".into(),
+        ];
+        if let Some(limit) = self
+            .config
+            .as_ref()
+            .and_then(|c| c.agents.dev.as_ref())
+            .and_then(|d| d.memory_limit.as_deref())
+        {
+            spawn_args.push("--memory-limit".into());
+            spawn_args.push(limit.to_string());
+        }
+        spawn_args.extend([
+            "--env".into(),
+            format!("AGENT={lead_name}"),
+            "--env".into(),
+            format!("RITE_CHANNEL={}", self.channel),
+        ]);
+        if let Some(tp) = crate::telemetry::current_traceparent() {
+            spawn_args.push("--env".into());
+            spawn_args.push(format!("TRACEPARENT={tp}"));
+        }
+        if let Some(bone) = mission_bone {
+            spawn_args.push("--env".into());
+            spawn_args.push(format!("EDICT_MISSION={bone}"));
+        }
+        for (k, v) in &self.spawn_env {
+            spawn_args.push("--env".into());
+            spawn_args.push(format!("{k}={v}"));
+        }
+        spawn_args.extend([
+            "--name".into(),
+            lead_name.to_string(),
+            "--cwd".into(),
+            cwd.to_string(),
+            "--".into(),
+            "edict".into(),
+            "run".into(),
+            "dev-loop".into(),
+            "--agent".into(),
+            lead_name.to_string(),
+        ]);
+        spawn_args
+    }
+
+    /// Spawn a single lead into a claimed slot. Returns `true` if the spawn
+    /// succeeded; on failure the slot claim is released.
+    fn try_spawn_lead(
+        &self,
+        lead_name: &str,
+        claim_uri: &str,
+        cwd: &str,
+        mission_bone: Option<&str>,
+    ) -> bool {
+        let spawn_args = self.build_spawn_args(lead_name, cwd, mission_bone);
+        let spawn_arg_refs: Vec<&str> =
+            spawn_args.iter().map(std::string::String::as_str).collect();
+        let spawn_result = Tool::new("vessel").args(&spawn_arg_refs).run();
+
+        match spawn_result {
+            Ok(out) if out.success() => true,
+            Ok(out) => {
+                eprintln!("Failed to spawn lead {lead_name}: {}", out.stderr);
+                let _ = Tool::new("rite")
+                    .args(&["claims", "release", "--agent", lead_name, claim_uri])
+                    .run();
+                false
+            }
+            Err(e) => {
+                eprintln!("Failed to spawn lead {lead_name}: {e}");
+                let _ = Tool::new("rite")
+                    .args(&["claims", "release", "--agent", lead_name, claim_uri])
+                    .run();
+                false
+            }
+        }
     }
 
     fn handle_mission(&self, body: &str) -> anyhow::Result<()> {
@@ -1183,7 +1209,7 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
             description.push_str(&transcript_ctx);
         }
 
-        let bone_id = match self.bn_create(&title, &description, Some("mission")) {
+        let bone_id = match Self::bn_create(&title, &description, Some("mission")) {
             Ok(id) => id,
             Err(e) => {
                 eprintln!("Error creating mission bone: {e}");
@@ -1213,7 +1239,7 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
                 }
                 if let Some(reason) = Self::extract_escalation(&output) {
                     eprintln!("Triage → work: \"{reason}\"");
-                    match self.bn_create(&reason, &reason, None) {
+                    match Self::bn_create(&reason, &reason, None) {
                         Ok(bone_id) => {
                             let _ = self
                                 .rite_send(&format!("Filed {bone_id}: {reason}"), Some("feedback"));
@@ -1240,13 +1266,12 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
         Ok(())
     }
 
-    fn handle_oneshot(&self, message: &BusMessage) -> anyhow::Result<()> {
+    fn handle_oneshot(&self, message: &BusMessage) {
         let prompt = self.build_question_prompt(message);
         if let Err(e) = self.run_agent(&prompt, &self.default_model) {
             eprintln!("Error running Claude: {e}");
         }
         self.rite_mark_read();
-        Ok(())
     }
 
     /// Follow-up loop for after triage already responded once.
@@ -1262,9 +1287,7 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
             let ttl = format!("{}s", self.wait_timeout + 60);
             self.rite_set_status("Waiting for follow-up", &ttl);
 
-            let follow_up = if let Some(msg) = self.wait_for_follow_up() {
-                msg
-            } else {
+            let Some(follow_up) = self.wait_for_follow_up() else {
                 eprintln!("No follow-up received, ending conversation");
                 break;
             };
@@ -1278,7 +1301,7 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
 
             // Re-route in case of new prefix
             let re_parsed = route_message(&follow_up.body);
-            match re_parsed.route_type {
+            match re_parsed.kind {
                 RouteType::Dev => {
                     self.transcript
                         .add("user", &follow_up.agent, &follow_up.body);
@@ -1308,7 +1331,7 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
                 self.max_conversations
             );
 
-            let model = self.resolve_model(&if re_parsed.route_type == RouteType::Question {
+            let model = self.resolve_model(&if re_parsed.kind == RouteType::Question {
                 re_parsed
                     .model
                     .unwrap_or_else(|| self.default_model.clone())
@@ -1325,7 +1348,7 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
                     }
                     if let Some(reason) = Self::extract_escalation(&output) {
                         eprintln!("Escalation detected: {reason}");
-                        match self.bn_create(&reason, &reason, None) {
+                        match Self::bn_create(&reason, &reason, None) {
                             Ok(bone_id) => {
                                 let _ = self.rite_send(
                                     &format!("Filed {bone_id}: {reason}"),
@@ -1373,10 +1396,7 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
                 "600",
             ])
             .run();
-        match result {
-            Ok(output) => output.success(),
-            Err(_) => false,
-        }
+        result.is_ok_and(|output| output.success())
     }
 
     // --- Drain pattern ---
@@ -1431,7 +1451,7 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
 
                 let route = route_message(&msg.body);
                 // Only drain actionable commands that spawn work
-                match route.route_type {
+                match route.kind {
                     RouteType::Dev => {
                         eprintln!("Drain: processing !dev from {}", msg.agent);
                         if let Some(ref id) = msg.id
@@ -1603,9 +1623,9 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
             .as_ref()
             .map(|m| format!(" (model: {m})"))
             .unwrap_or_default();
-        eprintln!("Route:   {:?}{model_info}", route.route_type);
+        eprintln!("Route:   {:?}{model_info}", route.kind);
 
-        let route_label = match route.route_type {
+        let route_label = match route.kind {
             RouteType::Dev => "dev",
             RouteType::Bone => "bone",
             RouteType::Mission => "mission",
@@ -1616,17 +1636,17 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
         crate::telemetry::metrics::counter(
             "edict.responder.messages_routed_total",
             1,
-            &[("route_type", route_label)],
+            &[("kind", route_label)],
         );
 
         // Dispatch to handler
-        match route.route_type {
+        match route.kind {
             RouteType::Dev => self.handle_dev(&route.body, None)?,
             RouteType::Mission => self.handle_mission(&route.body)?,
             RouteType::Bone => self.handle_bone(&route.body)?,
             RouteType::Question => self.handle_question(&route, &trigger_message)?,
             RouteType::Triage => self.handle_triage(&trigger_message)?,
-            RouteType::Oneshot => self.handle_oneshot(&trigger_message)?,
+            RouteType::Oneshot => self.handle_oneshot(&trigger_message),
         }
 
         // Drain pattern: process queued actionable messages after primary handler
@@ -1671,6 +1691,12 @@ impl BusMessage {
 // Entry point
 // ---------------------------------------------------------------------------
 
+/// Run the responder agent: route and handle the triggering message.
+///
+/// # Errors
+///
+/// Returns `Err` if the responder cannot be constructed (e.g. missing config or
+/// `RITE_CHANNEL`) or if message handling fails.
 pub fn run_responder(
     project_root: Option<PathBuf>,
     agent: Option<String>,
@@ -1678,7 +1704,7 @@ pub fn run_responder(
 ) -> anyhow::Result<()> {
     let project_root = project_root.unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
 
-    let mut responder = Responder::new(project_root, agent, model)?;
+    let mut responder = Responder::new(&project_root, agent, model)?;
 
     // Install signal handler for cleanup (after construction so we have the agent name)
     let signal_agent = responder.agent.clone();
@@ -1713,63 +1739,63 @@ mod tests {
     #[test]
     fn route_dev() {
         let r = route_message("!dev fix the bug");
-        assert_eq!(r.route_type, RouteType::Dev);
+        assert_eq!(r.kind, RouteType::Dev);
         assert_eq!(r.body, "fix the bug");
     }
 
     #[test]
     fn route_dev_case_insensitive() {
         let r = route_message("!Dev Fix the bug");
-        assert_eq!(r.route_type, RouteType::Dev);
+        assert_eq!(r.kind, RouteType::Dev);
         assert_eq!(r.body, "Fix the bug");
     }
 
     #[test]
     fn route_dev_no_body() {
         let r = route_message("!dev");
-        assert_eq!(r.route_type, RouteType::Dev);
+        assert_eq!(r.kind, RouteType::Dev);
         assert_eq!(r.body, "");
     }
 
     #[test]
     fn route_mission() {
         let r = route_message("!mission Implement user auth");
-        assert_eq!(r.route_type, RouteType::Mission);
+        assert_eq!(r.kind, RouteType::Mission);
         assert_eq!(r.body, "Implement user auth");
     }
 
     #[test]
     fn route_leads_maps_to_dev() {
         let r = route_message("!leads spin up the team");
-        assert_eq!(r.route_type, RouteType::Dev);
+        assert_eq!(r.kind, RouteType::Dev);
         assert_eq!(r.body, "spin up the team");
     }
 
     #[test]
     fn route_leads_no_body() {
         let r = route_message("!leads");
-        assert_eq!(r.route_type, RouteType::Dev);
+        assert_eq!(r.kind, RouteType::Dev);
         assert_eq!(r.body, "");
     }
 
     #[test]
     fn route_bone() {
         let r = route_message("!bone Add dark mode");
-        assert_eq!(r.route_type, RouteType::Bone);
+        assert_eq!(r.kind, RouteType::Bone);
         assert_eq!(r.body, "Add dark mode");
     }
 
     #[test]
     fn route_legacy_bead() {
         let r = route_message("!bead Add dark mode");
-        assert_eq!(r.route_type, RouteType::Bone);
+        assert_eq!(r.kind, RouteType::Bone);
         assert_eq!(r.body, "Add dark mode");
     }
 
     #[test]
     fn route_question_q() {
         let r = route_message("!q How does auth work?");
-        assert_eq!(r.route_type, RouteType::Question);
+        assert_eq!(r.kind, RouteType::Question);
         assert_eq!(r.model, Some("sonnet".into()));
         assert_eq!(r.body, "How does auth work?");
     }
@@ -1777,7 +1803,7 @@ mod tests {
     #[test]
     fn route_question_qq() {
         let r = route_message("!qq quick question");
-        assert_eq!(r.route_type, RouteType::Question);
+        assert_eq!(r.kind, RouteType::Question);
         assert_eq!(r.model, Some("haiku".into()));
         assert_eq!(r.body, "quick question");
     }
@@ -1785,7 +1811,7 @@ mod tests {
     #[test]
     fn route_question_bigq() {
         let r = route_message("!bigq deep analysis needed");
-        assert_eq!(r.route_type, RouteType::Question);
+        assert_eq!(r.kind, RouteType::Question);
         assert_eq!(r.model, Some("opus".into()));
         assert_eq!(r.body, "deep analysis needed");
     }
@@ -1793,7 +1819,7 @@ mod tests {
     #[test]
     fn route_question_explicit_model() {
         let r = route_message("!q(strong) what is this?");
-        assert_eq!(r.route_type, RouteType::Question);
+        assert_eq!(r.kind, RouteType::Question);
         assert_eq!(r.model, Some("strong".into()));
         assert_eq!(r.body, "what is this?");
     }
@@ -1801,14 +1827,14 @@ mod tests {
     #[test]
     fn route_oneshot() {
         let r = route_message("!oneshot just reply once");
-        assert_eq!(r.route_type, RouteType::Oneshot);
+        assert_eq!(r.kind, RouteType::Oneshot);
         assert_eq!(r.body, "just reply once");
     }
 
     #[test]
     fn route_triage_bare_message() {
         let r = route_message("hey can you help me?");
-        assert_eq!(r.route_type, RouteType::Triage);
+        assert_eq!(r.kind, RouteType::Triage);
         assert_eq!(r.body, "hey can you help me?");
     }
 
@@ -1817,7 +1843,7 @@ mod tests {
     #[test]
     fn route_legacy_q_colon() {
         let r = route_message("q: How does this work?");
-        assert_eq!(r.route_type, RouteType::Question);
+        assert_eq!(r.kind, RouteType::Question);
         assert_eq!(r.model, Some("sonnet".into()));
         assert_eq!(r.body, "How does this work?");
     }
@@ -1825,7 +1851,7 @@ mod tests {
     #[test]
     fn route_legacy_qq_colon() {
         let r = route_message("qq: quick one");
-        assert_eq!(r.route_type, RouteType::Question);
+        assert_eq!(r.kind, RouteType::Question);
         assert_eq!(r.model, Some("haiku".into()));
         assert_eq!(r.body, "quick one");
     }
@@ -1833,7 +1859,7 @@ mod tests {
     #[test]
     fn route_legacy_big_q_colon() {
         let r = route_message("big q: deep thought");
-        assert_eq!(r.route_type, RouteType::Question);
+        assert_eq!(r.kind, RouteType::Question);
         assert_eq!(r.model, Some("opus".into()));
         assert_eq!(r.body, "deep thought");
     }
@@ -1841,7 +1867,7 @@ mod tests {
     #[test]
     fn route_legacy_explicit_model_colon() {
         let r = route_message("q(fast): something");
-        assert_eq!(r.route_type, RouteType::Question);
+        assert_eq!(r.kind, RouteType::Question);
         assert_eq!(r.model, Some("fast".into()));
         assert_eq!(r.body, "something");
     }
@@ -1851,7 +1877,7 @@ mod tests {
     #[test]
     fn route_whitespace_only() {
         let r = route_message("   ");
-        assert_eq!(r.route_type, RouteType::Triage);
+        assert_eq!(r.kind, RouteType::Triage);
         assert_eq!(r.body, "");
     }
 
@@ -1859,7 +1885,7 @@ mod tests {
     fn route_qq_not_q() {
         // !qq should match before !q
         let r = route_message("!qq test");
-        assert_eq!(r.route_type, RouteType::Question);
+        assert_eq!(r.kind, RouteType::Question);
         assert_eq!(r.model, Some("haiku".into()));
     }
 
@@ -1867,7 +1893,7 @@ mod tests {
     fn route_explicit_model_before_q() {
         // !q(opus) should match before !q
         let r = route_message("!q(opus) analyze this");
-        assert_eq!(r.route_type, RouteType::Question);
+        assert_eq!(r.kind, RouteType::Question);
         assert_eq!(r.model, Some("opus".into()));
         assert_eq!(r.body, "analyze this");
     }
@@ -1876,7 +1902,7 @@ mod tests {
     fn route_devloop_not_dev() {
         // "!devloop" should NOT match "!dev" (word boundary)
         let r = route_message("!devloop something");
-        assert_eq!(r.route_type, RouteType::Triage);
+        assert_eq!(r.kind, RouteType::Triage);
     }
 
     // --- Transcript tests ---

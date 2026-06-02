@@ -95,6 +95,11 @@ pub struct ClaimsSummary {
 }
 
 impl StatusArgs {
+    /// Run the status command, collecting cross-tool state and printing a report.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if advice generation fails or the report cannot be serialized to JSON.
     pub fn execute(&self) -> anyhow::Result<()> {
         let format = self.format.unwrap_or_else(|| {
             if std::io::stdout().is_terminal() {
@@ -159,6 +164,42 @@ impl StatusArgs {
         let ctx = ProtocolContext::collect(&project, &agent).ok();
 
         // 1. Ready bones
+        Self::collect_ready_bones(&mut report);
+
+        // 2. Active workspaces
+        Self::collect_workspaces(&mut report);
+
+        // 3. Pending inbox
+        Self::collect_inbox(&mut report);
+
+        // 4. Running agents
+        Self::collect_agents(&mut report);
+
+        // 5. Active claims
+        Self::collect_claims(&mut report);
+
+        // 6. Generate advice based on cross-tool state
+        if let Some(ref context) = ctx {
+            Self::generate_advice(&mut report, context, &required_reviewers);
+        }
+
+        match format {
+            OutputFormat::Pretty => {
+                Self::print_pretty(&report);
+            }
+            OutputFormat::Text => {
+                Self::print_text(&report);
+            }
+            OutputFormat::Json => {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Collect the count and top ready bones from `bn next`.
+    fn collect_ready_bones(report: &mut StatusReport) {
         if let Ok(output) = Tool::new("bn")
             .arg("next")
             .arg("--format")
@@ -180,8 +221,10 @@ impl StatusArgs {
                 }
             }
         }
+    }
 
-        // 2. Active workspaces
+    /// Collect workspace totals, active, and stale counts from `maw ws list`.
+    fn collect_workspaces(report: &mut StatusReport) {
         if let Ok(output) = Tool::new("maw")
             .arg("ws")
             .arg("list")
@@ -214,8 +257,10 @@ impl StatusArgs {
                     .count();
             }
         }
+    }
 
-        // 3. Pending inbox
+    /// Collect the unread inbox count from `rite inbox`.
+    fn collect_inbox(report: &mut StatusReport) {
         if let Ok(output) = Tool::new("rite")
             .arg("inbox")
             .arg("--format")
@@ -226,8 +271,10 @@ impl StatusArgs {
         {
             report.inbox.unread = messages.len();
         }
+    }
 
-        // 4. Running agents
+    /// Collect the running agent count from `vessel list`.
+    fn collect_agents(report: &mut StatusReport) {
         if let Ok(output) = Tool::new("vessel")
             .arg("list")
             .arg("--format")
@@ -238,8 +285,10 @@ impl StatusArgs {
         {
             report.agents.running = agents.len();
         }
+    }
 
-        // 5. Active claims
+    /// Collect the active claim count from `rite claims list`.
+    fn collect_claims(report: &mut StatusReport) {
         if let Ok(output) = Tool::new("rite")
             .arg("claims")
             .arg("list")
@@ -251,34 +300,14 @@ impl StatusArgs {
         {
             report.claims.active = claims.len();
         }
-
-        // 6. Generate advice based on cross-tool state
-        if let Some(ref context) = ctx {
-            self.generate_advice(&mut report, context, &required_reviewers)?;
-        }
-
-        match format {
-            OutputFormat::Pretty => {
-                self.print_pretty(&report);
-            }
-            OutputFormat::Text => {
-                self.print_text(&report);
-            }
-            OutputFormat::Json => {
-                println!("{}", serde_json::to_string_pretty(&report)?);
-            }
-        }
-
-        Ok(())
     }
 
     /// Generate actionable advice from cross-tool state analysis.
     fn generate_advice(
-        &self,
         report: &mut StatusReport,
         ctx: &ProtocolContext,
         required_reviewers: &[String],
-    ) -> anyhow::Result<()> {
+    ) {
         // Priority 1: CRITICAL - orphaned claims (bone closed but claim still active)
         for (bone_id, _pattern) in ctx.held_bone_claims() {
             if !is_valid_bone_id(bone_id) {
@@ -297,64 +326,8 @@ impl StatusArgs {
             }
         }
 
-        // Priority 2: HIGH - LGTM review with no finish action
-        for (bone_id, _pattern) in ctx.held_bone_claims() {
-            if !is_valid_bone_id(bone_id) {
-                continue;
-            }
-            if let Some(ws_name) = ctx.workspace_for_bone(bone_id)
-                && let Ok(reviews) = ctx.reviews_in_workspace(ws_name)
-            {
-                for review_summary in reviews {
-                    if let Ok(review_detail) = ctx.review_status(&review_summary.review_id, ws_name)
-                    {
-                        let gate =
-                            review_gate::evaluate_review_gate(&review_detail, required_reviewers);
-
-                        if gate.status == review_gate::ReviewGateStatus::Approved {
-                            report.advice.push(Advice {
-                                severity: "HIGH".to_string(),
-                                message: format!(
-                                    "Review {} approved (LGTM) → ready to finish bone {}",
-                                    review_detail.review_id, bone_id
-                                ),
-                                command: Some(format!("edict protocol finish {bone_id}")),
-                            });
-                        }
-                    }
-                }
-            }
-        }
-
-        // Priority 3: HIGH - BLOCK review needing response
-        for (bone_id, _pattern) in ctx.held_bone_claims() {
-            if !is_valid_bone_id(bone_id) {
-                continue;
-            }
-            if let Some(ws_name) = ctx.workspace_for_bone(bone_id)
-                && let Ok(reviews) = ctx.reviews_in_workspace(ws_name)
-            {
-                for review_summary in reviews {
-                    if let Ok(review_detail) = ctx.review_status(&review_summary.review_id, ws_name)
-                    {
-                        let gate =
-                            review_gate::evaluate_review_gate(&review_detail, required_reviewers);
-
-                        if gate.status == review_gate::ReviewGateStatus::Blocked {
-                            let blocked_by = gate.blocked_by.join(", ");
-                            report.advice.push(Advice {
-                                severity: "HIGH".to_string(),
-                                message: format!(
-                                    "Review {} blocked by {} → address feedback on bone {}",
-                                    review_detail.review_id, blocked_by, bone_id
-                                ),
-                                command: Some(format!("bn show {bone_id}")),
-                            });
-                        }
-                    }
-                }
-            }
-        }
+        // Priorities 2 & 3: HIGH - review gate status (approved / blocked)
+        Self::advise_review_gates(report, ctx, required_reviewers);
 
         // Priority 4: MEDIUM - in-progress bone with no workspace
         for (bone_id, _pattern) in ctx.held_bone_claims() {
@@ -426,11 +399,75 @@ impl StatusArgs {
                 command: Some("rite inbox --agent $AGENT".to_string()),
             });
         }
-
-        Ok(())
     }
 
-    fn print_pretty(&self, report: &StatusReport) {
+    /// Push HIGH advice for approved (LGTM) and blocked review gates on held bones.
+    fn advise_review_gates(
+        report: &mut StatusReport,
+        ctx: &ProtocolContext,
+        required_reviewers: &[String],
+    ) {
+        // Priority 2: HIGH - LGTM review with no finish action
+        for (bone_id, _pattern) in ctx.held_bone_claims() {
+            if !is_valid_bone_id(bone_id) {
+                continue;
+            }
+            if let Some(ws_name) = ctx.workspace_for_bone(bone_id)
+                && let Ok(reviews) = ctx.reviews_in_workspace(ws_name)
+            {
+                for review_summary in reviews {
+                    if let Ok(review_detail) = ctx.review_status(&review_summary.review_id, ws_name)
+                    {
+                        let gate =
+                            review_gate::evaluate_review_gate(&review_detail, required_reviewers);
+
+                        if gate.status == review_gate::ReviewGateStatus::Approved {
+                            report.advice.push(Advice {
+                                severity: "HIGH".to_string(),
+                                message: format!(
+                                    "Review {} approved (LGTM) → ready to finish bone {}",
+                                    review_detail.review_id, bone_id
+                                ),
+                                command: Some(format!("edict protocol finish {bone_id}")),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        // Priority 3: HIGH - BLOCK review needing response
+        for (bone_id, _pattern) in ctx.held_bone_claims() {
+            if !is_valid_bone_id(bone_id) {
+                continue;
+            }
+            if let Some(ws_name) = ctx.workspace_for_bone(bone_id)
+                && let Ok(reviews) = ctx.reviews_in_workspace(ws_name)
+            {
+                for review_summary in reviews {
+                    if let Ok(review_detail) = ctx.review_status(&review_summary.review_id, ws_name)
+                    {
+                        let gate =
+                            review_gate::evaluate_review_gate(&review_detail, required_reviewers);
+
+                        if gate.status == review_gate::ReviewGateStatus::Blocked {
+                            let blocked_by = gate.blocked_by.join(", ");
+                            report.advice.push(Advice {
+                                severity: "HIGH".to_string(),
+                                message: format!(
+                                    "Review {} blocked by {} → address feedback on bone {}",
+                                    review_detail.review_id, blocked_by, bone_id
+                                ),
+                                command: Some(format!("bn show {bone_id}")),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn print_pretty(report: &StatusReport) {
         println!("=== Botbox Status ===\n");
 
         println!("Ready Bones: {}", report.ready_bones.count);
@@ -462,7 +499,7 @@ impl StatusArgs {
         }
     }
 
-    fn print_text(&self, report: &StatusReport) {
+    fn print_text(report: &StatusReport) {
         println!("edict-status");
         println!("ready-bones  count={}", report.ready_bones.count);
         for bone in report.ready_bones.items.iter().take(5) {

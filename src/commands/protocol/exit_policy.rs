@@ -128,6 +128,10 @@ pub fn write_stderr_diagnostic(context: &str, detail: &str) {
 /// This is the single exit path for all protocol commands that produce
 /// valid guidance. The exit code is always 0 (Success) because the
 /// guidance itself contains the status information.
+///
+/// # Errors
+///
+/// Returns `Err` if rendering the guidance to the requested format fails.
 #[allow(dead_code)]
 pub fn render_and_exit(
     guidance: &ProtocolGuidance,
@@ -144,6 +148,10 @@ pub fn render_and_exit(
 /// Convenience wrapper around `render_and_exit` for commands that return
 /// `anyhow::Result<()>`. All `ProtocolStatus` variants produce exit 0.
 /// Operational errors should use `ProtocolExitError` instead.
+///
+/// # Errors
+///
+/// Returns `Err` if rendering the guidance to the requested format fails.
 pub fn render_guidance(guidance: &ProtocolGuidance, format: OutputFormat) -> anyhow::Result<()> {
     let output = super::render::render(guidance, format)
         .map_err(|e| anyhow::anyhow!("render error: {e}"))?;

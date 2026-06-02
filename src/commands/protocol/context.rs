@@ -28,6 +28,8 @@ impl ProtocolContext {
     /// - `rite claims list --format json --agent <agent>`
     /// - `maw ws list --format json`
     ///
+    /// # Errors
+    ///
     /// Returns error if either subprocess fails or output is unparseable.
     pub fn collect(project: &str, agent: &str) -> Result<Self, ContextError> {
         // Fetch rite claims
@@ -139,6 +141,14 @@ impl ProtocolContext {
     }
 
     /// Fetch bone status by calling `maw exec default -- bn show <id> --format json`.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if the bone ID is invalid, the subprocess fails, or the output is unparseable.
+    #[allow(
+        clippy::unused_self,
+        reason = "part of the ProtocolContext query interface, symmetric with its stateful methods"
+    )]
     pub fn bone_status(&self, bone_id: &str) -> Result<BoneInfo, ContextError> {
         Self::validate_bone_id(bone_id)?;
         let output = Self::run_subprocess(&[
@@ -152,6 +162,14 @@ impl ProtocolContext {
     /// List reviews in a workspace by calling `maw exec <ws> -- seal reviews list --format json`.
     ///
     /// Returns empty list if no reviews exist or seal is not configured.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if the workspace name is invalid or the reviews output is unparseable.
+    #[allow(
+        clippy::unused_self,
+        reason = "part of the ProtocolContext query interface, symmetric with its stateful methods"
+    )]
     pub fn reviews_in_workspace(
         &self,
         workspace: &str,
@@ -175,6 +193,14 @@ impl ProtocolContext {
     }
 
     /// Fetch review status by calling `maw exec <ws> -- seal review <id> --format json`.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if the review ID or workspace name is invalid, the subprocess fails, or the output is unparseable.
+    #[allow(
+        clippy::unused_self,
+        reason = "part of the ProtocolContext query interface, symmetric with its stateful methods"
+    )]
     pub fn review_status(
         &self,
         review_id: &str,
@@ -193,6 +219,10 @@ impl ProtocolContext {
     /// Check for claim conflicts by querying all claims.
     ///
     /// Returns the conflicting claim if another agent holds the bone.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if the subprocess fails or the claims output is unparseable.
     pub fn check_bone_claim_conflict(&self, bone_id: &str) -> Result<Option<String>, ContextError> {
         let output = Self::run_subprocess(&["rite", "claims", "list", "--format", "json"])?;
         let claims_resp = adapters::parse_claims(&output)

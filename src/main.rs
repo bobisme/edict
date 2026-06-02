@@ -98,14 +98,15 @@ fn main() -> ExitCode {
 
     match result {
         Ok(()) => ExitCode::SUCCESS,
-        Err(e) => {
-            if let Some(exit_err) = e.downcast_ref::<error::ExitError>() {
-                eprintln!("error: {exit_err}");
-                exit_err.exit_code()
-            } else {
+        Err(e) => e.downcast_ref::<error::ExitError>().map_or_else(
+            || {
                 eprintln!("error: {e:#}");
                 ExitCode::FAILURE
-            }
-        }
+            },
+            |exit_err| {
+                eprintln!("error: {exit_err}");
+                exit_err.exit_code()
+            },
+        ),
     }
 }

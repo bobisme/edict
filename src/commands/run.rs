@@ -90,6 +90,11 @@ pub enum RunCommand {
 }
 
 impl RunCommand {
+    /// Execute the selected run subcommand.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the dispatched subcommand fails.
     pub fn execute(&self) -> anyhow::Result<()> {
         match self {
             Self::Agent {

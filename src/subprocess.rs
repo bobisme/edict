@@ -27,6 +27,10 @@ impl RunOutput {
     }
 
     /// Parse stdout as JSON.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if stdout is not valid JSON for the target type.
     pub fn parse_json<T: serde::de::DeserializeOwned>(&self) -> anyhow::Result<T> {
         serde_json::from_str(&self.stdout)
             .with_context(|| "parsing JSON output from subprocess".to_string())
@@ -96,6 +100,11 @@ impl Tool {
     ///
     /// Validates that the workspace name matches `[a-z0-9][a-z0-9-]*` to prevent
     /// argument confusion with the maw CLI.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if the workspace name is empty, too long, or contains
+    /// characters outside `[a-z0-9-]` or path components.
     pub fn in_workspace(mut self, workspace: &str) -> anyhow::Result<Self> {
         if workspace.is_empty()
             || !workspace
@@ -115,6 +124,10 @@ impl Tool {
     }
 
     /// Run the tool, capturing stdout and stderr.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if the program cannot be spawned, is not found, or times out.
     #[tracing::instrument(skip(self), fields(tool = %self.program, workspace = ?self.maw_workspace))]
     pub fn run(&self) -> anyhow::Result<RunOutput> {
         let (program, args) = self.build_command();
@@ -162,6 +175,10 @@ impl Tool {
     }
 
     /// Run the tool and return an error if it fails.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if the tool cannot be run or exits with a non-zero status.
     pub fn run_ok(&self) -> anyhow::Result<RunOutput> {
         let output = self.run()?;
         if output.success() {
@@ -177,18 +194,19 @@ impl Tool {
     }
 
     fn build_command(&self) -> (String, Vec<String>) {
-        if let Some(ref ws) = self.maw_workspace {
-            let mut args = vec![
-                "exec".to_string(),
-                ws.clone(),
-                "--".to_string(),
-                self.program.clone(),
-            ];
-            args.extend(self.args.clone());
-            ("maw".to_string(), args)
-        } else {
-            (self.program.clone(), self.args.clone())
-        }
+        self.maw_workspace.as_ref().map_or_else(
+            || (self.program.clone(), self.args.clone()),
+            |ws| {
+                let mut args = vec![
+                    "exec".to_string(),
+                    ws.clone(),
+                    "--".to_string(),
+                    self.program.clone(),
+                ];
+                args.extend(self.args.clone());
+                ("maw".to_string(), args)
+            },
+        )
     }
 
     fn not_found_or_other(&self, e: std::io::Error) -> anyhow::Error {
@@ -270,6 +288,10 @@ fn run_with_timeout(
 /// `--description` (which is added automatically).
 ///
 /// Returns `Ok(("created"|"updated"|"unchanged", hook_id))`.
+///
+/// # Errors
+///
+/// Returns `Err` if the `rite hooks add` command cannot be run or fails.
 pub fn ensure_rite_hook(description: &str, add_args: &[&str]) -> anyhow::Result<(String, String)> {
     // List existing hooks
     let existing = Tool::new("rite")
@@ -317,6 +339,10 @@ pub fn ensure_rite_hook(description: &str, add_args: &[&str]) -> anyhow::Result<
 
 /// Simple helper to run a command with args, optionally in a specific directory.
 /// Returns stdout on success, or an error.
+///
+/// # Errors
+///
+/// Returns `Err` if the command cannot be run or exits with a non-zero status.
 pub fn run_command(program: &str, args: &[&str], cwd: Option<&Path>) -> anyhow::Result<String> {
     let mut cmd = Command::new(program);
     cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());

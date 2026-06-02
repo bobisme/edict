@@ -28,7 +28,7 @@ pub fn list_child_workers(agent: &str) -> Vec<WorkerInfo> {
     agents
         .iter()
         .filter_map(|a| {
-            let name = a["id"].as_str().or(a["name"].as_str())?;
+            let name = a["id"].as_str().or_else(|| a["name"].as_str())?;
             if name.starts_with(&prefix) {
                 Some(WorkerInfo {
                     name: name.to_string(),

@@ -27,6 +27,15 @@ use status::StatusSnapshot;
 ///
 /// Triages work, dispatches parallel workers, monitors progress,
 /// merges completed work, and manages releases.
+///
+/// # Errors
+///
+/// Returns `Err` if config resolution, agent identity confirmation, or
+/// any required subprocess invocation fails.
+#[allow(
+    clippy::too_many_lines,
+    reason = "top-level dev-loop orchestration; already factored into helpers, the rest is the sequential loop body"
+)]
 pub fn run(
     project_root: Option<&Path>,
     agent_override: Option<&str>,
@@ -72,24 +81,7 @@ pub fn run(
     let worker_timeout = config.agents.worker.as_ref().map_or(900, |w| w.timeout);
 
     let spawn_env = config.resolved_env();
-    let worker_memory_limit = {
-        let configured = config
-            .agents
-            .worker
-            .as_ref()
-            .and_then(|w| w.memory_limit.clone());
-        if configured.is_some() && !is_systemd_dbus_available() {
-            eprintln!(
-                "Warning: worker memory limit configured but systemd D-Bus is not available \
-                 (DBUS_SESSION_BUS_ADDRESS / XDG_RUNTIME_DIR not set) — skipping --memory-limit. \
-                 To fix: add XDG_RUNTIME_DIR and DBUS_SESSION_BUS_ADDRESS to your project's \
-                 [env] config so they are forwarded to spawned agents."
-            );
-            None
-        } else {
-            configured
-        }
-    };
+    let worker_memory_limit = resolve_worker_memory_limit(&config);
 
     let ctx = LoopContext {
         agent: agent.clone(),
@@ -109,68 +101,15 @@ pub fn run(
         worker_memory_limit,
     };
 
-    eprintln!("Agent:     {agent}");
-    eprintln!("Project:   {project}");
-    eprintln!("Max loops: {max_loops}");
-    eprintln!("Pause:     {pause_secs}s");
-    eprintln!(
-        "Model:     {}",
-        if ctx.model.is_empty() {
-            "system default"
-        } else {
-            &ctx.model
-        }
+    print_startup_banner(
+        &ctx,
+        max_loops,
+        pause_secs,
+        review_enabled,
+        multi_lead_enabled,
     );
-    eprintln!("Review:    {review_enabled}");
-    if multi_lead_enabled {
-        let max_leads = ctx.multi_lead_config.as_ref().map_or(3, |c| c.max_leads);
-        eprintln!("Multi-lead: enabled (max {max_leads} slots)");
-    }
 
-    // Confirm identity
-    Tool::new("rite")
-        .args(&["whoami", "--agent", &agent])
-        .run_ok()
-        .context("confirming agent identity")?;
-
-    // Stake agent claim (ignore failure — may already be held)
-    let _ = Tool::new("rite")
-        .args(&[
-            "claims",
-            "stake",
-            "--agent",
-            &agent,
-            &format!("agent://{agent}"),
-            "-m",
-            &format!("dev-loop for {project}"),
-        ])
-        .run();
-
-    // Announce
-    Tool::new("rite")
-        .args(&[
-            "send",
-            "--agent",
-            &agent,
-            &project,
-            &format!("Dev agent {agent} online, starting dev loop"),
-            "-L",
-            "spawn-ack",
-        ])
-        .run_ok()?;
-
-    // Set starting status
-    let _ = Tool::new("rite")
-        .args(&[
-            "statuses",
-            "set",
-            "--agent",
-            &agent,
-            "Starting loop",
-            "--ttl",
-            "10m",
-        ])
-        .run();
+    confirm_identity_and_announce(&agent, &project)?;
 
     // Capture baseline commits for release tracking
     let baseline_commits = get_commits_since_origin();
@@ -184,7 +123,7 @@ pub fn run(
     let cleanup_project = project.clone();
     let _ = ctrlc::set_handler(move || {
         // Best-effort cleanup on signal
-        let _ = cleanup(&cleanup_agent, &cleanup_project);
+        cleanup(&cleanup_agent, &cleanup_project);
         std::process::exit(0);
     });
 
@@ -214,55 +153,16 @@ pub fn run(
 
         if !has_work(&agent, &project)? {
             idle_count += 1;
-            if idle_count >= max_idle {
-                let _ = Tool::new("rite")
-                    .args(&["statuses", "set", "--agent", &agent, "Idle"])
-                    .run();
-                eprintln!("No work after {max_idle} idle checks. Exiting cleanly.");
-                let _ = Tool::new("rite")
-                    .args(&[
-                        "send", "--agent", &agent, &project,
-                        &format!("No work remaining after {max_idle} checks. Dev agent {agent} signing off."),
-                        "-L", "agent-idle",
-                    ])
-                    .run();
+            if handle_idle(&agent, &project, idle_count, max_idle, &idle_delays) {
                 break;
             }
-            let delay = idle_delays[idle_count.saturating_sub(1) as usize % idle_delays.len()];
-            eprintln!(
-                "No work available (idle {idle_count}/{max_idle}). Waiting {delay}s before retrying..."
-            );
-            let _ = Tool::new("rite")
-                .args(&[
-                    "statuses",
-                    "set",
-                    "--agent",
-                    &agent,
-                    &format!("Idle ({idle_count}/{max_idle})"),
-                    "--ttl",
-                    &format!("{delay}s"),
-                ])
-                .run();
-            std::thread::sleep(Duration::from_secs(delay));
             continue;
         }
         idle_count = 0;
 
         // Guard: if a review is pending, don't run Claude — just wait
         if let Some(pending_bead) = has_pending_review(&agent)? {
-            eprintln!("Review pending for {pending_bead} — waiting (not running Claude)");
-            let _ = Tool::new("rite")
-                .args(&[
-                    "statuses",
-                    "set",
-                    "--agent",
-                    &agent,
-                    &format!("Waiting: review for {pending_bead}"),
-                    "--ttl",
-                    "10m",
-                ])
-                .run();
-            std::thread::sleep(Duration::from_secs(30));
+            wait_for_pending_review(&agent, &pending_bead);
             continue;
         }
 
@@ -283,64 +183,9 @@ pub fn run(
         );
 
         let agent_start = crate::telemetry::metrics::time_start();
-        match run_agent_subprocess(&prompt_text, &ctx.model, timeout_secs) {
-            Ok(output) => {
-                // Check completion signals in the tail of the output
-                let signal_region = if output.len() > 1000 {
-                    let start = output.floor_char_boundary(output.len() - 1000);
-                    &output[start..]
-                } else {
-                    &output
-                };
-
-                if signal_region.contains("<promise>COMPLETE</promise>") {
-                    // Re-verify: agent's view of "no work" can be narrower than bn triage
-                    // (e.g., framed around a phase/mission). Trust the queue, not the claim.
-                    if has_work(&agent, &project)? {
-                        eprintln!("Agent signaled COMPLETE but bones remain — continuing loop");
-                    } else {
-                        eprintln!("\u{2713} Dev cycle complete - no more work");
-                        break;
-                    }
-                } else if signal_region.contains("<promise>END_OF_STORY</promise>") {
-                    eprintln!("\u{2713} Iteration complete - more work remains");
-                    // Verify work actually remains
-                    if !has_work(&agent, &project)? {
-                        eprintln!("No remaining work found despite END_OF_STORY — exiting cleanly");
-                        break;
-                    }
-                } else {
-                    eprintln!("Warning: No completion signal found in output");
-                }
-
-                // Extract and append iteration summary to journal
-                if let Some(summary) = extract_iteration_summary(&output) {
-                    journal.append(&summary);
-                }
-            }
-            Err(err) => {
-                eprintln!("Error running Claude: {err:#}");
-                let err_str = format!("{err:#}");
-                let is_fatal = err_str.contains("API Error")
-                    || err_str.contains("rate limit")
-                    || err_str.contains("overloaded");
-                if is_fatal {
-                    eprintln!("Fatal error detected, posting to rite and exiting...");
-                    let _ = Tool::new("rite")
-                        .args(&[
-                            "send",
-                            "--agent",
-                            &agent,
-                            &project,
-                            &format!("Dev loop error: {err_str}. Agent {agent} going offline."),
-                            "-L",
-                            "agent-error",
-                        ])
-                        .run();
-                    break;
-                }
-                // Continue on non-fatal errors
-            }
+        let agent_result = run_agent_subprocess(&prompt_text, &ctx.model, timeout_secs);
+        if handle_agent_result(agent_result, &agent, &project, &journal)? {
+            break;
         }
         crate::telemetry::metrics::time_record(
             "edict.dev_loop.agent_run_duration_seconds",
@@ -354,6 +199,185 @@ pub fn run(
     }
 
     // Show commits that landed this session
+    report_session_commits(&baseline_commits);
+
+    cleanup(&agent, &project);
+    Ok(())
+}
+
+/// Resolve the worker memory limit, warning and dropping it when systemd D-Bus
+/// is unavailable (so `--memory-limit` won't be passed to a doomed spawn).
+fn resolve_worker_memory_limit(config: &Config) -> Option<String> {
+    let configured = config
+        .agents
+        .worker
+        .as_ref()
+        .and_then(|w| w.memory_limit.clone());
+    if configured.is_some() && !is_systemd_dbus_available() {
+        eprintln!(
+            "Warning: worker memory limit configured but systemd D-Bus is not available \
+             (DBUS_SESSION_BUS_ADDRESS / XDG_RUNTIME_DIR not set) — skipping --memory-limit. \
+             To fix: add XDG_RUNTIME_DIR and DBUS_SESSION_BUS_ADDRESS to your project's \
+             [env] config so they are forwarded to spawned agents."
+        );
+        None
+    } else {
+        configured
+    }
+}
+
+/// Print the dev-loop startup banner to stderr.
+fn print_startup_banner(
+    ctx: &LoopContext,
+    max_loops: u32,
+    pause_secs: u32,
+    review_enabled: bool,
+    multi_lead_enabled: bool,
+) {
+    eprintln!("Agent:     {}", ctx.agent);
+    eprintln!("Project:   {}", ctx.project);
+    eprintln!("Max loops: {max_loops}");
+    eprintln!("Pause:     {pause_secs}s");
+    eprintln!(
+        "Model:     {}",
+        if ctx.model.is_empty() {
+            "system default"
+        } else {
+            &ctx.model
+        }
+    );
+    eprintln!("Review:    {review_enabled}");
+    if multi_lead_enabled {
+        let max_leads = ctx.multi_lead_config.as_ref().map_or(3, |c| c.max_leads);
+        eprintln!("Multi-lead: enabled (max {max_leads} slots)");
+    }
+}
+
+/// Confirm agent identity, stake the agent claim, announce online, and set the
+/// starting status.
+fn confirm_identity_and_announce(agent: &str, project: &str) -> anyhow::Result<()> {
+    // Confirm identity
+    Tool::new("rite")
+        .args(&["whoami", "--agent", agent])
+        .run_ok()
+        .context("confirming agent identity")?;
+
+    // Stake agent claim (ignore failure — may already be held)
+    let _ = Tool::new("rite")
+        .args(&[
+            "claims",
+            "stake",
+            "--agent",
+            agent,
+            &format!("agent://{agent}"),
+            "-m",
+            &format!("dev-loop for {project}"),
+        ])
+        .run();
+
+    // Announce
+    Tool::new("rite")
+        .args(&[
+            "send",
+            "--agent",
+            agent,
+            project,
+            &format!("Dev agent {agent} online, starting dev loop"),
+            "-L",
+            "spawn-ack",
+        ])
+        .run_ok()?;
+
+    // Set starting status
+    let _ = Tool::new("rite")
+        .args(&[
+            "statuses",
+            "set",
+            "--agent",
+            agent,
+            "Starting loop",
+            "--ttl",
+            "10m",
+        ])
+        .run();
+
+    Ok(())
+}
+
+/// Handle the result of running the agent subprocess for one iteration.
+///
+/// Returns `Ok(true)` when the main loop should break (cycle complete or fatal
+/// error), `Ok(false)` to continue iterating.
+fn handle_agent_result(
+    result: anyhow::Result<String>,
+    agent: &str,
+    project: &str,
+    journal: &Journal,
+) -> anyhow::Result<bool> {
+    match result {
+        Ok(output) => {
+            // Check completion signals in the tail of the output
+            let signal_region = if output.len() > 1000 {
+                let start = output.floor_char_boundary(output.len() - 1000);
+                &output[start..]
+            } else {
+                &output
+            };
+
+            if signal_region.contains("<promise>COMPLETE</promise>") {
+                // Re-verify: agent's view of "no work" can be narrower than bn triage
+                // (e.g., framed around a phase/mission). Trust the queue, not the claim.
+                if has_work(agent, project)? {
+                    eprintln!("Agent signaled COMPLETE but bones remain — continuing loop");
+                } else {
+                    eprintln!("\u{2713} Dev cycle complete - no more work");
+                    return Ok(true);
+                }
+            } else if signal_region.contains("<promise>END_OF_STORY</promise>") {
+                eprintln!("\u{2713} Iteration complete - more work remains");
+                // Verify work actually remains
+                if !has_work(agent, project)? {
+                    eprintln!("No remaining work found despite END_OF_STORY — exiting cleanly");
+                    return Ok(true);
+                }
+            } else {
+                eprintln!("Warning: No completion signal found in output");
+            }
+
+            // Extract and append iteration summary to journal
+            if let Some(summary) = extract_iteration_summary(&output) {
+                journal.append(&summary);
+            }
+        }
+        Err(err) => {
+            eprintln!("Error running Claude: {err:#}");
+            let err_str = format!("{err:#}");
+            let is_fatal = err_str.contains("API Error")
+                || err_str.contains("rate limit")
+                || err_str.contains("overloaded");
+            if is_fatal {
+                eprintln!("Fatal error detected, posting to rite and exiting...");
+                let _ = Tool::new("rite")
+                    .args(&[
+                        "send",
+                        "--agent",
+                        agent,
+                        project,
+                        &format!("Dev loop error: {err_str}. Agent {agent} going offline."),
+                        "-L",
+                        "agent-error",
+                    ])
+                    .run();
+                return Ok(true);
+            }
+            // Continue on non-fatal errors
+        }
+    }
+    Ok(false)
+}
+
+/// Report commits that landed this session (those not present in the baseline).
+fn report_session_commits(baseline_commits: &[String]) {
     let final_commits = get_commits_since_origin();
     let new_commits: Vec<_> = final_commits
         .iter()
@@ -366,12 +390,78 @@ pub fn run(
         }
         eprintln!("\nIf any are user-visible (feat/fix), consider a release.");
     }
+}
 
-    cleanup(&agent, &project)?;
-    Ok(())
+/// Handle an idle iteration (no work found). Returns `true` if the main loop
+/// should break (idle budget exhausted), `false` to continue after sleeping.
+fn handle_idle(
+    agent: &str,
+    project: &str,
+    idle_count: u32,
+    max_idle: u32,
+    idle_delays: &[u64],
+) -> bool {
+    if idle_count >= max_idle {
+        let _ = Tool::new("rite")
+            .args(&["statuses", "set", "--agent", agent, "Idle"])
+            .run();
+        eprintln!("No work after {max_idle} idle checks. Exiting cleanly.");
+        let _ = Tool::new("rite")
+            .args(&[
+                "send",
+                "--agent",
+                agent,
+                project,
+                &format!(
+                    "No work remaining after {max_idle} checks. Dev agent {agent} signing off."
+                ),
+                "-L",
+                "agent-idle",
+            ])
+            .run();
+        return true;
+    }
+    let delay = idle_delays[idle_count.saturating_sub(1) as usize % idle_delays.len()];
+    eprintln!(
+        "No work available (idle {idle_count}/{max_idle}). Waiting {delay}s before retrying..."
+    );
+    let _ = Tool::new("rite")
+        .args(&[
+            "statuses",
+            "set",
+            "--agent",
+            agent,
+            &format!("Idle ({idle_count}/{max_idle})"),
+            "--ttl",
+            &format!("{delay}s"),
+        ])
+        .run();
+    std::thread::sleep(Duration::from_secs(delay));
+    false
+}
+
+/// Wait out a pending review: set a waiting status and sleep without running Claude.
+fn wait_for_pending_review(agent: &str, pending_bead: &str) {
+    eprintln!("Review pending for {pending_bead} — waiting (not running Claude)");
+    let _ = Tool::new("rite")
+        .args(&[
+            "statuses",
+            "set",
+            "--agent",
+            agent,
+            &format!("Waiting: review for {pending_bead}"),
+            "--ttl",
+            "10m",
+        ])
+        .run();
+    std::thread::sleep(Duration::from_secs(30));
 }
 
 /// Context shared across the dev-loop iteration.
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "config-derived context flags"
+)]
 pub struct LoopContext {
     pub agent: String,
     pub project: String,
@@ -432,15 +522,16 @@ fn resolve_agent(config: &Config, agent_override: Option<&str>) -> anyhow::Resul
 
 /// Resolve the model for the lead dev, expanding tier names.
 fn resolve_model(config: &Config, model_override: Option<&str>) -> String {
-    let raw = if let Some(m) = model_override {
-        m.to_string()
-    } else {
-        config
-            .agents
-            .dev
-            .as_ref()
-            .map_or_else(String::new, |d| d.model.clone())
-    };
+    let raw = model_override.map_or_else(
+        || {
+            config
+                .agents
+                .dev
+                .as_ref()
+                .map_or_else(String::new, |d| d.model.clone())
+        },
+        ToString::to_string,
+    );
     if raw.is_empty() {
         raw
     } else {
@@ -602,9 +693,8 @@ fn has_pending_review(agent: &str) -> anyhow::Result<Option<String>> {
     };
 
     for bone in &bones {
-        let id = match bone["id"].as_str() {
-            Some(id) => id,
-            None => continue,
+        let Some(id) = bone["id"].as_str() else {
+            continue;
         };
 
         let comments_output = Tool::new("bn")
@@ -649,7 +739,7 @@ fn parse_comments(json: &str) -> Vec<String> {
             return bodies;
         };
         for item in &arr {
-            if let Some(body) = item["body"].as_str().or(item["content"].as_str()) {
+            if let Some(body) = item["body"].as_str().or_else(|| item["content"].as_str()) {
                 bodies.push(body.to_string());
             }
         }
@@ -704,6 +794,9 @@ fn discover_sibling_leads(agent: &str) -> anyhow::Result<Vec<SiblingLead>> {
 
 /// Run agent via `edict run agent` (auto-selects runner based on model provider).
 fn run_agent_subprocess(prompt: &str, model: &str, timeout_secs: u64) -> anyhow::Result<String> {
+    use std::io::{BufRead, BufReader};
+    use std::process::{Command, Stdio};
+
     let mut args = vec!["run", "agent", prompt, "--skip-permissions"];
 
     // Pass the full model string (e.g. "anthropic/claude-sonnet-4-6:medium") — Pi handles :suffix natively
@@ -717,9 +810,6 @@ fn run_agent_subprocess(prompt: &str, model: &str, timeout_secs: u64) -> anyhow:
     args.push(&timeout_str);
 
     // Spawn the process, streaming stdout through
-    use std::io::{BufRead, BufReader};
-    use std::process::{Command, Stdio};
-
     let mut child = Command::new("edict")
         .args(&args)
         .stdin(Stdio::null())
@@ -777,7 +867,7 @@ fn get_commits_since_origin() -> Vec<String> {
 }
 
 /// Cleanup: kill child workers, release claims.
-fn cleanup(agent: &str, project: &str) -> anyhow::Result<()> {
+fn cleanup(agent: &str, project: &str) {
     eprintln!("Cleaning up...");
 
     // Kill child workers
@@ -841,7 +931,6 @@ fn cleanup(agent: &str, project: &str) -> anyhow::Result<()> {
     // bn is event-sourced — no sync step needed
 
     eprintln!("Cleanup complete for {agent}.");
-    Ok(())
 }
 
 /// Check whether the systemd user session D-Bus is available.
@@ -878,9 +967,12 @@ fn kill_child_workers(agent: &str) {
     let prefix = format!("{agent}/");
 
     for a in &agents {
-        let name = a["id"].as_str().or(a["name"].as_str()).unwrap_or("");
+        let name = a["id"]
+            .as_str()
+            .or_else(|| a["name"].as_str())
+            .unwrap_or("");
         if name.starts_with(&prefix) {
-            if let Err(_) = Tool::new("vessel").args(&["kill", name]).run() {
+            if Tool::new("vessel").args(&["kill", name]).run().is_err() {
                 // Worker may have already exited
             }
             eprintln!("Killed child worker: {name}");

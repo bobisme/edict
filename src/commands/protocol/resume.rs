@@ -29,6 +29,11 @@ struct ReviewState {
 }
 
 /// Execute the resume protocol command.
+///
+/// # Errors
+///
+/// Returns an error if the protocol context cannot be collected or the
+/// resulting guidance fails to render.
 pub fn execute(
     agent: &str,
     project: &str,

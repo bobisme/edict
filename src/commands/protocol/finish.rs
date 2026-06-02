@@ -12,17 +12,36 @@ use super::shell;
 use crate::commands::doctor::OutputFormat;
 use crate::config::Config;
 
+/// Parameters for the finish protocol command.
+pub struct ExecuteParams<'a> {
+    pub bone_id: &'a str,
+    pub no_merge: bool,
+    pub force: bool,
+    pub execute: bool,
+    pub agent: &'a str,
+    pub project: &'a str,
+    pub config: &'a Config,
+    pub format: OutputFormat,
+}
+
 /// Execute the finish protocol command.
-pub fn execute(
-    bone_id: &str,
-    no_merge: bool,
-    force: bool,
-    execute: bool,
-    agent: &str,
-    project: &str,
-    config: &Config,
-    format: OutputFormat,
-) -> anyhow::Result<()> {
+///
+/// # Errors
+///
+/// Returns an error if rendering or printing guidance fails, or if executing
+/// the finish steps fails when `--execute` is set.
+pub fn execute(params: &ExecuteParams) -> anyhow::Result<()> {
+    let &ExecuteParams {
+        bone_id,
+        no_merge,
+        force,
+        execute,
+        agent,
+        project,
+        config,
+        format,
+    } = params;
+
     // Collect state from rite and maw
     let ctx = match ProtocolContext::collect(project, agent) {
         Ok(ctx) => ctx,
@@ -35,9 +54,7 @@ pub fn execute(
     };
 
     // Fetch bone info
-    let bone_info = if let Ok(bone) = ctx.bone_status(bone_id) {
-        bone
-    } else {
+    let Ok(bone_info) = ctx.bone_status(bone_id) else {
         let mut guidance = ProtocolGuidance::new("finish");
         guidance.blocked(format!(
             "bone {bone_id} not found. Check the ID with: maw exec default -- bn show {bone_id}"
@@ -100,12 +117,69 @@ pub fn execute(
     // Check review gate status
     let review_enabled = config.review.enabled && !required_reviewers.is_empty();
 
-    if review_enabled && !force {
+    let should_execute = build_finish_guidance(
+        &mut guidance,
+        &mut GuidanceCtx {
+            ctx: &ctx,
+            bone_id,
+            bead_title: &bone_info.title,
+            project,
+            workspace: &workspace,
+            merge_target: &mut merge_target,
+            required_reviewers: &required_reviewers,
+            review_enabled,
+            force,
+            no_merge,
+            execute,
+        },
+    );
+
+    if should_execute {
+        return execute_and_render(&guidance, format);
+    }
+
+    print_guidance(&guidance, format)?;
+    Ok(())
+}
+
+/// Parameters for building the standard finish steps.
+struct FinishStepsParams<'a> {
+    bone_id: &'a str,
+    bead_title: &'a str,
+    project: &'a str,
+    workspace: &'a str,
+    merge_target: Option<&'a str>,
+    review_id: Option<&'a str>,
+    no_merge: bool,
+}
+
+/// Inputs for building the finish guidance decision tree.
+#[allow(clippy::struct_excessive_bools, reason = "CLI flag context struct")]
+struct GuidanceCtx<'a> {
+    ctx: &'a ProtocolContext,
+    bone_id: &'a str,
+    bead_title: &'a str,
+    project: &'a str,
+    workspace: &'a str,
+    merge_target: &'a mut Option<String>,
+    required_reviewers: &'a [String],
+    review_enabled: bool,
+    force: bool,
+    no_merge: bool,
+    execute: bool,
+}
+
+/// Build the finish guidance based on review gate state.
+///
+/// Returns `true` when the caller should execute the steps immediately (the
+/// `--execute` flag was set and the bone is ready to finish).
+fn build_finish_guidance(guidance: &mut ProtocolGuidance, gc: &mut GuidanceCtx) -> bool {
+    if gc.review_enabled && !gc.force {
         // Try to find a review for this workspace
-        if let Some((review_id, review_detail)) = find_review_for_workspace(&ctx, &workspace) {
-            let decision = review_gate::evaluate_review_gate(&review_detail, &required_reviewers);
-            if merge_target.is_none() {
-                merge_target = review_detail.change_id.clone();
+        if let Some((review_id, review_detail)) = find_review_for_workspace(gc.ctx, gc.workspace) {
+            let decision = review_gate::evaluate_review_gate(&review_detail, gc.required_reviewers);
+            if gc.merge_target.is_none() {
+                gc.merge_target.clone_from(&review_detail.change_id);
             }
             guidance.review = Some(ReviewRef {
                 review_id: review_id.clone(),
@@ -117,180 +191,113 @@ pub fn execute(
                     // Ready to finish
                     guidance.status = ProtocolStatus::Ready;
                     build_finish_steps(
-                        &mut guidance,
-                        bone_id,
-                        &bone_info.title,
-                        project,
-                        &workspace,
-                        merge_target.as_deref(),
-                        Some(&review_id),
-                        no_merge,
+                        guidance,
+                        &FinishStepsParams {
+                            bone_id: gc.bone_id,
+                            bead_title: gc.bead_title,
+                            project: gc.project,
+                            workspace: gc.workspace,
+                            merge_target: gc.merge_target.as_deref(),
+                            review_id: Some(&review_id),
+                            no_merge: gc.no_merge,
+                        },
                     );
 
                     // Execute if --execute flag is set
-                    if execute {
-                        return execute_and_render(&guidance, format);
+                    if gc.execute {
+                        return true;
                     }
 
                     guidance.advise(format!(
-                        "Review {review_id} approved. Run these commands to finish bone {bone_id}."
+                        "Review {review_id} approved. Run these commands to finish bone {}.",
+                        gc.bone_id
                     ));
                 }
                 ReviewGateStatus::Blocked => {
-                    // Blocked by reviewer
-                    guidance.status = ProtocolStatus::Blocked;
-                    guidance.diagnostic(format!(
-                        "Review {} is blocked by: {}",
-                        review_id,
-                        decision.blocked_by.join(", ")
-                    ));
-                    if decision.open_thread_count_hint(&review_detail) > 0 {
-                        guidance.diagnostic(format!(
-                            "{} open thread(s) need resolution",
-                            review_detail.open_thread_count
-                        ));
-                    }
-
-                    // Output commands to check review feedback and re-request
-                    let mut steps = Vec::new();
-                    steps.push(shell::seal_show_cmd(&workspace, &review_id));
-                    steps.push(shell::seal_request_cmd(
-                        &workspace,
+                    build_blocked_section(
+                        guidance,
+                        &decision,
+                        &review_detail,
                         &review_id,
-                        &required_reviewers.join(","),
-                        "agent",
-                    ));
-                    steps.push(shell::rite_send_cmd(
-                        "agent",
-                        project,
-                        &format!(
-                            "Review re-requested: {} @{}",
-                            review_id,
-                            required_reviewers.join(" @")
-                        ),
-                        "review-request",
-                    ));
-                    guidance.steps(steps);
-                    guidance.advise(format!(
-                        "Review {review_id} is blocked. Address reviewer feedback, then re-request review."
-                    ));
+                        gc.workspace,
+                        gc.project,
+                        gc.required_reviewers,
+                    );
                 }
                 ReviewGateStatus::NeedsReview => {
-                    // Review exists but not all reviewers have voted
-                    guidance.status = ProtocolStatus::NeedsReview;
-
-                    if !decision.missing_approvals.is_empty() {
-                        guidance.diagnostic(format!(
-                            "Awaiting votes from: {}",
-                            decision.missing_approvals.join(", ")
-                        ));
-                    }
-
-                    let mut steps = Vec::new();
-                    steps.push(shell::seal_show_cmd(&workspace, &review_id));
-                    // Re-request from missing reviewers
-                    if !decision.missing_approvals.is_empty() {
-                        steps.push(shell::seal_request_cmd(
-                            &workspace,
-                            &review_id,
-                            &decision.missing_approvals.join(","),
-                            "agent",
-                        ));
-                        let mentions: Vec<String> = decision
-                            .missing_approvals
-                            .iter()
-                            .map(|r| format!("@{r}"))
-                            .collect();
-                        steps.push(shell::rite_send_cmd(
-                            "agent",
-                            project,
-                            &format!("Review pending: {} {}", review_id, mentions.join(" ")),
-                            "review-request",
-                        ));
-                    }
-                    guidance.steps(steps);
-                    guidance.advise(format!(
-                        "Review {review_id} needs approval. Wait for reviewers or re-request."
-                    ));
+                    build_needs_review_section(
+                        guidance,
+                        &decision,
+                        &review_id,
+                        gc.workspace,
+                        gc.project,
+                    );
                 }
             }
         } else {
-            // No review found — needs review creation
-            guidance.status = ProtocolStatus::NeedsReview;
-            guidance.diagnostic("No review found for this workspace.".to_string());
-
-            let mut steps = Vec::new();
-            steps.push(shell::seal_create_cmd(
-                &workspace,
-                "agent",
-                &bone_info.title,
-                &required_reviewers.join(","),
-            ));
-            let mentions: Vec<String> =
-                required_reviewers.iter().map(|r| format!("@{r}")).collect();
-            steps.push(shell::rite_send_cmd(
-                "agent",
-                project,
-                &format!("Review requested: <review-id> {}", mentions.join(" ")),
-                "review-request",
-            ));
-            guidance.steps(steps);
-            guidance.advise(
-                "No review exists yet. Create one and request reviewers before finishing."
-                    .to_string(),
+            build_no_review_section(
+                guidance,
+                gc.bead_title,
+                gc.workspace,
+                gc.project,
+                gc.required_reviewers,
             );
         }
     } else {
         // Review not enabled, or --force flag used
         guidance.status = ProtocolStatus::Ready;
 
-        if force && review_enabled {
+        if gc.force && gc.review_enabled {
             guidance.diagnostic("WARNING: --force flag used, bypassing review gate.".to_string());
         }
 
         build_finish_steps(
-            &mut guidance,
-            bone_id,
-            &bone_info.title,
-            project,
-            &workspace,
-            merge_target.as_deref(),
-            None,
-            no_merge,
+            guidance,
+            &FinishStepsParams {
+                bone_id: gc.bone_id,
+                bead_title: gc.bead_title,
+                project: gc.project,
+                workspace: gc.workspace,
+                merge_target: gc.merge_target.as_deref(),
+                review_id: None,
+                no_merge: gc.no_merge,
+            },
         );
 
         // Execute if --execute flag is set
-        if execute {
-            return execute_and_render(&guidance, format);
+        if gc.execute {
+            return true;
         }
 
-        if force && review_enabled {
+        if gc.force && gc.review_enabled {
             guidance.advise(format!(
-                "Force-finishing bone {bone_id} without review approval. Run these commands to finish."
+                "Force-finishing bone {} without review approval. Run these commands to finish.",
+                gc.bone_id
             ));
         } else {
             guidance.advise(format!(
-                "Review not required. Run these commands to finish bone {bone_id}."
+                "Review not required. Run these commands to finish bone {}.",
+                gc.bone_id
             ));
         }
     }
 
-    print_guidance(&guidance, format)?;
-    Ok(())
+    false
 }
 
 /// Build the standard finish steps: commit workspace, merge, close, announce,
 /// release claims.
-fn build_finish_steps(
-    guidance: &mut ProtocolGuidance,
-    bone_id: &str,
-    bead_title: &str,
-    project: &str,
-    workspace: &str,
-    merge_target: Option<&str>,
-    review_id: Option<&str>,
-    no_merge: bool,
-) {
+fn build_finish_steps(guidance: &mut ProtocolGuidance, params: &FinishStepsParams) {
+    let FinishStepsParams {
+        bone_id,
+        bead_title,
+        project,
+        workspace,
+        merge_target,
+        review_id,
+        no_merge,
+    } = *params;
+
     let mut steps = Vec::new();
 
     // 1. Stage workspace changes
@@ -338,6 +345,133 @@ fn build_finish_steps(
     steps.push(shell::claims_release_all_cmd("agent"));
 
     guidance.steps(steps);
+}
+
+/// Build guidance for a review that is blocked by a reviewer.
+fn build_blocked_section(
+    guidance: &mut ProtocolGuidance,
+    decision: &review_gate::ReviewGateDecision,
+    review_detail: &super::adapters::ReviewDetail,
+    review_id: &str,
+    workspace: &str,
+    project: &str,
+    required_reviewers: &[String],
+) {
+    // Blocked by reviewer
+    guidance.status = ProtocolStatus::Blocked;
+    guidance.diagnostic(format!(
+        "Review {} is blocked by: {}",
+        review_id,
+        decision.blocked_by.join(", ")
+    ));
+    if decision.open_thread_count_hint(review_detail) > 0 {
+        guidance.diagnostic(format!(
+            "{} open thread(s) need resolution",
+            review_detail.open_thread_count
+        ));
+    }
+
+    // Output commands to check review feedback and re-request
+    let mut steps = Vec::new();
+    steps.push(shell::seal_show_cmd(workspace, review_id));
+    steps.push(shell::seal_request_cmd(
+        workspace,
+        review_id,
+        &required_reviewers.join(","),
+        "agent",
+    ));
+    steps.push(shell::rite_send_cmd(
+        "agent",
+        project,
+        &format!(
+            "Review re-requested: {} @{}",
+            review_id,
+            required_reviewers.join(" @")
+        ),
+        "review-request",
+    ));
+    guidance.steps(steps);
+    guidance.advise(format!(
+        "Review {review_id} is blocked. Address reviewer feedback, then re-request review."
+    ));
+}
+
+/// Build guidance for a review that exists but lacks all required approvals.
+fn build_needs_review_section(
+    guidance: &mut ProtocolGuidance,
+    decision: &review_gate::ReviewGateDecision,
+    review_id: &str,
+    workspace: &str,
+    project: &str,
+) {
+    // Review exists but not all reviewers have voted
+    guidance.status = ProtocolStatus::NeedsReview;
+
+    if !decision.missing_approvals.is_empty() {
+        guidance.diagnostic(format!(
+            "Awaiting votes from: {}",
+            decision.missing_approvals.join(", ")
+        ));
+    }
+
+    let mut steps = Vec::new();
+    steps.push(shell::seal_show_cmd(workspace, review_id));
+    // Re-request from missing reviewers
+    if !decision.missing_approvals.is_empty() {
+        steps.push(shell::seal_request_cmd(
+            workspace,
+            review_id,
+            &decision.missing_approvals.join(","),
+            "agent",
+        ));
+        let mentions: Vec<String> = decision
+            .missing_approvals
+            .iter()
+            .map(|r| format!("@{r}"))
+            .collect();
+        steps.push(shell::rite_send_cmd(
+            "agent",
+            project,
+            &format!("Review pending: {} {}", review_id, mentions.join(" ")),
+            "review-request",
+        ));
+    }
+    guidance.steps(steps);
+    guidance.advise(format!(
+        "Review {review_id} needs approval. Wait for reviewers or re-request."
+    ));
+}
+
+/// Build guidance for the case where no review exists yet for the workspace.
+fn build_no_review_section(
+    guidance: &mut ProtocolGuidance,
+    bead_title: &str,
+    workspace: &str,
+    project: &str,
+    required_reviewers: &[String],
+) {
+    // No review found — needs review creation
+    guidance.status = ProtocolStatus::NeedsReview;
+    guidance.diagnostic("No review found for this workspace.".to_string());
+
+    let mut steps = Vec::new();
+    steps.push(shell::seal_create_cmd(
+        workspace,
+        "agent",
+        bead_title,
+        &required_reviewers.join(","),
+    ));
+    let mentions: Vec<String> = required_reviewers.iter().map(|r| format!("@{r}")).collect();
+    steps.push(shell::rite_send_cmd(
+        "agent",
+        project,
+        &format!("Review requested: <review-id> {}", mentions.join(" ")),
+        "review-request",
+    ));
+    guidance.steps(steps);
+    guidance.advise(
+        "No review exists yet. Create one and request reviewers before finishing.".to_string(),
+    );
 }
 
 /// Try to find a review for a workspace by listing reviews in that workspace.
@@ -426,13 +560,15 @@ mod tests {
 
         build_finish_steps(
             &mut guidance,
-            "bd-abc",
-            "test feature",
-            "myproject",
-            "frost-castle",
-            None,
-            Some("cr-123"),
-            false,
+            &FinishStepsParams {
+                bone_id: "bd-abc",
+                bead_title: "test feature",
+                project: "myproject",
+                workspace: "frost-castle",
+                merge_target: None,
+                review_id: Some("cr-123"),
+                no_merge: false,
+            },
         );
 
         assert!(guidance.steps.len() >= 6);
@@ -473,13 +609,15 @@ mod tests {
 
         build_finish_steps(
             &mut guidance,
-            "bd-abc",
-            "test feature",
-            "myproject",
-            "frost-castle",
-            None,
-            None,
-            true, // no_merge
+            &FinishStepsParams {
+                bone_id: "bd-abc",
+                bead_title: "test feature",
+                project: "myproject",
+                workspace: "frost-castle",
+                merge_target: None,
+                review_id: None,
+                no_merge: true,
+            },
         );
 
         // Should NOT have ws merge
@@ -499,13 +637,15 @@ mod tests {
         // Title with shell metacharacters
         build_finish_steps(
             &mut guidance,
-            "bd-abc",
-            "it's a test; rm -rf /",
-            "myproject",
-            "frost-castle",
-            None,
-            None,
-            false,
+            &FinishStepsParams {
+                bone_id: "bd-abc",
+                bead_title: "it's a test; rm -rf /",
+                project: "myproject",
+                workspace: "frost-castle",
+                merge_target: None,
+                review_id: None,
+                no_merge: false,
+            },
         );
 
         // The title should be shell-escaped in commands that embed it
