@@ -61,6 +61,23 @@ pub fn route_message(body: &str) -> Route {
     }
 }
 
+/// Returns the configured reviewer agent `@`-mentioned in `body`, if any
+/// (e.g. `sigil-security` for `@sigil-security`).
+///
+/// `name` is the project name and `reviewers` the configured reviewer roles, so
+/// the returned agent matches the names `register_reviewer_hook` registers.
+/// Matching is case-insensitive. A bare message that tags a reviewer is directed
+/// at that reviewer's own mention hook, not the router.
+fn mentioned_reviewer_in(body: &str, name: &str, reviewers: &[String]) -> Option<String> {
+    let lower = body.to_lowercase();
+    reviewers.iter().find_map(|role| {
+        let agent = format!("{name}-{role}");
+        lower
+            .contains(&format!("@{}", agent.to_lowercase()))
+            .then_some(agent)
+    })
+}
+
 /// Match the `!`-prefixed command convention.
 fn route_bang_prefix(trimmed: &str) -> Option<Route> {
     // !oneshot [message]
@@ -463,6 +480,7 @@ const SKIP_LABELS: &[&str] = &[
     "coord:merge",
     "coord:interface",
     "coord:blocker",
+    "review-request",
     "review-response",
     "release",
 ];
@@ -1551,6 +1569,19 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
         ))
     }
 
+    /// Returns the configured reviewer agent `@`-mentioned in `body`, if any
+    /// (e.g. `sigil-security`).
+    ///
+    /// A bare message that tags a reviewer is directed at that reviewer — whose
+    /// own mention hook spawns the reviewer-loop — not work for the router. The
+    /// responder skips such messages so tagging `@<project>-<role>` doesn't also
+    /// trip dev/triage. Built from `project.name` to match the reviewer agent
+    /// names registered by `register_reviewer_hook`.
+    fn mentioned_reviewer(&self, body: &str) -> Option<String> {
+        let config = self.config.as_ref()?;
+        mentioned_reviewer_in(body, &config.project.name, &config.review.reviewers)
+    }
+
     // --- Main run ---
 
     pub fn run(&mut self) -> anyhow::Result<()> {
@@ -1607,6 +1638,21 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
             return Ok(());
         }
 
+        // Route the message
+        let route = route_message(&trigger_message.body);
+
+        // A bare message that @-mentions a configured reviewer is directed at
+        // that reviewer (its own mention hook spawns the reviewer-loop), not work
+        // for the router. Skip it so tagging @<project>-<role> doesn't also
+        // trigger dev/triage. Explicit commands (!dev, !q, …) are honored.
+        if matches!(route.kind, RouteType::Triage)
+            && let Some(reviewer) = self.mentioned_reviewer(&trigger_message.body)
+        {
+            eprintln!("Skipping reviewer-directed message (mentions @{reviewer})");
+            self.cleanup();
+            return Ok(());
+        }
+
         // Message idempotency: stake claim to prevent duplicate processing
         if let Some(ref msg_id) = trigger_message.id
             && !self.stake_message_claim(msg_id)
@@ -1616,8 +1662,6 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
             return Ok(());
         }
 
-        // Route the message
-        let route = route_message(&trigger_message.body);
         let model_info = route
             .model
             .as_ref()
@@ -2000,5 +2044,57 @@ mod tests {
         assert!(!"alice".to_string().starts_with(&project_prefix));
         assert!(!"alice-dev".to_string().starts_with(&project_prefix));
         assert!(!"myproject-dev".to_string().starts_with(&project_prefix));
+    }
+
+    #[test]
+    fn mentioned_reviewer_matches_configured_role() {
+        let reviewers = vec!["security".to_string()];
+        // A bare message tagging the reviewer is detected (case-insensitive).
+        assert_eq!(
+            mentioned_reviewer_in(
+                "@sigil-security please take a look at the review",
+                "sigil",
+                &reviewers,
+            ),
+            Some("sigil-security".to_string())
+        );
+        assert_eq!(
+            mentioned_reviewer_in("hey @SIGIL-SECURITY", "sigil", &reviewers),
+            Some("sigil-security".to_string())
+        );
+    }
+
+    #[test]
+    fn mentioned_reviewer_ignores_non_reviewers() {
+        let reviewers = vec!["security".to_string()];
+        // Mentioning the dev or no one is not a reviewer-directed message.
+        assert_eq!(
+            mentioned_reviewer_in("@sigil-dev fix this", "sigil", &reviewers),
+            None
+        );
+        assert_eq!(
+            mentioned_reviewer_in("just some work to do", "sigil", &reviewers),
+            None
+        );
+        // No configured reviewers -> never a reviewer mention.
+        assert_eq!(
+            mentioned_reviewer_in("@sigil-security look", "sigil", &[]),
+            None
+        );
+    }
+
+    #[test]
+    fn reviewer_mention_only_skips_bare_messages() {
+        // The skip is gated on RouteType::Triage, so an explicit command that
+        // also tags a reviewer is still honored by the responder.
+        let reviewers = vec!["security".to_string()];
+        let body = "!dev address what @sigil-security flagged";
+        assert!(mentioned_reviewer_in(body, "sigil", &reviewers).is_some());
+        assert_eq!(route_message(body).kind, RouteType::Dev); // not Triage -> not skipped
+        // A bare mention routes to Triage, which the handler skips.
+        assert_eq!(
+            route_message("@sigil-security please review").kind,
+            RouteType::Triage
+        );
     }
 }
