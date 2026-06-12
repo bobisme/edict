@@ -378,13 +378,17 @@ mod tests {
         }
     }
 
-    /// Bare rendering of each templated doc must be byte-identical to the
-    /// committed `.agents/edict/*.md` in this (bare-layout) repo — guaranteeing
-    /// the layout templating did not change the bare output that ships today.
+    /// Rendering each templated doc in this repo's own layout must be
+    /// byte-identical to the committed `.agents/edict/*.md` — guaranteeing the
+    /// layout templating produces exactly what `edict sync` ships here. This repo
+    /// migrated bare -> root, so we render in whatever layout it currently uses
+    /// (detected from the repo root) rather than assuming bare.
     #[test]
-    fn bare_render_matches_committed_docs() {
+    fn render_matches_committed_docs() {
         use std::path::Path;
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(".agents/edict");
+        let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let layout = Layout::detect(manifest);
+        let dir = manifest.join(".agents/edict");
         let mut checked = 0;
         for (name, content) in WORKFLOW_DOCS {
             let path = dir.join(name);
@@ -392,10 +396,10 @@ mod tests {
                 continue;
             }
             let committed = std::fs::read_to_string(&path).unwrap();
-            let bare = render_workflow_doc(content, Layout::Bare).unwrap();
+            let rendered = render_workflow_doc(content, layout).unwrap();
             assert_eq!(
-                bare, committed,
-                "bare render of {name} differs from committed .agents/edict/{name}"
+                rendered, committed,
+                "{layout:?} render of {name} differs from committed .agents/edict/{name}"
             );
             checked += 1;
         }

@@ -260,7 +260,8 @@ impl SyncArgs {
             migrate_botbus_env_hooks(&config, &project_root);
         }
 
-        // Ensure reviewer hooks exist when review is enabled
+        // Ensure reviewer mention hooks exist for declared reviewer roles
+        // (independent of review.enabled — see ensure_reviewer_hooks)
         if !self.check {
             ensure_reviewer_hooks(&config, &project_root);
         }
@@ -1387,8 +1388,24 @@ fn migrate_vessel_hooks(config: &Config, project_root: &Path, config_path: &Path
 /// `edict init` registers these, but they can be lost during migrations or
 /// if a project was initialized before reviewer hooks were added. This checks
 /// for each configured reviewer role and registers the hook if missing.
+/// Reviewer roles that should have `@<project>-<role>` mention hooks registered.
+///
+/// Gated on seal being available and the role being *declared* in
+/// `review.reviewers` — deliberately NOT on `review.enabled`. `review.enabled`
+/// only governs whether the dev/worker loops auto-request a review and whether
+/// finish/merge gate on approval; tagging `@<project>-<role>` in a one-off
+/// message must spawn a reviewer even when auto-review is off.
+fn reviewer_hook_roles(config: &Config) -> &[String] {
+    if config.tools.seal {
+        &config.review.reviewers
+    } else {
+        &[]
+    }
+}
+
 fn ensure_reviewer_hooks(config: &Config, project_root: &Path) {
-    if !config.review.enabled {
+    let roles = reviewer_hook_roles(config);
+    if roles.is_empty() {
         return;
     }
 
@@ -1434,7 +1451,7 @@ fn ensure_reviewer_hooks(config: &Config, project_root: &Path) {
         .as_ref()
         .and_then(|r| r.memory_limit.as_deref());
 
-    for role in &config.review.reviewers {
+    for role in roles {
         let description = format!("edict:{name}:reviewer-{role}");
 
         // Check if hook already exists
@@ -1777,6 +1794,56 @@ mod tests {
             compute_docs_version(Layout::Bare),
             compute_docs_version(Layout::Root),
         );
+    }
+
+    fn config_with(seal: bool, enabled: bool, reviewers: &[&str]) -> Config {
+        let reviewer_lines = reviewers
+            .iter()
+            .map(|r| format!("\"{r}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let toml_str = format!(
+            r#"
+version = "1.0.0"
+
+[project]
+name = "test"
+
+[tools]
+seal = {seal}
+
+[review]
+enabled = {enabled}
+reviewers = [{reviewer_lines}]
+"#
+        );
+        Config::parse_toml(&toml_str).unwrap()
+    }
+
+    #[test]
+    fn reviewer_hook_roles_ignore_review_enabled() {
+        // A declared reviewer role gets a mention hook regardless of whether
+        // auto-review (review.enabled) is on, so `@<project>-<role>` one-off
+        // tags work even when the dev/worker loops never auto-request review.
+        let off = config_with(true, false, &["security"]);
+        let on = config_with(true, true, &["security"]);
+        assert_eq!(reviewer_hook_roles(&off), &["security".to_string()]);
+        assert_eq!(reviewer_hook_roles(&on), &["security".to_string()]);
+    }
+
+    #[test]
+    fn reviewer_hook_roles_require_seal() {
+        // reviewer-loop needs seal; without it, registering a mention hook would
+        // spawn an agent that can't do anything.
+        let no_seal = config_with(false, true, &["security"]);
+        assert!(reviewer_hook_roles(&no_seal).is_empty());
+    }
+
+    #[test]
+    fn reviewer_hook_roles_empty_without_declared_reviewers() {
+        // No declared roles -> no hooks, even with seal + auto-review on.
+        let none = config_with(true, true, &[]);
+        assert!(reviewer_hook_roles(&none).is_empty());
     }
 
     #[test]
