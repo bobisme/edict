@@ -83,10 +83,15 @@ pub fn run(
     let spawn_env = config.resolved_env();
     let worker_memory_limit = resolve_worker_memory_limit(&config);
 
-    // Focus mode: when spawned to resolve one specific bone (EDICT_FOCUS), scope
-    // the loop to that bone instead of draining the backlog, and exit as soon as
-    // it is done. No EDICT_FOCUS → drain the backlog (the original behavior).
-    let focus_bone = std::env::var("EDICT_FOCUS").ok().filter(|s| !s.is_empty());
+    // Scoped mode: when spawned to resolve one specific bone — a single
+    // reported/triaged issue (EDICT_FOCUS) or a mission (EDICT_MISSION) — scope
+    // the loop to that bone + its subtree instead of draining the backlog, and
+    // exit as soon as it reaches a terminal state. Neither env set → drain the
+    // backlog (the original behavior).
+    let scope_bone = std::env::var("EDICT_FOCUS")
+        .ok()
+        .or_else(|| std::env::var("EDICT_MISSION").ok())
+        .filter(|s| !s.is_empty());
 
     let ctx = LoopContext {
         agent: agent.clone(),
@@ -136,6 +141,13 @@ pub fn run(
     let idle_delays = [10u64, 20, 40, 60, 60];
     let max_idle: u32 = 5;
 
+    // Scoped-mode no-progress guard: if the scope bone's state is unchanged with
+    // no active workers for `max_idle` consecutive iterations, the bone is stuck
+    // (e.g. blocked by work this loop can't do) — stop instead of spinning to
+    // `max_loops`. Active workers or a state change reset the counter.
+    let mut stall_count: u32 = 0;
+    let mut prev_scope_state: Option<String> = None;
+
     // Main loop
     for i in 1..=max_loops {
         eprintln!("\n--- Dev loop {i}/{max_loops} ---");
@@ -156,17 +168,50 @@ pub fn run(
             ])
             .run();
 
-        // Focus mode: exit the moment the target bone is resolved, rather than
+        // Scoped mode: exit the moment the target bone is resolved, rather than
         // rolling on to unrelated backlog work.
-        if let Some(focus) = &focus_bone
-            && focus_bone_done(focus)
+        if let Some(scope) = &scope_bone
+            && scope_bone_done(scope)
         {
-            eprintln!("Focus bone {focus} is done — dev loop complete.");
+            eprintln!("Scope bone {scope} is done — dev loop complete.");
             break;
         }
 
-        let work = match &focus_bone {
-            Some(focus) => focus_has_work(focus),
+        // Scoped mode: detect a stuck bone (no state change, no active workers)
+        // and bail before exhausting max_loops.
+        if let Some(scope) = &scope_bone {
+            let state = bone_state(scope);
+            let active_workers = has_active_worker_claims(&agent);
+            if active_workers || state != prev_scope_state {
+                stall_count = 0;
+            } else {
+                stall_count += 1;
+            }
+            prev_scope_state = state;
+            if stall_count >= max_idle {
+                let state_str = prev_scope_state.as_deref().unwrap_or("unknown");
+                eprintln!(
+                    "Scope bone {scope} stalled ({state_str}, no progress for {max_idle} iterations) — stopping."
+                );
+                let _ = Tool::new("rite")
+                    .args(&[
+                        "send",
+                        "--agent",
+                        &agent,
+                        &project,
+                        &format!(
+                            "Dev loop stopping: {scope} stuck in '{state_str}' with no progress. Needs attention."
+                        ),
+                        "-L",
+                        "task-blocked",
+                    ])
+                    .run();
+                break;
+            }
+        }
+
+        let work = match &scope_bone {
+            Some(scope) => scope_has_work(scope),
             None => has_work(&agent, &project)?,
         };
         if !work {
@@ -202,7 +247,13 @@ pub fn run(
 
         let agent_start = crate::telemetry::metrics::time_start();
         let agent_result = run_agent_subprocess(&prompt_text, &ctx.model, timeout_secs);
-        if handle_agent_result(agent_result, &agent, &project, &journal)? {
+        if handle_agent_result(
+            agent_result,
+            &agent,
+            &project,
+            &journal,
+            scope_bone.as_deref(),
+        )? {
             break;
         }
         crate::telemetry::metrics::time_record(
@@ -331,6 +382,7 @@ fn handle_agent_result(
     agent: &str,
     project: &str,
     journal: &Journal,
+    scope: Option<&str>,
 ) -> anyhow::Result<bool> {
     match result {
         Ok(output) => {
@@ -343,9 +395,28 @@ fn handle_agent_result(
             };
 
             if signal_region.contains("<promise>COMPLETE</promise>") {
-                // Re-verify: agent's view of "no work" can be narrower than bn triage
-                // (e.g., framed around a phase/mission). Trust the queue, not the claim.
-                if has_work(agent, project)? {
+                if let Some(scope) = scope {
+                    // Scoped mode: the agent is finished with this bone — either it's
+                    // resolved or it's blocked/stuck. Honor COMPLETE and stop rather
+                    // than rolling into the backlog. Exception: if a dispatched worker
+                    // is still active, keep monitoring it.
+                    if scope_bone_done(scope) {
+                        eprintln!("\u{2713} Scope bone {scope} complete — dev cycle done");
+                        return Ok(true);
+                    }
+                    if has_active_worker_claims(agent) {
+                        eprintln!(
+                            "Agent signaled COMPLETE but a worker is still active on {scope} — continuing to monitor"
+                        );
+                    } else {
+                        eprintln!(
+                            "Agent signaled COMPLETE; {scope} not resolved (likely blocked) — stopping scoped run"
+                        );
+                        return Ok(true);
+                    }
+                } else if has_work(agent, project)? {
+                    // Backlog mode — agent's view of "no work" can be narrower than bn
+                    // triage. Trust the queue, not the claim.
                     eprintln!("Agent signaled COMPLETE but bones remain — continuing loop");
                 } else {
                     eprintln!("\u{2713} Dev cycle complete - no more work");
@@ -353,8 +424,13 @@ fn handle_agent_result(
                 }
             } else if signal_region.contains("<promise>END_OF_STORY</promise>") {
                 eprintln!("\u{2713} Iteration complete - more work remains");
-                // Verify work actually remains
-                if !has_work(agent, project)? {
+                // Verify work actually remains. In scoped mode this is the scope
+                // bone's state; otherwise the global backlog.
+                let remaining = match scope {
+                    Some(scope) => scope_has_work(scope),
+                    None => has_work(agent, project)?,
+                };
+                if !remaining {
                     eprintln!("No remaining work found despite END_OF_STORY — exiting cleanly");
                     return Ok(true);
                 }
@@ -586,20 +662,54 @@ fn bone_state(bone: &str) -> Option<String> {
     Some(info.state.to_lowercase())
 }
 
-/// A focus bone is "done" once it reaches a terminal state. Unreadable state is
-/// treated as not-done so we never exit early on a transient `bn` hiccup.
-fn focus_bone_done(bone: &str) -> bool {
-    matches!(
-        bone_state(bone).as_deref(),
-        Some("done" | "closed" | "cancelled")
-    )
+/// True if a bones state string is terminal (no further work possible).
+fn is_terminal_state(state: &str) -> bool {
+    matches!(state, "done" | "closed" | "cancelled")
 }
 
-/// In focus mode, there is work as long as the target bone is not yet done.
+/// A scope bone is "done" once it reaches a terminal state. Unreadable state is
+/// treated as not-done so we never exit early on a transient `bn` hiccup.
+fn scope_bone_done(bone: &str) -> bool {
+    bone_state(bone).as_deref().is_some_and(is_terminal_state)
+}
+
+/// In scoped mode, there is work as long as the target bone is not yet done.
 /// (Its blockers/children are part of resolving it; the agent handles those.)
 /// Unreadable state errs toward "has work" so we don't stall on a transient miss.
-fn focus_has_work(bone: &str) -> bool {
-    !focus_bone_done(bone)
+fn scope_has_work(bone: &str) -> bool {
+    !scope_bone_done(bone)
+}
+
+/// True if this agent holds any `workspace://` claim — i.e. a worker it
+/// dispatched is still active. Used to distinguish "stuck" from "in progress"
+/// in scoped mode. Errs toward `false` (no workers) if claims can't be read.
+fn has_active_worker_claims(agent: &str) -> bool {
+    let Ok(output) = Tool::new("rite")
+        .args(&[
+            "claims", "list", "--agent", agent, "--mine", "--format", "json",
+        ])
+        .run()
+    else {
+        return false;
+    };
+    if !output.success() {
+        return false;
+    }
+    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&output.stdout) else {
+        return false;
+    };
+    parsed["claims"]
+        .as_array()
+        .is_some_and(|claims| claims.iter().any(claim_has_workspace_pattern))
+}
+
+/// True if a claim record carries any `workspace://` pattern.
+fn claim_has_workspace_pattern(claim: &serde_json::Value) -> bool {
+    claim["patterns"].as_array().is_some_and(|patterns| {
+        patterns
+            .iter()
+            .any(|p| p.as_str().unwrap_or("").starts_with("workspace://"))
+    })
 }
 
 /// Check if there is any work to do (inbox, claims, ready bones).
@@ -1033,6 +1143,28 @@ fn kill_child_workers(agent: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn terminal_states_end_scoped_runs() {
+        for s in ["done", "closed", "cancelled"] {
+            assert!(is_terminal_state(s), "{s} should be terminal");
+        }
+        for s in ["open", "doing", "blocked", ""] {
+            assert!(!is_terminal_state(s), "{s} should not be terminal");
+        }
+    }
+
+    #[test]
+    fn workspace_claim_signals_active_worker() {
+        let with_ws = serde_json::json!({
+            "patterns": ["workspace://proj/bn-x", "bone://proj/bn-x"]
+        });
+        let without_ws = serde_json::json!({ "patterns": ["bone://proj/bn-x"] });
+        let empty = serde_json::json!({ "patterns": [] });
+        assert!(claim_has_workspace_pattern(&with_ws));
+        assert!(!claim_has_workspace_pattern(&without_ws));
+        assert!(!claim_has_workspace_pattern(&empty));
+    }
 
     #[test]
     fn parse_next_status_assignments_envelope() {

@@ -663,7 +663,6 @@ fn build_sibling_section(sibling_leads: &[SiblingLead], project: &str) -> String
     )
 }
 
-/// Build the Mission-Aware Triage section (empty when missions are disabled).
 /// Build the focus-mode directive: scope the whole cycle to one bone and its
 /// dependency subtree, never pulling unrelated backlog work. Authored in bare
 /// form; `rewrite_prompt()` adapts command prefixes for the layout.
@@ -682,16 +681,22 @@ You were spawned to resolve bone {focus} and nothing else this session. Rules:
 - When {focus} (and any bones blocking it) are done, you are finished: output
   <promise>COMPLETE</promise> and stop. The loop exits automatically once {focus}
   is done.
+- If you CANNOT make progress on {focus} — it is blocked by work you can't do
+  (external dependency, needs a human, a blocker you can't unblock) — do NOT spin:
+  post a brief status to the project channel and output <promise>COMPLETE</promise> to stop.
 "
     )
 }
 
+/// Build the Mission-Aware Triage section (empty when missions are disabled).
 fn build_mission_triage(missions_enabled: bool, edict_mission_env: Option<&str>) -> String {
     if !missions_enabled {
         return String::new();
     }
     let mission_focus = edict_mission_env
-        .map(|m| format!("EDICT_MISSION=\"{m}\" — prioritize this mission's children."))
+        .map(|m| format!(
+            "EDICT_MISSION=\"{m}\" — you were spawned for THIS mission. Work ONLY its children and do NOT pick up unrelated ready bones from the backlog. The loop exits when {m} is done."
+        ))
         .unwrap_or_default();
     format!(
         r#"
@@ -889,6 +894,19 @@ mod tests {
         assert!(d.contains("bn-2lxr"));
         // Must tell the agent not to drain the backlog.
         assert!(d.to_lowercase().contains("do not pick up unrelated"));
+        // Must give the agent a graceful exit when the bone is blocked.
+        assert!(d.to_lowercase().contains("cannot make progress"));
+        assert!(d.contains("<promise>COMPLETE</promise>"));
+    }
+
+    #[test]
+    fn mission_triage_scopes_to_mission() {
+        let t = build_mission_triage(true, Some("bn-mission"));
+        assert!(t.contains("bn-mission"));
+        // Missions must also avoid draining the unrelated backlog.
+        assert!(t.contains("do NOT pick up unrelated"));
+        // Disabled missions render nothing.
+        assert!(build_mission_triage(false, Some("bn-mission")).is_empty());
     }
 
     #[test]

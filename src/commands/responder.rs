@@ -2095,7 +2095,10 @@ mod tests {
         // `!dev bn-x` → scope to bn-x; the body passed here is the post-prefix arg.
         assert_eq!(dev_focus_bone("bn-2lxr"), Some("bn-2lxr".to_string()));
         assert_eq!(dev_focus_bone("3 bn-2lxr"), Some("bn-2lxr".to_string()));
-        assert_eq!(dev_focus_bone("fix the bn-659e crash"), Some("bn-659e".to_string()));
+        assert_eq!(
+            dev_focus_bone("fix the bn-659e crash"),
+            Some("bn-659e".to_string())
+        );
         // Plain `!dev` / `!dev 3` → no focus bone (drain backlog).
         assert_eq!(dev_focus_bone(""), None);
         assert_eq!(dev_focus_bone("3"), None);
