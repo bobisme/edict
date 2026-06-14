@@ -83,6 +83,11 @@ pub fn run(
     let spawn_env = config.resolved_env();
     let worker_memory_limit = resolve_worker_memory_limit(&config);
 
+    // Focus mode: when spawned to resolve one specific bone (EDICT_FOCUS), scope
+    // the loop to that bone instead of draining the backlog, and exit as soon as
+    // it is done. No EDICT_FOCUS → drain the backlog (the original behavior).
+    let focus_bone = std::env::var("EDICT_FOCUS").ok().filter(|s| !s.is_empty());
+
     let ctx = LoopContext {
         agent: agent.clone(),
         project: project.clone(),
@@ -151,7 +156,20 @@ pub fn run(
             ])
             .run();
 
-        if !has_work(&agent, &project)? {
+        // Focus mode: exit the moment the target bone is resolved, rather than
+        // rolling on to unrelated backlog work.
+        if let Some(focus) = &focus_bone
+            && focus_bone_done(focus)
+        {
+            eprintln!("Focus bone {focus} is done — dev loop complete.");
+            break;
+        }
+
+        let work = match &focus_bone {
+            Some(focus) => focus_has_work(focus),
+            None => has_work(&agent, &project)?,
+        };
+        if !work {
             idle_count += 1;
             if handle_idle(&agent, &project, idle_count, max_idle, &idle_delays) {
                 break;
@@ -550,6 +568,38 @@ fn resolve_worker_model(config: &Config) -> String {
         .worker
         .as_ref()
         .map_or_else(String::new, |w| w.model.clone())
+}
+
+/// Read a bone's state via `bn show <id> --json`, lowercased. `None` if it
+/// can't be fetched/parsed (caller decides how to treat the ambiguity).
+fn bone_state(bone: &str) -> Option<String> {
+    let output = Tool::new("bn")
+        .args(&["show", bone, "--json"])
+        .in_workspace("default")
+        .ok()?
+        .run()
+        .ok()?;
+    if !output.success() {
+        return None;
+    }
+    let info = crate::commands::protocol::adapters::parse_bone_show(&output.stdout).ok()?;
+    Some(info.state.to_lowercase())
+}
+
+/// A focus bone is "done" once it reaches a terminal state. Unreadable state is
+/// treated as not-done so we never exit early on a transient `bn` hiccup.
+fn focus_bone_done(bone: &str) -> bool {
+    matches!(
+        bone_state(bone).as_deref(),
+        Some("done" | "closed" | "cancelled")
+    )
+}
+
+/// In focus mode, there is work as long as the target bone is not yet done.
+/// (Its blockers/children are part of resolving it; the agent handles those.)
+/// Unreadable state errs toward "has work" so we don't stall on a transient miss.
+fn focus_has_work(bone: &str) -> bool {
+    !focus_bone_done(bone)
 }
 
 /// Check if there is any work to do (inbox, claims, ready bones).

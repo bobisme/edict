@@ -61,6 +61,14 @@ pub fn build(
 
     let edict_mission_env = std::env::var("EDICT_MISSION").ok();
 
+    // Focus mode: spawned to resolve one specific bone. Scope the whole cycle to
+    // that bone and its dependency subtree instead of draining the backlog.
+    let focus_directive = std::env::var("EDICT_FOCUS")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .map(|f| build_focus_directive(&f))
+        .unwrap_or_default();
+
     let mission_triage = build_mission_triage(missions_enabled, edict_mission_env.as_deref());
 
     let mission_level4_disabled = if missions_enabled {
@@ -144,6 +152,7 @@ CRITICAL - HUMAN MESSAGE PRIORITY: If you see a system reminder with "STOP:" sho
 VERSION CONTROL: This project uses Git + maw. Do NOT run jj commands.
 {previous_context}{status_section}{sibling_section}Execute exactly ONE dev cycle. Triage inbox, assess ready bones, either work on one yourself
 or dispatch multiple workers in parallel, monitor progress, merge results. Then STOP.
+{focus_directive}
 
 At the end of your work, output:
 1. A summary for the next iteration: <iteration-summary>Brief summary of what you did: bones worked on, workers dispatched, reviews processed, etc.</iteration-summary>
@@ -655,6 +664,28 @@ fn build_sibling_section(sibling_leads: &[SiblingLead], project: &str) -> String
 }
 
 /// Build the Mission-Aware Triage section (empty when missions are disabled).
+/// Build the focus-mode directive: scope the whole cycle to one bone and its
+/// dependency subtree, never pulling unrelated backlog work. Authored in bare
+/// form; `rewrite_prompt()` adapts command prefixes for the layout.
+fn build_focus_directive(focus: &str) -> String {
+    format!(
+        r"
+## FOCUS MODE — work ONLY {focus}
+
+You were spawned to resolve bone {focus} and nothing else this session. Rules:
+- Work {focus} and ONLY the bones that block it (its dependency subtree). Inspect
+  with `maw exec default -- bn show {focus}` and `maw exec default -- bn triage graph`.
+- Do NOT pick up unrelated ready bones from the backlog, even if `bn triage` or
+  `bn next` lists them. Ignore them — another run will handle the backlog.
+- You MAY create sub-bones/workers for {focus} if it needs decomposition, but they
+  must all serve {focus}.
+- When {focus} (and any bones blocking it) are done, you are finished: output
+  <promise>COMPLETE</promise> and stop. The loop exits automatically once {focus}
+  is done.
+"
+    )
+}
+
 fn build_mission_triage(missions_enabled: bool, edict_mission_env: Option<&str>) -> String {
     if !missions_enabled {
         return String::new();
@@ -849,6 +880,15 @@ mod tests {
             spawn_env: Default::default(),
             worker_memory_limit: None,
         }
+    }
+
+    #[test]
+    fn focus_directive_scopes_to_bone() {
+        let d = build_focus_directive("bn-2lxr");
+        assert!(d.contains("FOCUS MODE"));
+        assert!(d.contains("bn-2lxr"));
+        // Must tell the agent not to drain the backlog.
+        assert!(d.to_lowercase().contains("do not pick up unrelated"));
     }
 
     #[test]

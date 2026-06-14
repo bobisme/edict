@@ -34,6 +34,33 @@ pub struct Route {
     pub model: Option<String>,
 }
 
+/// What a spawned lead (dev-loop) should work on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DevScope<'a> {
+    /// Drain the ready backlog — explicit `!dev` with no bone (original behavior).
+    Backlog,
+    /// Work only this bone and its dependency subtree, then exit. Used for
+    /// reported/triaged issues, escalations, and `!dev <bone-id>`.
+    Focus(&'a str),
+    /// Run mission decomposition for this mission bone (`!mission`).
+    Mission(&'a str),
+}
+
+/// Extract a `bn-…` bone id from a `!dev` argument body, if present
+/// (e.g. `!dev bn-2lxr` or `!dev 3 bn-2lxr`). Used to scope an explicit `!dev`
+/// to a single bone.
+fn dev_focus_bone(body: &str) -> Option<String> {
+    body.split_whitespace()
+        .find(|tok| is_bone_id(tok))
+        .map(std::string::ToString::to_string)
+}
+
+/// True if `tok` looks like a bones id: `bn-` followed by alphanumerics.
+fn is_bone_id(tok: &str) -> bool {
+    tok.strip_prefix("bn-")
+        .is_some_and(|rest| !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_alphanumeric()))
+}
+
 // ---------------------------------------------------------------------------
 // Message routing
 // ---------------------------------------------------------------------------
@@ -907,7 +934,7 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
                                     &format!("Filed {bone_id}: {reason}"),
                                     Some("feedback"),
                                 );
-                                self.handle_dev("", Some(&bone_id))?;
+                                self.handle_dev("", DevScope::Focus(&bone_id))?;
                             }
                             Err(e) => {
                                 eprintln!("Error creating bone from escalation: {e}");
@@ -951,7 +978,7 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
                 RouteType::Dev => {
                     self.transcript
                         .add("user", &follow_up.agent, &follow_up.body);
-                    self.handle_dev(&re_parsed.body, None)?;
+                    self.handle_dev_command(&re_parsed.body)?;
                     return Ok(());
                 }
                 RouteType::Mission => {
@@ -1044,12 +1071,21 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
         Ok(())
     }
 
-    fn handle_dev(&self, body: &str, mission_bone: Option<&str>) -> anyhow::Result<()> {
-        // Parse optional count from body (e.g., "!dev 3" → 3, "!dev" → 1)
+    /// Dispatch an explicit `!dev`: scope to a named bone (`!dev bn-x`) if one is
+    /// present, otherwise drain the backlog (`!dev` / `!dev 3`).
+    fn handle_dev_command(&self, body: &str) -> anyhow::Result<()> {
+        dev_focus_bone(body).map_or_else(
+            || self.handle_dev(body, DevScope::Backlog),
+            |bone| self.handle_dev(body, DevScope::Focus(&bone)),
+        )
+    }
+
+    fn handle_dev(&self, body: &str, scope: DevScope) -> anyhow::Result<()> {
+        // Parse optional count from body (e.g., "!dev 3" → 3, "!dev" → 1). Scan
+        // all tokens so a bone id (e.g. "!dev bn-x 3") doesn't shadow the count.
         let requested: u32 = body
             .split_whitespace()
-            .next()
-            .and_then(|s| s.parse().ok())
+            .find_map(|s| s.parse().ok())
             .unwrap_or(1);
 
         // Cap at multi_lead_max_leads if enabled, otherwise cap at 1
@@ -1091,7 +1127,7 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
             match claim_result {
                 Ok(output) if output.success() => {
                     eprintln!("Acquired slot {slot}, spawning lead: {lead_name}");
-                    if self.try_spawn_lead(&lead_name, &claim_uri, &cwd, mission_bone) {
+                    if self.try_spawn_lead(&lead_name, &claim_uri, &cwd, scope) {
                         spawned += 1;
                         let _ = self.rite_send(
                             &format!("Lead {lead_name} spawned ({spawned}/{cap})."),
@@ -1113,12 +1149,7 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
     }
 
     /// Build the `vessel spawn` argument vector for a single lead slot.
-    fn build_spawn_args(
-        &self,
-        lead_name: &str,
-        cwd: &str,
-        mission_bone: Option<&str>,
-    ) -> Vec<String> {
+    fn build_spawn_args(&self, lead_name: &str, cwd: &str, scope: DevScope) -> Vec<String> {
         let mut spawn_args: Vec<String> = vec![
             "spawn".into(),
             "--env-inherit".into(),
@@ -1143,9 +1174,18 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
             spawn_args.push("--env".into());
             spawn_args.push(format!("TRACEPARENT={tp}"));
         }
-        if let Some(bone) = mission_bone {
-            spawn_args.push("--env".into());
-            spawn_args.push(format!("EDICT_MISSION={bone}"));
+        // Scope env: Focus → EDICT_FOCUS (work one bone, then exit),
+        // Mission → EDICT_MISSION (decomposition), Backlog → neither (drain).
+        match scope {
+            DevScope::Focus(bone) => {
+                spawn_args.push("--env".into());
+                spawn_args.push(format!("EDICT_FOCUS={bone}"));
+            }
+            DevScope::Mission(bone) => {
+                spawn_args.push("--env".into());
+                spawn_args.push(format!("EDICT_MISSION={bone}"));
+            }
+            DevScope::Backlog => {}
         }
         for (k, v) in &self.spawn_env {
             spawn_args.push("--env".into());
@@ -1168,14 +1208,8 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
 
     /// Spawn a single lead into a claimed slot. Returns `true` if the spawn
     /// succeeded; on failure the slot claim is released.
-    fn try_spawn_lead(
-        &self,
-        lead_name: &str,
-        claim_uri: &str,
-        cwd: &str,
-        mission_bone: Option<&str>,
-    ) -> bool {
-        let spawn_args = self.build_spawn_args(lead_name, cwd, mission_bone);
+    fn try_spawn_lead(&self, lead_name: &str, claim_uri: &str, cwd: &str, scope: DevScope) -> bool {
+        let spawn_args = self.build_spawn_args(lead_name, cwd, scope);
         let spawn_arg_refs: Vec<&str> =
             spawn_args.iter().map(std::string::String::as_str).collect();
         let spawn_result = Tool::new("vessel").args(&spawn_arg_refs).run();
@@ -1241,7 +1275,7 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
             Some("feedback"),
         );
 
-        self.handle_dev("", Some(&bone_id))
+        self.handle_dev("", DevScope::Mission(&bone_id))
     }
 
     fn handle_triage(&mut self, message: &BusMessage) -> anyhow::Result<()> {
@@ -1261,7 +1295,7 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
                         Ok(bone_id) => {
                             let _ = self
                                 .rite_send(&format!("Filed {bone_id}: {reason}"), Some("feedback"));
-                            self.handle_dev("", Some(&bone_id))?;
+                            self.handle_dev("", DevScope::Focus(&bone_id))?;
                         }
                         Err(e) => {
                             eprintln!("Error creating bone from triage: {e}");
@@ -1323,7 +1357,7 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
                 RouteType::Dev => {
                     self.transcript
                         .add("user", &follow_up.agent, &follow_up.body);
-                    self.handle_dev(&re_parsed.body, None)?;
+                    self.handle_dev_command(&re_parsed.body)?;
                     return Ok(());
                 }
                 RouteType::Mission => {
@@ -1372,7 +1406,7 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
                                     &format!("Filed {bone_id}: {reason}"),
                                     Some("feedback"),
                                 );
-                                self.handle_dev("", Some(&bone_id))?;
+                                self.handle_dev("", DevScope::Focus(&bone_id))?;
                             }
                             Err(e) => {
                                 eprintln!("Error creating bone from escalation: {e}");
@@ -1478,7 +1512,7 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
                             eprintln!("Drain: message {id} already claimed, skipping");
                             continue;
                         }
-                        self.handle_dev(&route.body, None)?;
+                        self.handle_dev_command(&route.body)?;
                     }
                     RouteType::Mission => {
                         eprintln!("Drain: processing !mission from {}", msg.agent);
@@ -1685,7 +1719,7 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
 
         // Dispatch to handler
         match route.kind {
-            RouteType::Dev => self.handle_dev(&route.body, None)?,
+            RouteType::Dev => self.handle_dev_command(&route.body)?,
             RouteType::Mission => self.handle_mission(&route.body)?,
             RouteType::Bone => self.handle_bone(&route.body)?,
             RouteType::Question => self.handle_question(&route, &trigger_message)?,
@@ -2044,6 +2078,27 @@ mod tests {
         assert!(!"alice".to_string().starts_with(&project_prefix));
         assert!(!"alice-dev".to_string().starts_with(&project_prefix));
         assert!(!"myproject-dev".to_string().starts_with(&project_prefix));
+    }
+
+    #[test]
+    fn is_bone_id_recognizes_bone_tokens() {
+        assert!(is_bone_id("bn-2lxr"));
+        assert!(is_bone_id("bn-659e"));
+        assert!(!is_bone_id("bn-")); // empty suffix
+        assert!(!is_bone_id("dev")); // no prefix
+        assert!(!is_bone_id("3")); // a count, not a bone
+        assert!(!is_bone_id("bn-2lxr!")); // trailing punctuation
+    }
+
+    #[test]
+    fn dev_focus_bone_extracts_bone_from_dev_body() {
+        // `!dev bn-x` → scope to bn-x; the body passed here is the post-prefix arg.
+        assert_eq!(dev_focus_bone("bn-2lxr"), Some("bn-2lxr".to_string()));
+        assert_eq!(dev_focus_bone("3 bn-2lxr"), Some("bn-2lxr".to_string()));
+        assert_eq!(dev_focus_bone("fix the bn-659e crash"), Some("bn-659e".to_string()));
+        // Plain `!dev` / `!dev 3` → no focus bone (drain backlog).
+        assert_eq!(dev_focus_bone(""), None);
+        assert_eq!(dev_focus_bone("3"), None);
     }
 
     #[test]
