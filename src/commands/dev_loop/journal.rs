@@ -43,11 +43,11 @@ impl Journal {
         }
 
         let timestamp = chrono_timestamp();
-        let change_id = get_jj_change_id();
+        let short_hash = get_git_short_hash();
 
         let mut header = format!("\n--- {timestamp}");
-        if let Some(cid) = change_id {
-            write!(header, " | git:{cid}").expect("writing to a String is infallible");
+        if let Some(hash) = short_hash {
+            write!(header, " | git:{hash}").expect("writing to a String is infallible");
         }
         header.push_str(" ---\n");
 
@@ -120,7 +120,7 @@ fn dirs_home() -> PathBuf {
 }
 
 /// Get the current git HEAD short hash from the default workspace.
-fn get_jj_change_id() -> Option<String> {
+fn get_git_short_hash() -> Option<String> {
     let output = Tool::new("git")
         .args(&["rev-parse", "--short", "HEAD"])
         .in_workspace("default")

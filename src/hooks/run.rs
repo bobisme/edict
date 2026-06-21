@@ -58,13 +58,13 @@ pub fn run_session_start() {
                 .maw/workspaces/<workspace>. Run bn, seal, cargo, etc. directly at the \
                 root — no prefix needed. Use `maw exec <workspace> -- <command>` only to \
                 run commands inside another workspace. \
-                Run `maw --help` for more info. Do NOT run jj commands."
+                Run `maw --help` for more info."
             ),
             crate::layout::Layout::Bare => println!(
                 "This project uses Git + maw for version control. \
                 Source files live in workspaces under ws/, not at the project root. \
                 Use `maw exec <workspace> -- <command>` to run commands. \
-                Run `maw --help` for more info. Do NOT run jj commands."
+                Run `maw --help` for more info."
             ),
         }
     }

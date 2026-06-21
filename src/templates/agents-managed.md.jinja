@@ -34,7 +34,6 @@ project-root/              ← trunk working copy (AGENTS.md, .bones/, src/, etc
 - Use `maw exec <ws> -- <command>` to run commands in a non-default workspace context
 - Run `bn ...` directly at the repo root for bones commands (no `maw exec` prefix needed — they always target the trunk)
 - Use `maw exec <ws> -- seal ...` for review commands (always in the review's workspace)
-- Do not run `jj`; this workflow is Git + maw.
 {%- else %}
 This project uses a **bare repo** layout. Source files live in workspaces under `ws/`, not at the project root.
 
@@ -57,7 +56,6 @@ project-root/          ← bare repo (no source files here)
 - Use `maw exec default -- bn ...` for bones commands (always in default workspace)
 - Use `maw exec <ws> -- seal ...` for review commands (always in the review's workspace)
 - Never run `bn` or `seal` directly — always go through `maw exec`
-- Do not run `jj`; this workflow is Git + maw.
 {%- endif %}
 
 ### Bones Quick Reference

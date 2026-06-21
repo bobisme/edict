@@ -149,7 +149,7 @@ IMPORTANT: Use --agent {agent} on ALL rite and seal commands. bn resolves agent 
 CRITICAL - HUMAN MESSAGE PRIORITY: If you see a system reminder with "STOP:" showing unread rite messages, these are from humans or other agents trying to reach you. IMMEDIATELY check inbox and respond before continuing your current task. Human questions, clarifications, and redirects take priority over heads-down work.
 
 {command_pattern}
-VERSION CONTROL: This project uses Git + maw. Do NOT run jj commands.
+VERSION CONTROL: This project uses Git + maw.
 {previous_context}{status_section}{sibling_section}Execute exactly ONE dev cycle. Triage inbox, assess ready bones, either work on one yourself
 or dispatch multiple workers in parallel, monitor progress, merge results. Then STOP.
 {focus_directive}

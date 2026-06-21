@@ -661,7 +661,6 @@ impl SyncArgs {
     }
 
     fn auto_commit(project_root: &Path, changed_files: &[&str]) -> Result<()> {
-        // Detect VCS: prefer jj if available, fall back to git
         let vcs = detect_vcs(project_root);
         if vcs == Vcs::None {
             return Ok(()); // No VCS found, skip commit
@@ -686,16 +685,6 @@ impl SyncArgs {
         let message = format!("chore: edict sync (updated {files_str})");
 
         match vcs {
-            Vcs::Jj => {
-                run_command("jj", &["describe", "-m", &message], Some(project_root))?;
-                // Finalize: create new empty commit and advance main bookmark
-                run_command("jj", &["new", "-m", ""], Some(project_root))?;
-                run_command(
-                    "jj",
-                    &["bookmark", "set", "main", "-r", "@-"],
-                    Some(project_root),
-                )?;
-            }
             Vcs::Git => {
                 // Stage managed paths that exist — git add errors on missing pathspecs
                 let existing: Vec<&str> = managed_paths
@@ -1676,31 +1665,18 @@ fn migrate_beads_to_bones(project_root: &Path, config_path: &Path) -> Result<()>
 /// Version control system detected in a project.
 #[derive(Debug, PartialEq, Eq)]
 enum Vcs {
-    Jj,
     Git,
     None,
 }
 
 /// Detect which VCS manages this project root.
-/// Prefers jj if found (searches ancestors for `.jj/`), falls back to git
-/// (`.git` file or directory at `project_root` or ancestors).
+/// Looks for a `.git` file (worktree/maw) or directory at `project_root` or
+/// any ancestor.
 fn detect_vcs(project_root: &Path) -> Vcs {
-    if find_jj_root(project_root).is_some() {
-        return Vcs::Jj;
-    }
-    // Check for .git file (worktree/maw) or .git directory (regular repo)
     if project_root.ancestors().any(|p| p.join(".git").exists()) {
         return Vcs::Git;
     }
     Vcs::None
-}
-
-/// Search up the directory tree for a .jj directory (like jj itself does).
-/// Returns the repo root if found, or None if not a jj repo.
-fn find_jj_root(from: &Path) -> Option<PathBuf> {
-    from.ancestors()
-        .find(|p| p.join(".jj").is_dir())
-        .map(std::path::Path::to_path_buf)
 }
 
 /// Compute SHA-256 hash of all workflow docs for the given layout.
@@ -1743,33 +1719,6 @@ fn compute_design_docs_version() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_find_jj_root_direct() {
-        let dir = tempfile::tempdir().unwrap();
-        let jj = dir.path().join(".jj");
-        fs::create_dir(&jj).unwrap();
-        // Should find .jj right at `from`
-        assert_eq!(find_jj_root(dir.path()), Some(dir.path().to_path_buf()));
-    }
-
-    #[test]
-    fn test_find_jj_root_ancestor() {
-        let dir = tempfile::tempdir().unwrap();
-        let jj = dir.path().join(".jj");
-        fs::create_dir(&jj).unwrap();
-        let ws = dir.path().join("ws/default");
-        fs::create_dir_all(&ws).unwrap();
-        // Should find .jj at the ancestor
-        assert_eq!(find_jj_root(&ws), Some(dir.path().to_path_buf()));
-    }
-
-    #[test]
-    fn test_find_jj_root_missing() {
-        let dir = tempfile::tempdir().unwrap();
-        // No .jj anywhere
-        assert_eq!(find_jj_root(dir.path()), None);
-    }
 
     #[test]
     fn test_version_hashes() {

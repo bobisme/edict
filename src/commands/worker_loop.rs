@@ -404,7 +404,7 @@ COMMAND PATTERN — maw exec: All bn commands run in the default workspace. All 
   seal: maw exec $WS -- seal <args>
   other: maw exec $WS -- <command>           (cargo test, etc.)
 
-VERSION CONTROL: This project uses Git + maw. Do NOT run jj commands.
+VERSION CONTROL: This project uses Git + maw.
   Workers commit with: maw exec $WS -- git add -A && maw exec $WS -- git commit -m "<message>"
   The lead handles merging workspaces into main.
 

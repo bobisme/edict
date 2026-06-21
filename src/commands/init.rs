@@ -1160,7 +1160,6 @@ fn fetch_gitignore(languages: &[String]) -> Result<String> {
 fn auto_commit(project_dir: &Path, config: &Config) {
     let message = format!("chore: initialize edict v{}", config.version);
 
-    // Try git first, fall back to jj for legacy projects
     if project_dir.join(".git").exists()
         || project_dir
             .ancestors()
@@ -1170,11 +1169,6 @@ fn auto_commit(project_dir: &Path, config: &Config) {
         match run_command("git", &["commit", "-m", &message], Some(project_dir)) {
             Ok(_) => println!("Committed: {message}"),
             Err(_) => eprintln!("Warning: Failed to auto-commit (git error)"),
-        }
-    } else if project_dir.join(".jj").exists() {
-        match run_command("jj", &["describe", "-m", &message], Some(project_dir)) {
-            Ok(_) => println!("Committed: {message}"),
-            Err(_) => eprintln!("Warning: Failed to auto-commit (jj error)"),
         }
     }
 }
