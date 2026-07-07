@@ -8,6 +8,7 @@ use std::{env, fs};
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
+use crate::commands::protocol::adapters::ReviewDetailResponse;
 use crate::config::{Config, ReviewerAgentConfig};
 use crate::subprocess::Tool;
 
@@ -161,6 +162,10 @@ struct ReviewInfo {
     review_id: String,
     #[serde(default)]
     title: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    requested_at: Option<String>,
 }
 
 /// Thread information from seal inbox.
@@ -226,6 +231,10 @@ fn find_work(agent: &str) -> Result<Vec<WorkItem>> {
         {
             // Deduplicate reviews
             for review in inbox.reviews_awaiting_vote {
+                if review_already_handled_by_agent(agent, &ws, &review) {
+                    continue;
+                }
+
                 if seen_reviews.insert(review.review_id.clone()) {
                     work_items.push(WorkItem {
                         workspace: ws.clone(),
@@ -254,6 +263,57 @@ fn find_work(agent: &str) -> Result<Vec<WorkItem>> {
     }
 
     Ok(work_items)
+}
+
+fn review_already_handled_by_agent(agent: &str, workspace: &str, review: &ReviewInfo) -> bool {
+    if review.status.as_deref() != Some("approved") {
+        return false;
+    }
+
+    let Ok(output) = Tool::new("seal").in_workspace(workspace).and_then(|tool| {
+        tool.args(&["review", &review.review_id, "--format", "json"])
+            .run()
+    }) else {
+        return false;
+    };
+
+    if !output.success() {
+        return false;
+    }
+
+    let Ok(detail) = output.parse_json::<ReviewDetailResponse>() else {
+        return false;
+    };
+
+    approved_by_agent_after_request(agent, review, &detail)
+}
+
+fn approved_by_agent_after_request(
+    agent: &str,
+    inbox_review: &ReviewInfo,
+    detail: &ReviewDetailResponse,
+) -> bool {
+    let review = &detail.review;
+    if review.status != "approved" || review.status_changed_by.as_deref() != Some(agent) {
+        return false;
+    }
+
+    match (
+        review.status_changed_at.as_deref(),
+        inbox_review.requested_at.as_deref(),
+    ) {
+        (Some(status_changed_at), Some(requested_at)) => {
+            timestamp_at_or_after(status_changed_at, requested_at).unwrap_or(false)
+        }
+        (Some(_), None) => true,
+        _ => false,
+    }
+}
+
+fn timestamp_at_or_after(left: &str, right: &str) -> Option<bool> {
+    let left = chrono::DateTime::parse_from_rfc3339(left).ok()?;
+    let right = chrono::DateTime::parse_from_rfc3339(right).ok()?;
+    Some(left >= right)
 }
 
 /// Build the reviewer prompt with workspace context and last iteration.
@@ -707,6 +767,7 @@ pub fn run_reviewer_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::protocol::adapters::ReviewDetail;
 
     #[test]
     fn test_derive_role_security() {
@@ -734,5 +795,72 @@ mod tests {
             "reviewer-security"
         );
         assert_eq!(get_reviewer_prompt_name(None), "reviewer");
+    }
+
+    fn make_inbox_review(requested_at: &str) -> ReviewInfo {
+        ReviewInfo {
+            review_id: "cr-test".into(),
+            title: None,
+            status: Some("approved".into()),
+            requested_at: Some(requested_at.into()),
+        }
+    }
+
+    fn make_review_detail(
+        status_changed_by: &str,
+        status_changed_at: &str,
+    ) -> ReviewDetailResponse {
+        ReviewDetailResponse {
+            review: ReviewDetail {
+                review_id: "cr-test".into(),
+                title: None,
+                status: "approved".into(),
+                status_changed_at: Some(status_changed_at.into()),
+                status_changed_by: Some(status_changed_by.into()),
+                change_id: None,
+                votes: vec![],
+                open_thread_count: 0,
+            },
+            threads: vec![],
+        }
+    }
+
+    #[test]
+    fn test_approved_by_agent_after_request_skips_stale_inbox_item() {
+        let inbox_review = make_inbox_review("2026-07-03T20:10:37.523794562+00:00");
+        let detail = make_review_detail(
+            "wraith-cloud-security",
+            "2026-07-04T02:17:16.226852048+00:00",
+        );
+
+        assert!(approved_by_agent_after_request(
+            "wraith-cloud-security",
+            &inbox_review,
+            &detail
+        ));
+    }
+
+    #[test]
+    fn test_approved_before_request_remains_actionable() {
+        let inbox_review = make_inbox_review("2026-07-04T02:20:00+00:00");
+        let detail = make_review_detail("wraith-cloud-security", "2026-07-04T02:17:16+00:00");
+
+        assert!(!approved_by_agent_after_request(
+            "wraith-cloud-security",
+            &inbox_review,
+            &detail
+        ));
+    }
+
+    #[test]
+    fn test_approval_by_other_agent_remains_actionable() {
+        let inbox_review = make_inbox_review("2026-07-03T20:10:37+00:00");
+        let detail = make_review_detail("other-security", "2026-07-04T02:17:16+00:00");
+
+        assert!(!approved_by_agent_after_request(
+            "wraith-cloud-security",
+            &inbox_review,
+            &detail
+        ));
     }
 }

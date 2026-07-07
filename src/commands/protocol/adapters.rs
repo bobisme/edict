@@ -170,6 +170,10 @@ pub struct ReviewDetail {
     #[serde(default)]
     pub status: String,
     #[serde(default)]
+    pub status_changed_at: Option<String>,
+    #[serde(default)]
+    pub status_changed_by: Option<String>,
+    #[serde(default)]
     pub change_id: Option<String>,
     #[serde(default)]
     pub votes: Vec<ReviewVote>,
@@ -470,9 +474,24 @@ mod tests {
 
     #[test]
     fn parse_review_detail_extra_fields() {
-        let json = r#"{"review": {"review_id": "cr-x", "status": "open", "new_field": "val"}, "threads": []}"#;
+        let json = r#"{"review": {
+            "review_id": "cr-x",
+            "status": "approved",
+            "status_changed_at": "2026-07-04T02:17:16.226852048+00:00",
+            "status_changed_by": "myapp-security",
+            "new_field": "val"
+        }, "threads": []}"#;
         let resp = parse_review_detail(json).unwrap();
         assert_eq!(resp.review.review_id, "cr-x");
+        assert_eq!(resp.review.status, "approved");
+        assert_eq!(
+            resp.review.status_changed_at.as_deref(),
+            Some("2026-07-04T02:17:16.226852048+00:00")
+        );
+        assert_eq!(
+            resp.review.status_changed_by.as_deref(),
+            Some("myapp-security")
+        );
     }
 
     // --- Claim helper tests ---

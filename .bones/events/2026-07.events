@@ -1,0 +1,6 @@
+# bones event log v1
+# fields: wall_ts_us	agent	itc	parents	type	item_id	data	event_hash
+1783385972149895	edict-dev	itc:v3:AWLkkmTOfzk5kQAAAAAAQeqtbv7rtAAAAAEvCQ		item.create	bn-lzt7	{"description":"Edict review gate currently relies on Seal vote records, but current Seal review JSON stores approval at the review status/status_changed_by level. This can leave approved security reviews looking like they still need review.","kind":"task","title":"Fix Seal status-based security review handling"}	blake3:DFPc0WvqsBU6NfLVIQaQ8btRF9XkFIJK7_500QBVgA0
+1783385981620239	edict-dev	itc:v3:AWLkkmTOfzk5kQAAAAAAQeqtbv7rtAAAAAEvCg		item.move	bn-lzt7	{"state":"doing"}	blake3:cBqUQvE-DjStgQ3WO05EtlnNOc-uCdbzGYFroargY7M
+1783385981833885	edict-dev	itc:v3:AWLkkmTOfzk5kQAAAAAAQeqtbv7rtAAAAAEvCw		item.assign	bn-lzt7	{"action":"assign","agent":"edict-dev"}	blake3:uIRu86XuhMWriM0sbhSk3loEaFvGNqbWgUK4FjxoGuQ
+1783386310690481	edict-dev	itc:v3:AWLkkmTOfzk5kQAAAAAAQeqtbv7rtAAAAAEvDA		item.move	bn-lzt7	{"reason":"Fixed Edict handling for current Seal review JSON: status-level approvals now satisfy review gates and stale approved inbox rows are skipped.","state":"done"}	blake3:fviE3jNhzu5_7rW0y_GYPqou8j6fqz9W5YpLjTWacu8

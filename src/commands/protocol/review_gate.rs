@@ -52,13 +52,16 @@ impl ReviewGateDecision {
 /// Returns the canonical gate decision and diagnostics.
 ///
 /// Logic:
-/// 1. If no votes and required reviewers not empty → `NeedsReview`
-/// 2. For each required reviewer:
+/// 1. Current Seal versions may store an approved review at the review status
+///    level instead of as a vote row. Treat `status=approved` with
+///    `status_changed_by=<required reviewer>` as that reviewer's latest LGTM.
+/// 2. If no votes and required reviewers not empty → `NeedsReview`
+/// 3. For each required reviewer:
 ///    - Track their latest vote (by `voted_at` timestamp)
 ///    - If no vote → add to `missing_approvals`
-/// 3. If any required reviewer's latest vote is "block" → Blocked, add to `newer_block_after_lgtm`
-/// 4. If all required reviewers have voted lgtm and no blocks → Approved
-/// 5. Otherwise → `NeedsReview`
+/// 4. If any required reviewer's latest vote is "block" → Blocked, add to `newer_block_after_lgtm`
+/// 5. If all required reviewers have voted lgtm and no blocks → Approved
+/// 6. Otherwise → `NeedsReview`
 #[must_use]
 pub fn evaluate_review_gate(
     review: &ReviewDetail,
@@ -99,9 +102,10 @@ pub fn evaluate_review_gate(
     let mut newer_block_after_lgtm = Vec::new();
 
     for required in required_reviewers {
+        let implicit_lgtm = implicit_status_lgtm(review, required);
         match latest_votes.get(required) {
             Some(vote) => {
-                if vote.is_lgtm() {
+                if implicit_lgtm_is_latest(review, vote, implicit_lgtm) || vote.is_lgtm() {
                     approved_by.push(required.clone());
                 } else if vote.is_block() {
                     blocked_by.push(required.clone());
@@ -112,7 +116,11 @@ pub fn evaluate_review_gate(
                 }
             }
             None => {
-                missing_approvals.push(required.clone());
+                if implicit_lgtm {
+                    approved_by.push(required.clone());
+                } else {
+                    missing_approvals.push(required.clone());
+                }
             }
         }
     }
@@ -139,6 +147,22 @@ pub fn evaluate_review_gate(
     }
 }
 
+fn implicit_status_lgtm(review: &ReviewDetail, reviewer: &str) -> bool {
+    review.status == "approved" && review.status_changed_by.as_deref() == Some(reviewer)
+}
+
+fn implicit_lgtm_is_latest(review: &ReviewDetail, vote: &ReviewVote, implicit_lgtm: bool) -> bool {
+    if !implicit_lgtm {
+        return false;
+    }
+
+    match (&review.status_changed_at, &vote.voted_at) {
+        (Some(status_changed_at), Some(voted_at)) => status_changed_at >= voted_at,
+        (Some(_), None) => true,
+        (None, _) => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -156,6 +180,8 @@ mod tests {
             review_id: "cr-test".into(),
             title: None,
             status: "open".into(),
+            status_changed_at: None,
+            status_changed_by: None,
             change_id: None,
             votes,
             open_thread_count: 0,
@@ -303,5 +329,72 @@ mod tests {
         assert_eq!(decision.status, ReviewGateStatus::Approved);
         assert_eq!(decision.approved_by, vec!["edict-security"]);
         assert_eq!(decision.blocked_by.len(), 0);
+    }
+
+    #[test]
+    fn test_status_approved_by_required_reviewer_counts_as_lgtm() {
+        let mut review = make_review(vec![]);
+        review.status = "approved".into();
+        review.status_changed_by = Some("edict-security".into());
+        review.status_changed_at = Some("2026-02-16T10:05:00Z".into());
+        let required = vec!["edict-security".to_string()];
+
+        let decision = evaluate_review_gate(&review, &required);
+
+        assert_eq!(decision.status, ReviewGateStatus::Approved);
+        assert_eq!(decision.approved_by, vec!["edict-security"]);
+        assert!(decision.missing_approvals.is_empty());
+    }
+
+    #[test]
+    fn test_status_approved_by_one_required_reviewer_does_not_cover_others() {
+        let mut review = make_review(vec![]);
+        review.status = "approved".into();
+        review.status_changed_by = Some("edict-security".into());
+        review.status_changed_at = Some("2026-02-16T10:05:00Z".into());
+        let required = vec!["edict-security".to_string(), "edict-perf".to_string()];
+
+        let decision = evaluate_review_gate(&review, &required);
+
+        assert_eq!(decision.status, ReviewGateStatus::NeedsReview);
+        assert_eq!(decision.approved_by, vec!["edict-security"]);
+        assert_eq!(decision.missing_approvals, vec!["edict-perf"]);
+    }
+
+    #[test]
+    fn test_status_approved_after_block_overrides_same_reviewer_block() {
+        let mut review = make_review(vec![make_vote(
+            "edict-security",
+            "block",
+            "2026-02-16T10:00:00Z",
+        )]);
+        review.status = "approved".into();
+        review.status_changed_by = Some("edict-security".into());
+        review.status_changed_at = Some("2026-02-16T10:05:00Z".into());
+        let required = vec!["edict-security".to_string()];
+
+        let decision = evaluate_review_gate(&review, &required);
+
+        assert_eq!(decision.status, ReviewGateStatus::Approved);
+        assert_eq!(decision.approved_by, vec!["edict-security"]);
+        assert!(decision.blocked_by.is_empty());
+    }
+
+    #[test]
+    fn test_status_approved_before_later_block_does_not_override_block() {
+        let mut review = make_review(vec![make_vote(
+            "edict-security",
+            "block",
+            "2026-02-16T10:10:00Z",
+        )]);
+        review.status = "approved".into();
+        review.status_changed_by = Some("edict-security".into());
+        review.status_changed_at = Some("2026-02-16T10:05:00Z".into());
+        let required = vec!["edict-security".to_string()];
+
+        let decision = evaluate_review_gate(&review, &required);
+
+        assert_eq!(decision.status, ReviewGateStatus::Blocked);
+        assert_eq!(decision.blocked_by, vec!["edict-security"]);
     }
 }
