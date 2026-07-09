@@ -240,7 +240,9 @@ fn default_tier_balanced() -> Vec<String> {
 fn default_tier_strong() -> Vec<String> {
     vec![
         "anthropic/claude-opus-4-6:high".into(),
-        "openai-codex/gpt-5.3-codex:high".into(),
+        // Pi may not know a just-released model's reasoning suffix yet. The
+        // bare slug lets the provider apply its supported default effort.
+        "openai-codex/gpt-5.6-sol".into(),
     ]
 }
 

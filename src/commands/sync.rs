@@ -211,6 +211,13 @@ impl SyncArgs {
         // Perform updates
         let mut changed_files = Vec::new();
 
+        let active_config_path =
+            crate::config::find_config(&project_root).unwrap_or_else(|| config_path.clone());
+        if migrate_retired_strong_model(&active_config_path)? {
+            changed_files.push(".edict.toml");
+            println!("Updated retired strong-tier model to GPT-5.6 Sol");
+        }
+
         if docs_stale {
             Self::sync_workflow_docs(&agents_dir, layout)?;
             changed_files.push(".agents/edict/*.md");
@@ -712,6 +719,43 @@ impl SyncArgs {
 
         Ok(())
     }
+}
+
+/// Replace the retired GPT-5.3 Codex entry only when it appears in the
+/// strong-tier pool. Custom model pools and other tiers are left untouched.
+fn migrate_retired_strong_model(config_path: &Path) -> Result<bool> {
+    let source = fs::read_to_string(config_path)
+        .with_context(|| format!("reading {}", config_path.display()))?;
+    let mut document = source
+        .parse::<toml_edit::DocumentMut>()
+        .with_context(|| format!("parsing {}", config_path.display()))?;
+
+    let Some(strong_models) = document
+        .get_mut("models")
+        .and_then(toml_edit::Item::as_table_mut)
+        .and_then(|models| models.get_mut("strong"))
+        .and_then(toml_edit::Item::as_array_mut)
+    else {
+        return Ok(false);
+    };
+
+    let mut changed = false;
+    for model in strong_models.iter_mut() {
+        let is_retired = model
+            .as_str()
+            .is_some_and(|value| value.split(':').next() == Some("openai-codex/gpt-5.3-codex"));
+        if is_retired {
+            *model = toml_edit::Value::from("openai-codex/gpt-5.6-sol");
+            changed = true;
+        }
+    }
+
+    if changed {
+        fs::write(config_path, document.to_string())
+            .with_context(|| format!("writing {}", config_path.display()))?;
+    }
+
+    Ok(changed)
 }
 
 /// Migrate rite hooks from `botbox:` descriptions to `edict:` descriptions.
@@ -1743,6 +1787,34 @@ mod tests {
             compute_docs_version(Layout::Bare),
             compute_docs_version(Layout::Root),
         );
+    }
+
+    #[test]
+    fn retired_strong_model_migration_is_scoped_and_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join(".edict.toml");
+        fs::write(
+            &config_path,
+            r#"version = "1.0.16"
+[project]
+name = "test"
+
+[models]
+fast = ["openai-codex/gpt-5.3-codex-spark:low"]
+balanced = ["custom/model"]
+strong = ["anthropic/claude-opus-4-6:high", "openai-codex/gpt-5.3-codex:xhigh"]
+"#,
+        )
+        .unwrap();
+
+        assert!(migrate_retired_strong_model(&config_path).unwrap());
+        assert!(!migrate_retired_strong_model(&config_path).unwrap());
+
+        let migrated = fs::read_to_string(config_path).unwrap();
+        assert!(migrated.contains("openai-codex/gpt-5.6-sol"));
+        assert!(migrated.contains("openai-codex/gpt-5.3-codex-spark:low"));
+        assert!(migrated.contains("custom/model"));
+        assert!(!migrated.contains("openai-codex/gpt-5.3-codex:xhigh"));
     }
 
     fn config_with(seal: bool, enabled: bool, reviewers: &[&str]) -> Config {

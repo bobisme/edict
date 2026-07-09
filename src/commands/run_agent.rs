@@ -335,6 +335,7 @@ fn process_output(
     let mut result_received = false;
     let mut result_time: Option<Instant> = None;
     let mut detected_error: Option<String> = None;
+    let mut terminal_event_error: Option<String> = None;
 
     loop {
         // Check timeout
@@ -351,6 +352,14 @@ fn process_output(
         if let Some(result_instant) = result_time
             && result_instant.elapsed() >= Duration::from_secs(2)
         {
+            if let Some(error) = terminal_event_error.take() {
+                return Err(ExitError::ToolFailed {
+                    tool: tool_name.to_string(),
+                    code: -1,
+                    message: error,
+                }
+                .into());
+            }
             // Kill hung process
             eprintln!("Warning: Process hung after completion, killing...");
             return Ok(());
@@ -364,11 +373,23 @@ fn process_output(
                     if line.trim().is_empty() {
                         continue;
                     }
-                    if let Ok(event) = serde_json::from_str::<Value>(&line)
-                        && event_handler(&event, style)
-                    {
-                        result_received = true;
+                    if let Ok(event) = serde_json::from_str::<Value>(&line) {
+                        if let Some(error) = detect_terminal_event_error(&event) {
+                            terminal_event_error = Some(error);
+                        }
+                        if event_handler(&event, style) {
+                            result_received = true;
+                        }
                     }
+                }
+
+                if let Some(error) = terminal_event_error {
+                    return Err(ExitError::ToolFailed {
+                        tool: tool_name.to_string(),
+                        code: status.code().unwrap_or(-1),
+                        message: error,
+                    }
+                    .into());
                 }
 
                 if result_received || status.success() {
@@ -399,11 +420,14 @@ fn process_output(
             if line.trim().is_empty() {
                 continue;
             }
-            if let Ok(event) = serde_json::from_str::<Value>(&line)
-                && event_handler(&event, style)
-            {
-                result_received = true;
-                result_time = Some(Instant::now());
+            if let Ok(event) = serde_json::from_str::<Value>(&line) {
+                if let Some(error) = detect_terminal_event_error(&event) {
+                    terminal_event_error = Some(error);
+                }
+                if event_handler(&event, style) {
+                    result_received = true;
+                    result_time = Some(Instant::now());
+                }
             }
         }
 
@@ -419,6 +443,46 @@ fn process_output(
 
         // Small sleep to avoid busy loop
         thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// Extract a terminal agent failure from Claude or Pi JSONL output.
+///
+/// Both CLIs may exit successfully after reporting an API/model error inside a
+/// completion event, so process status alone is not enough to determine success.
+fn detect_terminal_event_error(event: &Value) -> Option<String> {
+    match event.get("type").and_then(Value::as_str) {
+        Some("result") if event.get("is_error").and_then(Value::as_bool) == Some(true) => {
+            let detail = event
+                .get("result")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .or_else(|| {
+                    event
+                        .get("subtype")
+                        .and_then(Value::as_str)
+                        .map(|subtype| format!("Claude agent failed: {subtype}"))
+                })
+                .unwrap_or_else(|| "Claude agent reported a terminal error".to_string());
+            Some(detail)
+        }
+        Some("agent_end") => event
+            .get("messages")
+            .and_then(Value::as_array)
+            .and_then(|messages| {
+                messages.iter().rev().find(|message| {
+                    message.get("role").and_then(Value::as_str) == Some("assistant")
+                        && message.get("stopReason").and_then(Value::as_str) == Some("error")
+                })
+            })
+            .map(|message| {
+                message
+                    .get("errorMessage")
+                    .and_then(Value::as_str)
+                    .unwrap_or("Pi agent reported a terminal error")
+                    .to_string()
+            }),
+        _ => None,
     }
 }
 
@@ -993,6 +1057,19 @@ mod tests {
     }
 
     #[test]
+    fn claude_error_result_exposes_terminal_failure() {
+        let event: Value = serde_json::from_str(
+            r#"{"type":"result","subtype":"error_during_execution","is_error":true,"result":"model unavailable"}"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            detect_terminal_event_error(&event).as_deref(),
+            Some("model unavailable")
+        );
+    }
+
+    #[test]
     fn claude_text_event_is_not_completion() {
         let event: Value = serde_json::from_str(r#"{"type":"text","text":"hello"}"#).unwrap();
         assert!(!handle_claude_event(&event, &TEXT_STYLE));
@@ -1004,6 +1081,21 @@ mod tests {
     fn pi_agent_end_is_completion() {
         let event: Value = serde_json::from_str(r#"{"type":"agent_end","messages":[]}"#).unwrap();
         assert!(handle_pi_event(&event, &TEXT_STYLE));
+        assert!(detect_terminal_event_error(&event).is_none());
+    }
+
+    #[test]
+    fn pi_agent_end_exposes_terminal_model_failure() {
+        let event: Value = serde_json::from_str(
+            r#"{"type":"agent_end","messages":[{"role":"user","content":[]},{"role":"assistant","content":[],"stopReason":"error","errorMessage":"The model is not supported for this account."}],"willRetry":false}"#,
+        )
+        .unwrap();
+
+        assert!(handle_pi_event(&event, &TEXT_STYLE));
+        assert_eq!(
+            detect_terminal_event_error(&event).as_deref(),
+            Some("The model is not supported for this account.")
+        );
     }
 
     #[test]
@@ -1070,10 +1162,7 @@ mod tests {
 
     #[test]
     fn runner_for_model_non_anthropic_uses_pi() {
-        assert_eq!(
-            runner_for_model(Some("openai-codex/gpt-5.3-codex:medium")),
-            "pi"
-        );
+        assert_eq!(runner_for_model(Some("openai-codex/gpt-5.6-sol")), "pi");
         assert_eq!(
             runner_for_model(Some("google-gemini-cli/gemini-3-pro:medium")),
             "pi"

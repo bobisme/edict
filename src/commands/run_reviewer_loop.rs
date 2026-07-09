@@ -556,12 +556,38 @@ fn announce_online(agent: &str, project: &str) {
 }
 
 /// Run a single review iteration: build the prompt and invoke the agent.
+fn run_with_model_fallback<F>(models: &[String], mut run: F) -> Result<String>
+where
+    F: FnMut(&str) -> Result<()>,
+{
+    if models.is_empty() {
+        anyhow::bail!("reviewer model pool is empty");
+    }
+
+    let mut failures = Vec::new();
+    for model in models {
+        eprintln!("  Trying reviewer model: {model}");
+        match run(model) {
+            Ok(()) => return Ok(model.clone()),
+            Err(error) => {
+                eprintln!("  Reviewer model {model} failed: {error}");
+                failures.push(format!("{model}: {error}"));
+            }
+        }
+    }
+
+    anyhow::bail!(
+        "all configured reviewer models failed: {}",
+        failures.join(" | ")
+    )
+}
+
 fn run_one_iteration(
     agent: &str,
     project: &str,
     work_items: &[WorkItem],
     journal_path: &Path,
-    model: &str,
+    models: &[String],
     timeout: u64,
 ) -> Result<()> {
     let review_count = work_items.iter().filter(|w| !w.is_thread).count();
@@ -576,25 +602,25 @@ fn run_one_iteration(
 
     let prompt = build_prompt(agent, project, work_items, last_iter_ref)?;
 
-    // Run agent (auto-selects runner based on model provider)
-    let reviewer_start = crate::telemetry::metrics::time_start();
-    let run_agent_result =
-        crate::commands::run_agent::run_agent("auto", &prompt, Some(model), timeout, None, true);
-    crate::telemetry::metrics::time_record(
-        "edict.reviewer.agent_run_duration_seconds",
-        reviewer_start,
-        &[("agent", agent)],
-    );
+    let selected_model = run_with_model_fallback(models, |model| {
+        let reviewer_start = crate::telemetry::metrics::time_start();
+        let result = crate::commands::run_agent::run_agent(
+            "auto",
+            &prompt,
+            Some(model),
+            timeout,
+            None,
+            true,
+        );
+        crate::telemetry::metrics::time_record(
+            "edict.reviewer.agent_run_duration_seconds",
+            reviewer_start,
+            &[("agent", agent), ("model", model)],
+        );
+        result
+    })?;
 
-    match run_agent_result {
-        Ok(()) => {
-            eprintln!("✓ Review iteration complete");
-        }
-        Err(e) => {
-            eprintln!("Error running Claude: {e}");
-            // Continue to next iteration on error
-        }
-    }
+    eprintln!("✓ Review iteration complete with {selected_model}");
 
     Ok(())
 }
@@ -616,6 +642,20 @@ fn announce_idle(agent: &str, project: &str) {
             &format!("No reviews pending. Reviewer {agent} signing off."),
             "-L",
             "agent-idle",
+        ])
+        .run();
+}
+
+fn announce_failure(agent: &str, project: &str, error: &anyhow::Error) {
+    let _ = Tool::new("rite")
+        .args(&[
+            "send",
+            "--agent",
+            agent,
+            project,
+            &format!("Reviewer {agent} stopped: {error}"),
+            "-L",
+            "agent-error",
         ])
         .run();
 }
@@ -683,7 +723,7 @@ pub fn run_reviewer_loop(
         });
 
     let model_raw = model_override.unwrap_or(reviewer_config.model);
-    let model = config.resolve_model(&model_raw);
+    let models = config.resolve_model_pool(&model_raw);
     let max_loops = reviewer_config.max_loops;
     let pause_secs = reviewer_config.pause;
     let timeout = reviewer_config.timeout;
@@ -694,7 +734,7 @@ pub fn run_reviewer_loop(
     eprintln!("Project:   {project}");
     eprintln!("Max loops: {max_loops}");
     eprintln!("Pause:     {pause_secs}s");
-    eprintln!("Model:     {model}");
+    eprintln!("Models:    {}", models.join(", "));
     eprintln!("Journal:   {}", journal_path.display());
 
     // Confirm identity
@@ -726,6 +766,7 @@ pub fn run_reviewer_loop(
     });
 
     let mut already_signed_off = false;
+    let mut loop_failure = None;
 
     // Main loop
     for i in 1..=max_loops {
@@ -744,14 +785,20 @@ pub fn run_reviewer_loop(
             break;
         }
 
-        run_one_iteration(
+        if let Err(error) = run_one_iteration(
             &agent,
             &project,
             &work_items,
             &journal_path,
-            &model,
+            &models,
             timeout,
-        )?;
+        ) {
+            eprintln!("Review iteration failed: {error}");
+            announce_failure(&agent, &project, &error);
+            already_signed_off = true;
+            loop_failure = Some(error);
+            break;
+        }
 
         // Pause between iterations (except for the last one)
         if i < max_loops {
@@ -761,7 +808,7 @@ pub fn run_reviewer_loop(
 
     cleanup(&agent, &project, already_signed_off);
 
-    Ok(())
+    loop_failure.map_or_else(|| Ok(()), Err)
 }
 
 #[cfg(test)]
@@ -795,6 +842,40 @@ mod tests {
             "reviewer-security"
         );
         assert_eq!(get_reviewer_prompt_name(None), "reviewer");
+    }
+
+    #[test]
+    fn reviewer_models_fall_back_after_terminal_failure() {
+        let models = vec![
+            "openai-codex/retired-model".to_string(),
+            "openai-codex/gpt-5.6-sol".to_string(),
+        ];
+        let mut attempts = Vec::new();
+
+        let selected = run_with_model_fallback(&models, |model| {
+            attempts.push(model.to_string());
+            if model.contains("retired") {
+                anyhow::bail!("model unsupported");
+            }
+            Ok(())
+        })
+        .unwrap();
+
+        assert_eq!(selected, "openai-codex/gpt-5.6-sol");
+        assert_eq!(attempts, models);
+    }
+
+    #[test]
+    fn reviewer_models_report_all_failures() {
+        let models = vec!["model-a".to_string(), "model-b".to_string()];
+
+        let error = run_with_model_fallback(&models, |model| anyhow::bail!("{model} unavailable"))
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("all configured reviewer models failed"));
+        assert!(error.contains("model-a unavailable"));
+        assert!(error.contains("model-b unavailable"));
     }
 
     fn make_inbox_review(requested_at: &str) -> ReviewInfo {
