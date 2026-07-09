@@ -8,7 +8,7 @@ pub enum RunCommand {
     Agent {
         /// Prompt to send to the agent
         prompt: String,
-        /// Model to use (tier name: fast/balanced/strong, or provider/model-id e.g. anthropic/claude-sonnet-4-6:medium)
+        /// Model to use (tier name: fast/balanced/strong, or provider/model-id e.g. anthropic/claude-sonnet-5:medium)
         #[arg(short, long)]
         model: Option<String>,
         /// Timeout in seconds

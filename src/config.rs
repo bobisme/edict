@@ -225,21 +225,21 @@ fn default_tier_fast() -> Vec<String> {
     vec![
         "anthropic/claude-haiku-4-5:low".into(),
         "google-gemini-cli/gemini-3-flash-preview".into(),
-        "openai-codex/gpt-5.3-codex-spark:medium".into(),
+        "openai-codex/gpt-5.6-luna".into(),
     ]
 }
 
 fn default_tier_balanced() -> Vec<String> {
     vec![
-        "anthropic/claude-sonnet-4-6:medium".into(),
+        "anthropic/claude-sonnet-5:medium".into(),
         "google-gemini-cli/gemini-3.1-pro-preview".into(),
-        "openai-codex/gpt-5.4:medium".into(),
+        "openai-codex/gpt-5.6-terra".into(),
     ]
 }
 
 fn default_tier_strong() -> Vec<String> {
     vec![
-        "anthropic/claude-opus-4-6:high".into(),
+        "anthropic/claude-opus-4-8:high".into(),
         // Pi may not know a just-released model's reasoning suffix yet. The
         // bare slug lets the provider apply its supported default effort.
         "openai-codex/gpt-5.6-sol".into(),
@@ -580,8 +580,8 @@ impl Config {
     pub fn resolve_model_pool(&self, model: &str) -> Vec<String> {
         // Legacy short names -> specific Anthropic models (no fallback pool)
         match model {
-            "opus" => return vec!["anthropic/claude-opus-4-6:high".to_string()],
-            "sonnet" => return vec!["anthropic/claude-sonnet-4-6:medium".to_string()],
+            "opus" => return vec!["anthropic/claude-opus-4-8:high".to_string()],
+            "sonnet" => return vec!["anthropic/claude-sonnet-5:medium".to_string()],
             "haiku" => return vec!["anthropic/claude-haiku-4-5:low".to_string()],
             _ => {}
         }
@@ -609,8 +609,8 @@ impl Config {
     pub fn resolve_model(&self, model: &str) -> String {
         // Legacy short names -> specific Anthropic models (deterministic)
         match model {
-            "opus" => return "anthropic/claude-opus-4-6:high".to_string(),
-            "sonnet" => return "anthropic/claude-sonnet-4-6:medium".to_string(),
+            "opus" => return "anthropic/claude-opus-4-8:high".to_string(),
+            "sonnet" => return "anthropic/claude-sonnet-5:medium".to_string(),
             "haiku" => return "anthropic/claude-haiku-4-5:low".to_string(),
             _ => {}
         }
@@ -876,8 +876,8 @@ name = "test"
         .unwrap();
 
         assert_eq!(
-            config.resolve_model("anthropic/claude-sonnet-4-6:medium"),
-            "anthropic/claude-sonnet-4-6:medium"
+            config.resolve_model("anthropic/claude-sonnet-5:medium"),
+            "anthropic/claude-sonnet-5:medium"
         );
         assert_eq!(
             config.resolve_model("some-unknown-model"),
@@ -885,11 +885,11 @@ name = "test"
         );
         assert_eq!(
             config.resolve_model("opus"),
-            "anthropic/claude-opus-4-6:high"
+            "anthropic/claude-opus-4-8:high"
         );
         assert_eq!(
             config.resolve_model("sonnet"),
-            "anthropic/claude-sonnet-4-6:medium"
+            "anthropic/claude-sonnet-5:medium"
         );
         assert_eq!(
             config.resolve_model("haiku"),
@@ -965,11 +965,11 @@ name = "test"
 
         assert_eq!(
             config.resolve_model_pool("opus"),
-            vec!["anthropic/claude-opus-4-6:high"]
+            vec!["anthropic/claude-opus-4-8:high"]
         );
         assert_eq!(
             config.resolve_model_pool("sonnet"),
-            vec!["anthropic/claude-sonnet-4-6:medium"]
+            vec!["anthropic/claude-sonnet-5:medium"]
         );
         assert_eq!(
             config.resolve_model_pool("haiku"),
@@ -989,8 +989,8 @@ name = "test"
         .unwrap();
 
         assert_eq!(
-            config.resolve_model_pool("anthropic/claude-sonnet-4-6:medium"),
-            vec!["anthropic/claude-sonnet-4-6:medium"]
+            config.resolve_model_pool("anthropic/claude-sonnet-5:medium"),
+            vec!["anthropic/claude-sonnet-5:medium"]
         );
     }
 

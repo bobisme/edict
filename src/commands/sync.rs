@@ -213,9 +213,9 @@ impl SyncArgs {
 
         let active_config_path =
             crate::config::find_config(&project_root).unwrap_or_else(|| config_path.clone());
-        if migrate_retired_strong_model(&active_config_path)? {
+        if migrate_retired_model_defaults(&active_config_path)? {
             changed_files.push(".edict.toml");
-            println!("Updated retired strong-tier model to GPT-5.6 Sol");
+            println!("Updated retired model defaults");
         }
 
         if docs_stale {
@@ -721,32 +721,69 @@ impl SyncArgs {
     }
 }
 
-/// Replace the retired GPT-5.3 Codex entry only when it appears in the
-/// strong-tier pool. Custom model pools and other tiers are left untouched.
-fn migrate_retired_strong_model(config_path: &Path) -> Result<bool> {
+/// Replace known retired model defaults in their expected tier. Custom model
+/// entries and retired-looking models in other tiers are left untouched.
+fn migrate_retired_model_defaults(config_path: &Path) -> Result<bool> {
     let source = fs::read_to_string(config_path)
         .with_context(|| format!("reading {}", config_path.display()))?;
     let mut document = source
         .parse::<toml_edit::DocumentMut>()
         .with_context(|| format!("parsing {}", config_path.display()))?;
 
-    let Some(strong_models) = document
+    let Some(models) = document
         .get_mut("models")
         .and_then(toml_edit::Item::as_table_mut)
-        .and_then(|models| models.get_mut("strong"))
-        .and_then(toml_edit::Item::as_array_mut)
     else {
         return Ok(false);
     };
 
     let mut changed = false;
-    for model in strong_models.iter_mut() {
-        let is_retired = model
-            .as_str()
-            .is_some_and(|value| value.split(':').next() == Some("openai-codex/gpt-5.3-codex"));
-        if is_retired {
-            *model = toml_edit::Value::from("openai-codex/gpt-5.6-sol");
-            changed = true;
+    let migrations = [
+        (
+            "fast",
+            "openai-codex/gpt-5.3-codex-spark",
+            "openai-codex/gpt-5.6-luna",
+        ),
+        (
+            "balanced",
+            "anthropic/claude-sonnet-4-6",
+            "anthropic/claude-sonnet-5:medium",
+        ),
+        (
+            "balanced",
+            "openai-codex/gpt-5.3-codex",
+            "openai-codex/gpt-5.6-terra",
+        ),
+        (
+            "balanced",
+            "openai-codex/gpt-5.4",
+            "openai-codex/gpt-5.6-terra",
+        ),
+        (
+            "strong",
+            "anthropic/claude-opus-4-6",
+            "anthropic/claude-opus-4-8:high",
+        ),
+        (
+            "strong",
+            "openai-codex/gpt-5.3-codex",
+            "openai-codex/gpt-5.6-sol",
+        ),
+    ];
+
+    for (tier, retired_slug, replacement) in migrations {
+        let Some(tier_models) = models.get_mut(tier).and_then(toml_edit::Item::as_array_mut) else {
+            continue;
+        };
+
+        for model in tier_models.iter_mut() {
+            let is_retired = model
+                .as_str()
+                .is_some_and(|value| value.split(':').next() == Some(retired_slug));
+            if is_retired {
+                *model = toml_edit::Value::from(replacement);
+                changed = true;
+            }
         }
     }
 
@@ -1790,7 +1827,7 @@ mod tests {
     }
 
     #[test]
-    fn retired_strong_model_migration_is_scoped_and_idempotent() {
+    fn retired_model_migration_is_scoped_and_idempotent() {
         let dir = tempfile::tempdir().unwrap();
         let config_path = dir.path().join(".edict.toml");
         fs::write(
@@ -1800,20 +1837,29 @@ mod tests {
 name = "test"
 
 [models]
-fast = ["openai-codex/gpt-5.3-codex-spark:low"]
-balanced = ["custom/model"]
+fast = ["openai-codex/gpt-5.3-codex-spark:low", "anthropic/claude-opus-4-6:low"]
+balanced = ["anthropic/claude-sonnet-4-6:medium", "openai-codex/gpt-5.3-codex:medium", "openai-codex/gpt-5.4:medium", "custom/model"]
 strong = ["anthropic/claude-opus-4-6:high", "openai-codex/gpt-5.3-codex:xhigh"]
 "#,
         )
         .unwrap();
 
-        assert!(migrate_retired_strong_model(&config_path).unwrap());
-        assert!(!migrate_retired_strong_model(&config_path).unwrap());
+        assert!(migrate_retired_model_defaults(&config_path).unwrap());
+        assert!(!migrate_retired_model_defaults(&config_path).unwrap());
 
         let migrated = fs::read_to_string(config_path).unwrap();
         assert!(migrated.contains("openai-codex/gpt-5.6-sol"));
-        assert!(migrated.contains("openai-codex/gpt-5.3-codex-spark:low"));
+        assert!(migrated.contains("openai-codex/gpt-5.6-terra"));
+        assert!(migrated.contains("openai-codex/gpt-5.6-luna"));
+        assert!(migrated.contains("anthropic/claude-opus-4-8:high"));
+        assert!(migrated.contains("anthropic/claude-sonnet-5:medium"));
+        assert!(migrated.contains("anthropic/claude-opus-4-6:low"));
         assert!(migrated.contains("custom/model"));
+        assert!(!migrated.contains("openai-codex/gpt-5.3-codex-spark:low"));
+        assert!(!migrated.contains("openai-codex/gpt-5.3-codex:medium"));
+        assert!(!migrated.contains("openai-codex/gpt-5.4:medium"));
+        assert!(!migrated.contains("anthropic/claude-opus-4-6:high"));
+        assert!(!migrated.contains("anthropic/claude-sonnet-4-6:medium"));
         assert!(!migrated.contains("openai-codex/gpt-5.3-codex:xhigh"));
     }
 

@@ -46,6 +46,46 @@ fn run_agent_handles_claude_not_found() {
 }
 
 #[test]
+fn run_agent_claude_receives_model_and_effort() {
+    let tmp = tempfile::tempdir().unwrap();
+    let fake_claude = tmp.path().join("claude");
+    let args_file = tmp.path().join("claude-args.txt");
+    let script = r#"#!/bin/sh
+printf '%s\n' "$@" > "$CLAUDE_ARGS_FILE"
+printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"OK"}'
+"#;
+
+    fs::write(&fake_claude, script).unwrap();
+    fs::set_permissions(&fake_claude, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let mut cmd = Command::cargo_bin("edict").unwrap();
+    cmd.env(
+        "PATH",
+        format!(
+            "{}:{}",
+            tmp.path().display(),
+            std::env::var("PATH").unwrap_or_default()
+        ),
+    )
+    .env("CLAUDE_ARGS_FILE", &args_file)
+    .arg("run")
+    .arg("agent")
+    .arg("Reply with OK")
+    .arg("--model")
+    .arg("anthropic/claude-sonnet-5:medium")
+    .arg("--timeout")
+    .arg("10")
+    .arg("--format")
+    .arg("text");
+
+    cmd.assert().success();
+
+    let args = fs::read_to_string(args_file).unwrap();
+    assert!(args.contains("--model\nclaude-sonnet-5\n"));
+    assert!(args.contains("--effort\nmedium\n"));
+}
+
+#[test]
 fn run_agent_defaults_to_auto_runner() {
     // Verify default runner is "auto" — resolves to pi for non-anthropic models
     let mut cmd = Command::cargo_bin("edict").unwrap();

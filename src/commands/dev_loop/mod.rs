@@ -959,7 +959,7 @@ fn run_agent_subprocess(prompt: &str, model: &str, timeout_secs: u64) -> anyhow:
 
     let mut args = vec!["run", "agent", prompt, "--skip-permissions"];
 
-    // Pass the full model string (e.g. "anthropic/claude-sonnet-4-6:medium") — Pi handles :suffix natively
+    // Pass the full model string (e.g. "anthropic/claude-sonnet-5:medium") — Pi handles :suffix natively
     if !model.is_empty() {
         args.push("-m");
         args.push(model);

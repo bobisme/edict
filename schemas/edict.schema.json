@@ -59,17 +59,17 @@
     "models": {
       "default": {
         "balanced": [
-          "anthropic/claude-sonnet-4-6:medium",
+          "anthropic/claude-sonnet-5:medium",
           "google-gemini-cli/gemini-3-pro-preview:medium",
-          "openai-codex/gpt-5.3-codex:medium"
+          "openai-codex/gpt-5.6-terra"
         ],
         "fast": [
           "anthropic/claude-haiku-4-5:low",
           "google-gemini-cli/gemini-3-flash-preview:low",
-          "openai-codex/gpt-5.3-codex-spark:low"
+          "openai-codex/gpt-5.6-luna"
         ],
         "strong": [
-          "anthropic/claude-opus-4-6:high",
+          "anthropic/claude-opus-4-8:high",
           "openai-codex/gpt-5.6-sol"
         ]
       },
@@ -457,7 +457,7 @@
           "default": [
             "anthropic/claude-haiku-4-5:low",
             "google-gemini-cli/gemini-3-flash-preview:low",
-            "openai-codex/gpt-5.3-codex-spark:low"
+            "openai-codex/gpt-5.6-luna"
           ],
           "type": "array",
           "items": {
@@ -466,9 +466,9 @@
         },
         "balanced": {
           "default": [
-            "anthropic/claude-sonnet-4-6:medium",
+            "anthropic/claude-sonnet-5:medium",
             "google-gemini-cli/gemini-3-pro-preview:medium",
-            "openai-codex/gpt-5.3-codex:medium"
+            "openai-codex/gpt-5.6-terra"
           ],
           "type": "array",
           "items": {
@@ -477,7 +477,7 @@
         },
         "strong": {
           "default": [
-            "anthropic/claude-opus-4-6:high",
+            "anthropic/claude-opus-4-8:high",
             "openai-codex/gpt-5.6-sol"
           ],
           "type": "array",
