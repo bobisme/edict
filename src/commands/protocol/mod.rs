@@ -9,6 +9,7 @@ pub mod render;
 pub mod resume;
 pub mod review;
 pub mod review_gate;
+pub mod review_select;
 pub mod shell;
 
 use std::io::IsTerminal;

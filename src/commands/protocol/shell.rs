@@ -458,15 +458,31 @@ pub fn ws_merge_cmd(workspace: &str, target: MergeTarget<'_>, message: &str) -> 
     )
 }
 
-/// Build: `maw exec <ws> -- seal reviews create --agent <agent> --title '<title>' --reviewers <reviewers>`
+/// Build: `maw exec <ws> -- seal reviews create --agent <agent> --title '<bone-id>: <title>' --reviewers <reviewers>`
+///
+/// The `<bone-id>: ` prefix is applied HERE rather than by callers. A review is
+/// bound to its bone only by that title convention, so a create command that
+/// omits it produces a review the gate can never find: it can be fully approved
+/// while `protocol finish`/`merge` still report `NeedsReview` — and the remedy
+/// printed next to that is `--force`, which skips the gate outright. Owning the
+/// prefix at the single choke point makes an unmatchable title unrepresentable
+/// instead of relying on three call sites to remember it.
 ///
 /// # Panics
 ///
 /// Panics if `agent` is not a valid identifier.
 #[must_use]
-pub fn seal_create_cmd(workspace: &str, agent: &str, title: &str, reviewers: &str) -> String {
+pub fn seal_create_cmd(
+    workspace: &str,
+    agent: &str,
+    bone_id: &str,
+    title: &str,
+    reviewers: &str,
+) -> String {
     validate_identifier("agent", agent).expect("invalid agent name");
     let agent_safe = safe_ident(agent);
+
+    let title = super::review_select::scoped_title(bone_id, title);
 
     // Validate workspace and reviewers before use
     let workspace_safe = if validate_workspace_name(workspace).is_ok() {
@@ -485,7 +501,7 @@ pub fn seal_create_cmd(workspace: &str, agent: &str, title: &str, reviewers: &st
         "maw exec {} -- seal reviews create --agent {} --title {} --reviewers {}",
         workspace_safe,
         agent_safe,
-        shell_escape(title),
+        shell_escape(&title),
         reviewers_safe
     )
 }
@@ -911,13 +927,33 @@ mod tests {
         let cmd = seal_create_cmd(
             "frost-castle",
             "crimson-storm",
+            "bn-24r",
             "feat: add login",
             "myproject-security",
         );
         assert_eq!(
             cmd,
-            "maw exec frost-castle -- seal reviews create --agent crimson-storm --title 'feat: add login' --reviewers myproject-security"
+            "maw exec frost-castle -- seal reviews create --agent crimson-storm --title 'bn-24r: feat: add login' --reviewers myproject-security"
         );
+    }
+
+    /// The command edict prints must create a review the gate can actually find,
+    /// whatever the caller passes as a title.
+    #[test]
+    fn seal_create_titles_are_always_gate_visible() {
+        for title in ["feat: add login", "Work from bn-24r", "", "café ☕"] {
+            let cmd = seal_create_cmd(
+                "frost-castle",
+                "crimson-storm",
+                "bn-24r",
+                title,
+                "myproject-security",
+            );
+            assert!(
+                cmd.contains("--title 'bn-24r: "),
+                "title {title:?} produced a command the review gate cannot match: {cmd}"
+            );
+        }
     }
 
     #[test]

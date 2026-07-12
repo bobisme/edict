@@ -413,7 +413,7 @@ impl StatusArgs {
                 continue;
             }
             if let Some(ws_name) = ctx.workspace_for_bone(bone_id)
-                && let Ok(reviews) = ctx.reviews_in_workspace(ws_name)
+                && let Ok(reviews) = ctx.reviews_for_bone(ws_name, bone_id)
             {
                 for review_summary in reviews {
                     if let Ok(review_detail) = ctx.review_status(&review_summary.review_id, ws_name)
@@ -442,7 +442,7 @@ impl StatusArgs {
                 continue;
             }
             if let Some(ws_name) = ctx.workspace_for_bone(bone_id)
-                && let Ok(reviews) = ctx.reviews_in_workspace(ws_name)
+                && let Ok(reviews) = ctx.reviews_for_bone(ws_name, bone_id)
             {
                 for review_summary in reviews {
                     if let Ok(review_detail) = ctx.review_status(&review_summary.review_id, ws_name)

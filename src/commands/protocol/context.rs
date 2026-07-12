@@ -7,6 +7,7 @@
 use std::process::Command;
 
 use super::adapters::{self, BoneInfo, Claim, ReviewDetail, ReviewDetailResponse, Workspace};
+use super::review_select;
 
 /// Cross-tool state collector for protocol commands.
 ///
@@ -19,6 +20,22 @@ pub struct ProtocolContext {
     agent: String,
     claims: Vec<Claim>,
     workspaces: Vec<Workspace>,
+}
+
+#[cfg(test)]
+impl ProtocolContext {
+    /// Build a context from fixed data, with no subprocess calls.
+    ///
+    /// Lets sibling modules test claim-dependent logic (which bone gates a merge)
+    /// against hand-built claim sets, including hostile ones.
+    pub(super) fn for_test(agent: &str, claims: Vec<Claim>, workspaces: Vec<Workspace>) -> Self {
+        Self {
+            project: "edict".to_string(),
+            agent: agent.to_string(),
+            claims,
+            workspaces,
+        }
+    }
 }
 
 impl ProtocolContext {
@@ -100,9 +117,16 @@ impl ProtocolContext {
     /// Correlate a bone claim with its workspace claim.
     ///
     /// Tries memo-based correlation first (most precise), then falls back to
-    /// finding any non-default workspace claim from this agent. The fallback
-    /// is needed because `rite claims list --format json` currently omits the
-    /// memo field, making memo-based lookup fail.
+    /// finding any non-default workspace claim from this agent.
+    ///
+    /// The fallback carries the traffic today because the memo path never matches:
+    /// `rite claims list --format json` emits the field as `message`, and
+    /// [`adapters::Claim`] deserializes `memo` with no alias for it, so `memo` is
+    /// always `None`. Do NOT "fix" that by adding the alias alone — the memo is
+    /// free text chosen by whoever staked the claim, and
+    /// `merge::find_bone_for_workspace` uses the same memo to decide which bone's
+    /// review gates a merge. Arming it without that function's agent + held-bone-claim
+    /// corroboration would let a claim memo nominate someone else's approved bone.
     #[must_use]
     pub fn workspace_for_bone(&self, bone_id: &str) -> Option<&str> {
         // First pass: memo-based correlation (precise, works when rite includes memo)
@@ -159,7 +183,62 @@ impl ProtocolContext {
         Ok(bone)
     }
 
-    /// List reviews in a workspace by calling `maw exec <ws> -- seal reviews list --format json`.
+    /// List the live reviews that gate `bone_id`, newest-relevant first.
+    ///
+    /// `seal reviews list` is repo-global, so the raw listing includes merged
+    /// reviews for unrelated bones. Callers gating on review state must use this
+    /// rather than [`Self::reviews_in_workspace`].
+    ///
+    /// # Errors
+    ///
+    /// Returns error if the workspace name is invalid or the reviews output is unparseable.
+    pub fn reviews_for_bone(
+        &self,
+        workspace: &str,
+        bone_id: &str,
+    ) -> Result<Vec<adapters::ReviewSummary>, ContextError> {
+        let reviews = self.reviews_in_workspace(workspace)?;
+        Ok(review_select::live_reviews_for_bone(&reviews, bone_id)
+            .into_iter()
+            .cloned()
+            .collect())
+    }
+
+    /// Find the review that gates `bone_id`, with full detail.
+    ///
+    /// Returns `None` when the bone has no live review — callers treat that as
+    /// "review still needed", so an unrelated or merged review can never satisfy
+    /// the gate.
+    ///
+    /// The status is checked TWICE, against two different snapshots: once on the
+    /// summary from `seal reviews list`, and again on the detail from `seal review
+    /// <id>`. They are separate subprocess calls, so a review that merges between
+    /// them (or any list/detail disagreement in seal) yields `summary=open` with
+    /// `detail=merged` — and it is the detail status that `evaluate_review_gate`
+    /// and `implicit_status_lgtm` go on to read. Re-checking here covers every
+    /// caller from the one place they all funnel through, rather than trusting
+    /// each of the five to remember.
+    #[must_use]
+    pub fn find_review_for_bone(
+        &self,
+        workspace: &str,
+        bone_id: &str,
+    ) -> Option<(String, ReviewDetail)> {
+        let reviews = self.reviews_in_workspace(workspace).ok()?;
+        let summary = review_select::select_for_bone(&reviews, bone_id)?;
+        let detail = self.review_status(&summary.review_id, workspace).ok()?;
+
+        if !review_select::is_live_status(&detail.status) {
+            return None;
+        }
+
+        Some((summary.review_id.clone(), detail))
+    }
+
+    /// List all reviews visible from a workspace (`maw exec <ws> -- seal reviews list`).
+    ///
+    /// This listing is repo-global and NOT scoped to the workspace or its bone.
+    /// Use [`Self::reviews_for_bone`] for anything that gates on review state.
     ///
     /// Returns empty list if no reviews exist or seal is not configured.
     ///

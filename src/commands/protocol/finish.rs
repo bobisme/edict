@@ -175,8 +175,10 @@ struct GuidanceCtx<'a> {
 /// `--execute` flag was set and the bone is ready to finish).
 fn build_finish_guidance(guidance: &mut ProtocolGuidance, gc: &mut GuidanceCtx) -> bool {
     if gc.review_enabled && !gc.force {
-        // Try to find a review for this workspace
-        if let Some((review_id, review_detail)) = find_review_for_workspace(gc.ctx, gc.workspace) {
+        // Try to find a live review for this bone
+        if let Some((review_id, review_detail)) =
+            gc.ctx.find_review_for_bone(gc.workspace, gc.bone_id)
+        {
             let decision = review_gate::evaluate_review_gate(&review_detail, gc.required_reviewers);
             if gc.merge_target.is_none() {
                 gc.merge_target.clone_from(&review_detail.change_id);
@@ -237,6 +239,7 @@ fn build_finish_guidance(guidance: &mut ProtocolGuidance, gc: &mut GuidanceCtx) 
         } else {
             build_no_review_section(
                 guidance,
+                gc.bone_id,
                 gc.bead_title,
                 gc.workspace,
                 gc.project,
@@ -442,9 +445,10 @@ fn build_needs_review_section(
     ));
 }
 
-/// Build guidance for the case where no review exists yet for the workspace.
+/// Build guidance for the case where no review exists yet for the bone.
 fn build_no_review_section(
     guidance: &mut ProtocolGuidance,
+    bone_id: &str,
     bead_title: &str,
     workspace: &str,
     project: &str,
@@ -452,12 +456,13 @@ fn build_no_review_section(
 ) {
     // No review found — needs review creation
     guidance.status = ProtocolStatus::NeedsReview;
-    guidance.diagnostic("No review found for this workspace.".to_string());
+    guidance.diagnostic(format!("No review found for bone {bone_id}."));
 
     let mut steps = Vec::new();
     steps.push(shell::seal_create_cmd(
         workspace,
         "agent",
+        bone_id,
         bead_title,
         &required_reviewers.join(","),
     ));
@@ -472,39 +477,6 @@ fn build_no_review_section(
     guidance.advise(
         "No review exists yet. Create one and request reviewers before finishing.".to_string(),
     );
-}
-
-/// Try to find a review for a workspace by listing reviews in that workspace.
-fn find_review_for_workspace(
-    ctx: &ProtocolContext,
-    workspace: &str,
-) -> Option<(String, super::adapters::ReviewDetail)> {
-    // List reviews in the workspace via seal reviews list
-    let output = std::process::Command::new("maw")
-        .args([
-            "exec", workspace, "--", "seal", "reviews", "list", "--format", "json",
-        ])
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let stdout = String::from_utf8(output.stdout).ok()?;
-    let reviews_resp = super::adapters::parse_reviews_list(&stdout).ok()?;
-
-    // Find the first open/reviewed review (not merged)
-    for review_summary in &reviews_resp.reviews {
-        if review_summary.status != "merged" {
-            // Fetch full review details
-            if let Ok(detail) = ctx.review_status(&review_summary.review_id, workspace) {
-                return Some((review_summary.review_id.clone(), detail));
-            }
-        }
-    }
-
-    None
 }
 
 /// Execute finish steps and render the execution report.

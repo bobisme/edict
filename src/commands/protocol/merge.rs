@@ -237,11 +237,9 @@ pub fn execute(
 
     // All preconditions met — build merge steps
     guidance.status = ProtocolStatus::Ready;
-    let review_id = if review_enabled {
-        find_review_for_workspace(&ctx, workspace).map(|(id, _)| id)
-    } else {
-        None
-    };
+    let review_id = review_enabled
+        .then(|| find_review_id(&ctx, workspace, bone_id.as_deref()))
+        .flatten();
 
     build_merge_steps(
         &mut guidance,
@@ -346,7 +344,9 @@ fn check_review_gate(
     merge_target: &mut Option<String>,
     format: OutputFormat,
 ) -> anyhow::Result<bool> {
-    if let Some((review_id, review_detail)) = find_review_for_workspace(ctx, workspace) {
+    if let Some((review_id, review_detail)) =
+        bone_id.and_then(|id| ctx.find_review_for_bone(workspace, id))
+    {
         let decision = review_gate::evaluate_review_gate(&review_detail, required_reviewers);
         if merge_target.is_none() {
             *merge_target = review_detail.change_id;
@@ -394,24 +394,38 @@ fn check_review_gate(
         }
     } else {
         guidance.status = ProtocolStatus::NeedsReview;
-        guidance
-            .diagnostic("Review is enabled but no review exists for this workspace.".to_string());
-        guidance.advise(
-            "Create a review before merging, or use --force to skip review gate.".to_string(),
-        );
 
-        let mut steps = Vec::new();
-        let title = bone_id.map_or_else(
-            || format!("Work from {workspace}"),
-            |id| format!("Work from {id}"),
-        );
-        steps.push(shell::seal_create_cmd(
-            workspace,
-            "agent",
-            &title,
-            &required_reviewers.join(","),
-        ));
-        guidance.steps(steps);
+        if let Some(id) = bone_id {
+            guidance.diagnostic(format!(
+                "Review is enabled but no live review exists for bone {id}."
+            ));
+            guidance.advise("Create a review before merging.".to_string());
+
+            let mut steps = Vec::new();
+            steps.push(shell::seal_create_cmd(
+                workspace,
+                "agent",
+                id,
+                &format!("work from {workspace}"),
+                &required_reviewers.join(","),
+            ));
+            guidance.steps(steps);
+        } else {
+            // Without a bone ID there is no title the gate could match, so a review
+            // created here would be invisible to it — approved and still reported as
+            // missing. Offering that step would leave `--force` (skip the gate) as the
+            // only way forward, so say what is actually wrong instead.
+            guidance.diagnostic(format!(
+                "Review is enabled but the bone behind workspace {workspace} could not be \
+                 identified, so no review can be bound to it."
+            ));
+            guidance.advise(
+                "Stake the workspace claim for the bone \
+                 (rite claims stake \"workspace://<project>/<ws>\" -m \"<bone-id>\"), \
+                 then run `edict protocol review <bone-id>` to open a review against it."
+                    .to_string(),
+            );
+        }
 
         print_guidance(guidance, format)?;
         return Ok(true);
@@ -586,19 +600,63 @@ fn add_conflict_recovery_guidance(
     ));
 }
 
+/// ID of the live review gating `bone_id`, if the bone and its review are known.
+fn find_review_id(ctx: &ProtocolContext, workspace: &str, bone_id: Option<&str>) -> Option<String> {
+    let bone_id = bone_id?;
+    ctx.find_review_for_bone(workspace, bone_id)
+        .map(|(review_id, _)| review_id)
+}
+
+/// Whether this agent actually holds the bone claim for `bone_id`.
+///
+/// This is the corroboration every path below needs. A workspace name and a claim
+/// memo are both strings the caller chooses, so on their own they let the caller
+/// nominate which bone gates its merge — point either at someone else's approved
+/// bone and the merge inherits that bone's LGTM. rite grants bone claims
+/// exclusively, so requiring one turns "the caller says this is bone X" into
+/// "rite agrees this caller owns bone X", which the caller cannot forge.
+fn holds_bone_claim(ctx: &ProtocolContext, bone_id: &str) -> bool {
+    ctx.held_bone_claims()
+        .iter()
+        .any(|(bone, _)| *bone == bone_id)
+}
+
 /// Try to find the bone associated with a workspace.
 ///
-/// Checks claims first (workspace claim memo = bone ID), then falls back
-/// to checking all held bone claims (for workers with one bone).
+/// Checks the workspace claim's memo, then all held bone claims (for workers with
+/// one bone), then the workspace name itself — the dev-loop names workspaces after
+/// the bone they serve. Every method that takes its answer from a caller-supplied
+/// string is corroborated by [`holds_bone_claim`].
+///
+/// Returning `None` leaves the review gate with nothing to match against, which
+/// keeps the merge blocked as `NeedsReview` rather than letting it through.
 fn find_bone_for_workspace(ctx: &ProtocolContext, workspace: &str) -> Option<String> {
-    // Method 1: check workspace claims for memo (when rite includes memo in JSON)
+    // Method 1: the workspace claim's memo names the bone it was staked for.
+    //
+    // Two filters, both load-bearing. `claim.agent == ctx.agent()` because
+    // `rite claims list` returns EVERY agent's claims and ignores --agent, so
+    // without it another agent's memo could name the bone that gates our merge
+    // (held_bone_claims and context.rs::workspace_for_bone both filter on agent
+    // for this reason). `holds_bone_claim` because the memo is free text the
+    // staker chose: stake workspace://<proj>/<my-ws> with the memo set to a
+    // victim's approved bone and, unfiltered, this returns that bone and its LGTM
+    // gates unreviewed code in my-ws.
+    //
+    // Today `Claim.memo` never populates — rite emits the field as "message" and
+    // `Claim` has no serde alias for it — so this path is currently dead. That is
+    // a deserialization accident, not an access control: the day someone adds the
+    // alias, these checks are what stands between the memo and the gate.
     for claim in ctx.claims() {
+        if claim.agent != ctx.agent() {
+            continue;
+        }
         if let Some(memo) = &claim.memo {
             for pattern in &claim.patterns {
                 if let Some(ws_name) = pattern
                     .strip_prefix("workspace://")
                     .and_then(|rest| rest.split('/').nth(1))
                     && ws_name == workspace
+                    && holds_bone_claim(ctx, memo)
                 {
                     return Some(memo.clone());
                 }
@@ -606,40 +664,21 @@ fn find_bone_for_workspace(ctx: &ProtocolContext, workspace: &str) -> Option<Str
         }
     }
 
-    // Method 2: if there's exactly one bone claim, use that
+    // Method 2: if there's exactly one bone claim, use that. Already corroborated —
+    // held_bone_claims() only returns claims this agent holds.
     let bone_claims = ctx.held_bone_claims();
     if bone_claims.len() == 1 {
         return Some(bone_claims[0].0.to_string());
     }
 
-    None
-}
-
-/// Try to find a review for a workspace.
-fn find_review_for_workspace(
-    ctx: &ProtocolContext,
-    workspace: &str,
-) -> Option<(String, super::adapters::ReviewDetail)> {
-    let output = std::process::Command::new("maw")
-        .args([
-            "exec", workspace, "--", "seal", "reviews", "list", "--format", "json",
-        ])
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let stdout = String::from_utf8(output.stdout).ok()?;
-    let reviews_resp = super::adapters::parse_reviews_list(&stdout).ok()?;
-
-    for review_summary in &reviews_resp.reviews {
-        if review_summary.status != "merged"
-            && let Ok(detail) = ctx.review_status(&review_summary.review_id, workspace)
-        {
-            return Some((review_summary.review_id.clone(), detail));
-        }
+    // Method 3: workspaces are created as `maw ws create <bone-id>`, so the name is a
+    // strong hint — but only a hint. Taking it at face value would let the bone that
+    // gates this merge be chosen by an unverified, agent-supplied STRING: name a
+    // workspace after someone else's approved bone and it inherits that approval.
+    // Require the caller to actually hold the bone's claim, which rite grants
+    // exclusively, so the name is corroborated by something it cannot forge.
+    if shell::validate_bone_id(workspace).is_ok() && holds_bone_claim(ctx, workspace) {
+        return Some(workspace.to_string());
     }
 
     None
@@ -857,5 +896,121 @@ mod tests {
             .unwrap();
         assert!(announce.contains("bd-abc"));
         assert!(guidance.steps.iter().any(|s| s.contains("--into ch-123")));
+    }
+
+    /// Build a context whose claims come from raw rite JSON.
+    fn ctx_with_claims(agent: &str, claims_json: &str) -> ProtocolContext {
+        let claims = super::super::adapters::parse_claims(claims_json)
+            .expect("claims fixture parses")
+            .claims;
+        ProtocolContext::for_test(agent, claims, Vec::new())
+    }
+
+    /// The bone that gates a merge decides WHOSE approval is consulted, so it may
+    /// never be taken from a string the caller picked. Both the workspace name and
+    /// the claim memo are caller-chosen; each must be corroborated by a bone claim,
+    /// which rite grants exclusively.
+    #[test]
+    fn workspace_name_needs_a_held_bone_claim() {
+        // Agent holds the bone whose name the workspace carries: trusted.
+        let ctx = ctx_with_claims(
+            "crimson-storm",
+            r#"{"claims": [
+                {"agent": "crimson-storm", "patterns": ["bone://edict/bn-24r"], "active": true}
+            ]}"#,
+        );
+        assert_eq!(
+            find_bone_for_workspace(&ctx, "bn-24r").as_deref(),
+            Some("bn-24r")
+        );
+
+        // The attack: name a workspace after someone ELSE's approved bone. Without a
+        // claim on it, the name is just a string, and inheriting that bone's LGTM
+        // would merge unreviewed code. Fail closed: no bone -> gate blocks.
+        let ctx = ctx_with_claims(
+            "crimson-storm",
+            r#"{"claims": [
+                {"agent": "green-vertex", "patterns": ["bone://edict/bn-24r"], "active": true}
+            ]}"#,
+        );
+        assert_eq!(find_bone_for_workspace(&ctx, "bn-24r"), None);
+    }
+
+    /// Method 1 (memo) runs BEFORE the workspace-name path, so it needs the same
+    /// corroboration — otherwise hardening only the later path is unreachable code.
+    /// `Claim.memo` does not currently deserialize (rite emits the field as
+    /// "message"), so these fixtures set it explicitly: the checks must hold on the
+    /// day that is fixed, not depend on the bug for their safety.
+    #[test]
+    fn claim_memo_needs_a_held_bone_claim() {
+        // Memo names a bone this agent does not hold: refuse it.
+        let mut claims = super::super::adapters::parse_claims(
+            r#"{"claims": [
+                {"agent": "crimson-storm", "patterns": ["workspace://edict/my-ws"], "active": true},
+                {"agent": "green-vertex", "patterns": ["bone://edict/bn-victim"], "active": true}
+            ]}"#,
+        )
+        .unwrap()
+        .claims;
+        claims[0].memo = Some("bn-victim".to_string());
+        let ctx = ProtocolContext::for_test("crimson-storm", claims, Vec::new());
+        assert_eq!(
+            find_bone_for_workspace(&ctx, "my-ws"),
+            None,
+            "a claim memo must not nominate a bone the caller does not hold"
+        );
+
+        // Memo names a bone this agent does hold: trusted.
+        let mut claims = super::super::adapters::parse_claims(
+            r#"{"claims": [
+                {"agent": "crimson-storm", "patterns": ["workspace://edict/my-ws"], "active": true},
+                {"agent": "crimson-storm", "patterns": ["bone://edict/bn-mine"], "active": true}
+            ]}"#,
+        )
+        .unwrap()
+        .claims;
+        claims[0].memo = Some("bn-mine".to_string());
+        let ctx = ProtocolContext::for_test("crimson-storm", claims, Vec::new());
+        assert_eq!(
+            find_bone_for_workspace(&ctx, "my-ws").as_deref(),
+            Some("bn-mine")
+        );
+    }
+
+    /// `rite claims list` returns every agent's claims and ignores --agent, so an
+    /// unfiltered scan would let another agent's memo choose the gating bone.
+    #[test]
+    fn another_agents_claim_memo_is_ignored() {
+        let mut claims = super::super::adapters::parse_claims(
+            r#"{"claims": [
+                {"agent": "green-vertex", "patterns": ["workspace://edict/my-ws"], "active": true},
+                {"agent": "crimson-storm", "patterns": ["bone://edict/bn-mine"], "active": true}
+            ]}"#,
+        )
+        .unwrap()
+        .claims;
+        // Another agent staked a claim on our workspace, memo pointing at our bone.
+        claims[0].memo = Some("bn-mine".to_string());
+        let ctx = ProtocolContext::for_test("crimson-storm", claims, Vec::new());
+
+        // Method 1 must skip it. Method 2 then resolves the bone from OUR single
+        // held bone claim, which is corroborated — so the answer is right, but it
+        // came from a source the caller cannot forge.
+        assert_eq!(
+            find_bone_for_workspace(&ctx, "my-ws").as_deref(),
+            Some("bn-mine")
+        );
+
+        // With no bone claim of our own, nothing corroborates the foreign memo.
+        let mut claims = super::super::adapters::parse_claims(
+            r#"{"claims": [
+                {"agent": "green-vertex", "patterns": ["workspace://edict/my-ws"], "active": true}
+            ]}"#,
+        )
+        .unwrap()
+        .claims;
+        claims[0].memo = Some("bn-victim".to_string());
+        let ctx = ProtocolContext::for_test("crimson-storm", claims, Vec::new());
+        assert_eq!(find_bone_for_workspace(&ctx, "my-ws"), None);
     }
 }

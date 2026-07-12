@@ -69,11 +69,10 @@ fn assess_bone(ctx: &ProtocolContext, bone_id: &str, config: &Config) -> BoneRes
         .workspace_for_bone(bone_id)
         .map(std::string::ToString::to_string);
 
-    // Check for reviews in the workspace
+    // Check for a live review belonging to this bone (the raw seal listing is
+    // repo-global, so an unscoped pick would report another bone's review here)
     let review = workspace.as_deref().and_then(|ws| {
-        let reviews = ctx.reviews_in_workspace(ws).ok()?;
-        let review_summary = reviews.into_iter().next()?;
-        let detail = ctx.review_status(&review_summary.review_id, ws).ok()?;
+        let (review_id, detail) = ctx.find_review_for_bone(ws, bone_id)?;
 
         let required_reviewers: Vec<String> = config
             .review
@@ -85,7 +84,7 @@ fn assess_bone(ctx: &ProtocolContext, bone_id: &str, config: &Config) -> BoneRes
         let gate = review_gate::evaluate_review_gate(&detail, &required_reviewers);
 
         Some(ReviewState {
-            review_id: review_summary.review_id,
+            review_id,
             gate: gate.status,
             open_threads: detail.open_thread_count,
         })

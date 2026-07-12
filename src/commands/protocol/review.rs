@@ -7,6 +7,7 @@ use super::context::ProtocolContext;
 use super::executor;
 use super::render::{BoneRef, ProtocolGuidance, ProtocolStatus, ReviewRef};
 use super::review_gate::{self, ReviewGateStatus};
+use super::review_select;
 use super::shell;
 use crate::commands::doctor::OutputFormat;
 use crate::config::Config;
@@ -107,6 +108,11 @@ pub fn execute(params: &ReviewParams) -> anyhow::Result<()> {
 
     // If --review-id was provided, check that existing review
     if let Some(rid) = review_id_flag {
+        if let Err(e) = shell::validate_review_id(rid) {
+            guidance.blocked(format!("invalid review ID: {e}"));
+            print_guidance(&guidance, format)?;
+            return Ok(());
+        }
         return handle_existing_review(
             &ctx,
             &mut guidance,
@@ -121,26 +127,40 @@ pub fn execute(params: &ReviewParams) -> anyhow::Result<()> {
         );
     }
 
-    // Check for existing review in the workspace
-    match ctx.reviews_in_workspace(&workspace) {
-        Ok(reviews) if !reviews.is_empty() => {
-            // Use the first open review found
-            let existing = &reviews[0];
-            return handle_existing_review(
-                &ctx,
-                &mut guidance,
-                &existing.review_id,
-                &workspace,
-                &reviewer_names,
-                bone_id,
-                project,
-                agent,
-                execute,
-                format,
-            );
-        }
-        Ok(_) => {
-            // No existing review — output creation commands
+    // Look for a live review belonging to THIS bone. `seal reviews list` is
+    // repo-global, so an unscoped pick lands on whichever review sorts first —
+    // often a merged one for an unrelated bone, which would sail through the
+    // review gate and let unreviewed work merge.
+    match ctx.reviews_for_bone(&workspace, bone_id) {
+        Ok(reviews) => {
+            // Several live reviews for one bone keeps the gate shut until every one of
+            // them is signed off (select_for_bone prefers the unapproved candidate).
+            // That is the safe direction, but it looks exactly like a reviewer who
+            // never showed up, so name the duplicates rather than let the jam be silent.
+            if reviews.len() > 1 {
+                let ids: Vec<&str> = reviews.iter().map(|r| r.review_id.as_str()).collect();
+                guidance.diagnostic(format!(
+                    "bone {bone_id} has {} live reviews ({}); the gate stays closed until \
+                     each is approved or abandoned.",
+                    reviews.len(),
+                    ids.join(", ")
+                ));
+            }
+            if let Some(existing) = review_select::select_for_bone(&reviews, bone_id) {
+                return handle_existing_review(
+                    &ctx,
+                    &mut guidance,
+                    &existing.review_id,
+                    &workspace,
+                    &reviewer_names,
+                    bone_id,
+                    project,
+                    agent,
+                    execute,
+                    format,
+                );
+            }
+            // No live review for this bone — fall through and create one.
         }
         Err(e) => {
             // Listing failed — proceed to create a new review
@@ -181,13 +201,13 @@ fn build_new_review_guidance(
     guidance.status = ProtocolStatus::NeedsReview;
 
     let reviewers_str = reviewer_names.join(",");
-    let title = format!("{bone_id}: {bone_title}");
 
     let mut steps = Vec::new();
     steps.push(shell::seal_create_cmd(
         workspace,
         agent,
-        &title,
+        bone_id,
+        bone_title,
         &reviewers_str,
     ));
 
@@ -243,6 +263,41 @@ fn handle_existing_review(
             return Ok(());
         }
     };
+
+    // Only a live review can gate work. A merged or abandoned one is closed out --
+    // its LGTM votes say nothing about the work sitting in this workspace now --
+    // and a status we do not recognize is refused rather than trusted, so seal
+    // growing a new state cannot silently re-open the gate.
+    if !review_select::is_live_status(&review_detail.status) {
+        let status = review_detail.status.trim();
+        let status_phrase = if status.is_empty() {
+            "of unknown status"
+        } else {
+            status
+        };
+        guidance.blocked(format!(
+            "review {review_id} is {status_phrase} and cannot gate {bone_id}. \
+             Create a fresh review for this bone: {}",
+            shell::seal_create_cmd(
+                workspace,
+                agent,
+                bone_id,
+                "<title>",
+                &reviewer_names.join(","),
+            )
+        ));
+        print_guidance(guidance, format)?;
+        return Ok(());
+    }
+
+    // Explicit --review-id can still name another bone's review; warn loudly.
+    if !review_select::title_matches_bone(review_detail.title.as_deref(), bone_id) {
+        guidance.diagnostic(format!(
+            "review {review_id} (\"{}\") does not name bone {bone_id} in its title; \
+             verify it actually covers this work.",
+            review_detail.title.as_deref().unwrap_or("<untitled>"),
+        ));
+    }
 
     guidance.review = Some(ReviewRef {
         review_id: review_id.to_string(),
