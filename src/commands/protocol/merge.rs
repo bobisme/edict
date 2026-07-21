@@ -456,8 +456,12 @@ fn check_conflict_gate(
                     ));
                 }
                 if check.stale {
-                    guidance
-                        .diagnostic("Workspace is stale — run `maw ws sync` first.".to_string());
+                    guidance.diagnostic(
+                        "Workspace is stale. `maw ws merge` auto-syncs stale sources before \
+                         merging, so this alone does not block the merge — a manual `maw ws sync` \
+                         is only needed if the auto-sync itself reported conflicts."
+                            .to_string(),
+                    );
                 }
                 if let Some(message) = check.message.as_deref() {
                     guidance.diagnostic(message.to_string());
@@ -568,31 +572,46 @@ fn add_conflict_recovery_guidance(
     let retry_cmd = shell::ws_merge_cmd(workspace, target, merge_msg);
     let check_cmd = shell::ws_merge_check_cmd(workspace, target);
     guidance.diagnostic(format!(
-        "Conflict recovery — workspace is preserved (not destroyed). Steps:\n\
+        "Conflict recovery — workspace is preserved (not destroyed). Conflicts are data, not \
+         failure: merge auto-syncs stale sources, so a bare staleness report is not a blocker. \
+         Steps:\n\
          \n\
-         1. Inspect conflicts and stale state:\n\
+         1. Inspect conflicts:\n\
          \n\
          maw ws conflicts {workspace} --format json\n\
          {check_cmd}\n\
-         maw ws sync {workspace}\n\
+         maw ws resolve {workspace} --list\n\
          \n\
          2. For auto-resolvable files (.bones/, .claude/, .agents/):\n\
          \n\
          maw exec {workspace} -- git restore --source refs/heads/main -- .bones/ .claude/ .agents/\n\
          \n\
-         3. For code conflicts — resolve, stage, and commit in workspace:\n\
+         3. Resolve remaining conflicts — prefer `maw ws resolve` over hand-editing markers:\n\
+         \n\
+         maw ws resolve {workspace} --keep epoch|{workspace}|both|union   # whole-workspace\n\
+         maw ws resolve {workspace} --keep <path>=<name>                 # per-file\n\
+         \n\
+         Manual fallback: edit markers by hand, then stage in the workspace:\n\
          \n\
          maw exec {workspace} -- git status\n\
          maw exec {workspace} -- git add <resolved-file>\n\
-         maw exec {workspace} -- git commit -m 'resolve: merge conflicts in {workspace}'\n\
          \n\
          4. After resolving:\n\
          \n\
          {retry_cmd}              # retry merge\n\
          \n\
-         5. To UNDO the merge entirely (recover pre-merge state):\n\
+         (or resolve inline at merge time with --resolve-all={workspace} / --resolve cf-id=<name>)\n\
          \n\
-         maw ws undo {workspace}                         # reset workspace to its base\n\
+         5. If the merge ATTEMPT ITSELF got stuck (killed/OOM'd/panicked/Ctrl-C'd mid-merge, not \
+         a normal recorded conflict), clear the orphaned merge-state:\n\
+         \n\
+         maw ws merge --abort\n\
+         \n\
+         To undo a COMPLETED merge instead (recover pre-merge state), use the repo-level undo — \
+         NOT `maw ws undo {workspace}`, which discards the workspace's entire delta including the \
+         work being merged:\n\
+         \n\
+         maw undo                                        # undo the last completed merge\n\
          \n\
          6. To recover a destroyed workspace:\n\
          \n\
@@ -796,7 +815,19 @@ mod tests {
             guidance
                 .diagnostics
                 .iter()
-                .any(|d| d.contains("maw ws undo"))
+                .any(|d| d.contains("maw ws resolve"))
+        );
+        assert!(
+            guidance
+                .diagnostics
+                .iter()
+                .any(|d| d.contains("maw ws merge --abort"))
+        );
+        assert!(
+            guidance
+                .diagnostics
+                .iter()
+                .any(|d| d.contains("maw undo") && d.contains("undo a COMPLETED merge"))
         );
         assert!(
             guidance

@@ -208,10 +208,9 @@ fn gather_ready_bones() -> Option<String> {
         arr.clone()
     } else if let Some(arr) = parsed["issues"].as_array() {
         arr.clone()
-    } else if let Some(arr) = parsed["bones"].as_array() {
-        arr.clone()
     } else {
-        return None;
+        let arr = parsed["bones"].as_array()?;
+        arr.clone()
     };
 
     if bones.is_empty() {
