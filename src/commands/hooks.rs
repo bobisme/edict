@@ -218,11 +218,13 @@ fn audit_hooks(project_root: Option<&Path>, format: super::doctor::OutputFormat)
 }
 
 fn run_hook(hook_name: &str, release: bool) -> Result<()> {
-    // Read stdin with a size limit (64KB) for defense-in-depth
+    // Read stdin with a size limit for defense-in-depth. A PostToolUse
+    // payload carries the tool's response and can run to hundreds of KB; a
+    // truncated payload has no session id and would leave occupancy unrenewed.
     let stdin_input = {
         use std::io::Read;
         let mut buf = String::new();
-        let mut handle = std::io::stdin().take(64 * 1024);
+        let mut handle = std::io::stdin().take(4 * 1024 * 1024);
         handle.read_to_string(&mut buf).ok();
         if buf.is_empty() { None } else { Some(buf) }
     };
@@ -230,7 +232,7 @@ fn run_hook(hook_name: &str, release: bool) -> Result<()> {
     match hook_name {
         // "init-agent" | "check-jj" are backwards-compat aliases for "session-start"
         "session-start" | "init-agent" | "check-jj" => {
-            crate::hooks::run_session_start();
+            crate::hooks::run_session_start(stdin_input.as_deref());
             Ok(())
         }
         // "check-rite-inbox" is a backwards-compat alias for "post-tool-call"
@@ -238,15 +240,15 @@ fn run_hook(hook_name: &str, release: bool) -> Result<()> {
             crate::hooks::run_post_tool_call(stdin_input.as_deref())
         }
         "session-end" => {
-            crate::hooks::run_session_end();
+            crate::hooks::run_session_end(stdin_input.as_deref());
             Ok(())
         }
         "claim-agent" => {
             if release {
-                crate::hooks::run_session_end();
+                crate::hooks::run_session_end(stdin_input.as_deref());
             } else {
                 // claim-agent on SessionStart/PostToolUse — handled by session-start/post-tool-call
-                crate::hooks::run_session_start();
+                crate::hooks::run_session_start(stdin_input.as_deref());
             }
             Ok(())
         }

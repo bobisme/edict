@@ -45,8 +45,13 @@ impl HookContext {
     }
 }
 
-/// Run session-start hook: maw guidance + agent identity + stake claim
-pub fn run_session_start() {
+/// Run session-start hook: maw guidance + agent identity + occupy the identity
+///
+/// `hook_input` is the harness's stdin payload. Claude Code hooks carry the
+/// harness `session_id`; with it the identity is occupied as a rite session
+/// attachment, which `rite send` and `rite channel` understand, instead of
+/// an ownerless `agent://` claim that `rite channel` would refuse.
+pub fn run_session_start(hook_input: Option<&str>) {
     let ctx = HookContext::detect();
 
     // 1. Maw repo guidance (layout-aware)
@@ -77,9 +82,14 @@ pub fn run_session_start() {
         println!("Project channel: {}", config.channel());
     }
 
-    // 3. Stake claim (if agent set)
+    // 3. Occupy the identity (if agent set)
     if let Some(ref agent) = ctx.agent {
-        stake_claim(agent);
+        match session_id_from(hook_input) {
+            Some(session) => {
+                attach_session(agent, &session);
+            }
+            None => stake_claim(agent),
+        }
     }
 }
 
@@ -98,14 +108,17 @@ pub fn run_post_tool_call(hook_input: Option<&str>) -> Result<()> {
     // 1. Check rite inbox
     check_rite_inbox(&ctx, agent, hook_input)?;
 
-    // 2. Refresh claim if expiring
-    refresh_claim_if_needed(agent);
+    // 2. Keep the identity occupied if its claim is expiring
+    match session_id_from(hook_input) {
+        Some(session) => renew_attachment_if_needed(agent, &session),
+        None => refresh_claim_if_needed(agent),
+    }
 
     Ok(())
 }
 
-/// Run session-end hook: release claim + clear status
-pub fn run_session_end() {
+/// Run session-end hook: detach the session, release the claim, clear status
+pub fn run_session_end(hook_input: Option<&str>) {
     let agent = std::env::var("AGENT")
         .or_else(|_| std::env::var("RITE_AGENT"))
         .ok()
@@ -114,6 +127,24 @@ pub fn run_session_end() {
     let Some(agent) = agent else {
         return;
     };
+
+    // The attachment this session made, if any. A session that was never
+    // attached, or whose attachment a `rite channel` took over, is a no-op.
+    if let Some(session) = session_id_from(hook_input) {
+        let _ = run_command(
+            "rite",
+            &[
+                "sessions",
+                "detach",
+                "--agent",
+                &agent,
+                "--session",
+                &session,
+                "-q",
+            ],
+            None,
+        );
+    }
 
     let claim_uri = format!("agent://{agent}");
     let _ = run_command(
@@ -130,6 +161,230 @@ pub fn run_session_end() {
 
 // --- Internal helpers ---
 
+/// The harness session id from a hook's stdin payload. Claude Code sends a
+/// JSON object with `session_id` on every hook event; anything else, or
+/// nothing at all, means the harness did not say.
+fn session_id_from(hook_input: Option<&str>) -> Option<String> {
+    let input = hook_input?;
+    let value: serde_json::Value = serde_json::from_str(input).ok()?;
+    let id = value.get("session_id")?.as_str()?.trim();
+    if id.is_empty()
+        || id.len() > 256
+        || id.starts_with('-')
+        || !id.chars().all(|c| c.is_ascii_graphic())
+    {
+        return None;
+    }
+    Some(id.to_string())
+}
+
+/// Why `rite sessions attach` did not attach.
+#[derive(Debug, PartialEq, Eq)]
+enum AttachRefusal {
+    /// This same session is already attached: a compaction re-run. Fine.
+    ThisSession,
+    /// This agent is attached to another session, such as a `rite channel`
+    /// that got there first, or the previous session of a `/clear`. The
+    /// identity is occupied; this session is not the occupant.
+    OtherSession,
+    /// The `rite` binary is not on PATH. The old ownerless stake was silent
+    /// about this too.
+    NoRite,
+    /// Anything else: another agent holds the identity, an ownerless claim
+    /// from a responder, a store problem.
+    Other(String),
+}
+
+/// Classify an attach failure from its message. Both "already attached"
+/// messages come from rite's `sessions attach`; the session's own reads
+/// `Session <id> is already attached`, the other `<agent> is already attached
+/// to <harness> session <other>`.
+fn classify_attach_error(session: &str, why: &str) -> AttachRefusal {
+    if why.contains("running rite") {
+        AttachRefusal::NoRite
+    } else if why.contains(&format!("Session {session} is already attached")) {
+        AttachRefusal::ThisSession
+    } else if why.contains("is already attached to") {
+        AttachRefusal::OtherSession
+    } else {
+        AttachRefusal::Other(why.to_string())
+    }
+}
+
+/// Occupy `agent://<agent>` as an attachment of the harness session, kind
+/// `pull`: the model reads the bus itself, nothing pushes into it. A
+/// `rite channel` in the same session takes the attachment over and keeps
+/// the identity from there.
+///
+/// The claim lasts ten minutes and is renewed by tool activity, so a
+/// harness that dies lets the identity lapse the way the ownerless claim
+/// did. Returns whether this session holds the identity afterwards.
+fn attach_session(agent: &str, session: &str) -> bool {
+    let result = run_command(
+        "rite",
+        &[
+            "sessions",
+            "attach",
+            "--agent",
+            agent,
+            "--harness",
+            "claude",
+            "--session",
+            session,
+            "--kind",
+            "pull",
+            "--ttl",
+            "600",
+            "-q",
+        ],
+        None,
+    );
+    match result {
+        Ok(_) => true,
+        Err(e) => match classify_attach_error(session, &e.to_string()) {
+            AttachRefusal::ThisSession => true,
+            AttachRefusal::NoRite => false,
+            AttachRefusal::OtherSession => {
+                println!(
+                    "agent://{agent} is occupied by another session of this agent; this session is not the occupant."
+                );
+                false
+            }
+            AttachRefusal::Other(why) => {
+                eprintln!("edict: could not occupy agent://{agent} for this session: {why}");
+                false
+            }
+        },
+    }
+}
+
+/// Who holds this agent's identity, read from a `rite sessions list
+/// --format json` document.
+#[derive(Debug, PartialEq, Eq)]
+enum Occupant {
+    /// This session, by the attachment with this id.
+    ThisSession(String),
+    /// Another session of this agent: a `rite channel` that took over, or a
+    /// session that has not ended yet. Nothing for this session to do.
+    OtherSession,
+    /// Nobody.
+    Nobody,
+}
+
+fn occupant_in(list_json: &str, session: &str) -> Occupant {
+    let Ok(data) = serde_json::from_str::<serde_json::Value>(list_json) else {
+        return Occupant::Nobody;
+    };
+    let Some(sessions) = data["sessions"].as_array() else {
+        return Occupant::Nobody;
+    };
+    let live = sessions
+        .iter()
+        .filter(|s| s["attached"].as_bool() == Some(true));
+    let mut other = false;
+    for s in live {
+        if s["session"].as_str() == Some(session) {
+            if let Some(id) = s["attachment_id"].as_str() {
+                return Occupant::ThisSession(id.to_string());
+            }
+        } else {
+            other = true;
+        }
+    }
+    if other {
+        Occupant::OtherSession
+    } else {
+        Occupant::Nobody
+    }
+}
+
+/// Who holds this agent's identity now.
+fn occupant_of(agent: &str, session: &str) -> Occupant {
+    run_command(
+        "rite",
+        &["sessions", "list", "--agent", agent, "--format", "json"],
+        None,
+    )
+    .map_or(Occupant::Nobody, |output| occupant_in(&output, session))
+}
+
+/// Whether, in a `rite claims list --all --format json` document, the claim
+/// on `claim_uri` held by `principal` is active and has under `threshold`
+/// seconds left. A lapsed claim has a negative remainder and counts. A claim
+/// held by any other principal, such as the attachment a `rite channel` took
+/// over with, does not.
+fn claim_needs_renewal(
+    claims_json: &str,
+    principal: &str,
+    claim_uri: &str,
+    threshold: i64,
+) -> bool {
+    let Ok(data) = serde_json::from_str::<serde_json::Value>(claims_json) else {
+        return false;
+    };
+    data["claims"].as_array().is_some_and(|claims| {
+        claims.iter().any(|claim| {
+            claim["active"].as_bool() == Some(true)
+                && claim["agent"].as_str() == Some(principal)
+                && claim["patterns"]
+                    .as_array()
+                    .is_some_and(|p| p.iter().any(|x| x.as_str() == Some(claim_uri)))
+                && claim["expires_in_secs"]
+                    .as_i64()
+                    .is_some_and(|left| left < threshold)
+        })
+    })
+}
+
+/// Keep this session's attachment holding the identity. A session that has
+/// no live attachment while nobody holds the identity (its start-time attach
+/// was refused by a claim that has since lapsed, or a `/clear` started this
+/// session before the previous one's detach ran) attaches now; attach is
+/// idempotent for this session, so this is cheap. When another session of
+/// this agent holds it, above all a `rite channel` that took this session's
+/// attachment over, there is nothing to do and nothing to say. An
+/// attachment whose claim is about to lapse, or has lapsed, is renewed.
+fn renew_attachment_if_needed(agent: &str, session: &str) {
+    let attachment = match occupant_of(agent, session) {
+        Occupant::ThisSession(id) => id,
+        Occupant::OtherSession => return,
+        Occupant::Nobody => {
+            attach_session(agent, session);
+            return;
+        }
+    };
+    let principal = format!("session:{attachment}");
+    let claim_uri = format!("agent://{agent}");
+
+    let Ok(output) = run_command(
+        "rite",
+        &[
+            "claims", "list", "--all", "--agent", agent, "--format", "json",
+        ],
+        None,
+    ) else {
+        return;
+    };
+    if claim_needs_renewal(&output, &principal, &claim_uri, 120) {
+        let _ = run_command(
+            "rite",
+            &[
+                "sessions",
+                "renew",
+                "--agent",
+                agent,
+                "--attachment",
+                &attachment,
+                "--ttl",
+                "600",
+                "-q",
+            ],
+            None,
+        );
+    }
+}
+
+/// The ownerless claim, for a harness whose hooks carry no session id.
 fn stake_claim(agent: &str) {
     let claim_uri = format!("agent://{agent}");
     let _ = run_command(
@@ -370,6 +625,145 @@ mod tests {
         fs::create_dir_all(tmp.path().join("ws/default/.manifold")).unwrap();
         let result = find_ancestor_with(tmp.path(), ".manifold");
         assert_eq!(result, Some(tmp.path().to_path_buf()));
+    }
+
+    #[test]
+    fn session_id_comes_from_the_hook_payload() {
+        assert_eq!(
+            session_id_from(Some(
+                r#"{"session_id":"abc-123","hook_event_name":"SessionStart"}"#
+            )),
+            Some("abc-123".to_string())
+        );
+        assert_eq!(
+            session_id_from(Some(r#"{"session_id":"  abc  "}"#)),
+            Some("abc".to_string())
+        );
+    }
+
+    #[test]
+    fn a_session_id_that_looks_like_a_flag_is_rejected() {
+        assert_eq!(session_id_from(Some(r#"{"session_id":"--all"}"#)), None);
+        assert_eq!(session_id_from(Some(r#"{"session_id":"-x"}"#)), None);
+    }
+
+    #[test]
+    fn attach_refusals_are_told_apart() {
+        assert_eq!(
+            classify_attach_error(
+                "s1",
+                "rite failed: Error: Session s1 is already attached to a as attachment 01X. Detach it first"
+            ),
+            AttachRefusal::ThisSession
+        );
+        assert_eq!(
+            classify_attach_error(
+                "s1",
+                "rite failed: Error: a is already attached to claude session mcp:9 as attachment 01Y. Pass --replace"
+            ),
+            AttachRefusal::OtherSession
+        );
+        assert_eq!(
+            classify_attach_error("s1", "running rite"),
+            AttachRefusal::NoRite
+        );
+        assert!(matches!(
+            classify_attach_error("s1", "rite failed: Error: agent://a is held by b until ..."),
+            AttachRefusal::Other(_)
+        ));
+    }
+
+    const LIST: &str = r#"{"sessions":[
+        {"attachment_id":"01A","agent":"a","harness":"claude","session":"old","kind":"pull","state":"detached","attached":false},
+        {"attachment_id":"01B","agent":"a","harness":"claude","session":"s1","kind":"pull","state":"attached","attached":true}
+    ]}"#;
+
+    #[test]
+    fn the_occupant_is_told_from_the_session_list() {
+        assert_eq!(
+            occupant_in(LIST, "s1"),
+            Occupant::ThisSession("01B".to_string())
+        );
+        // A detached record for this session and a live one for another:
+        // the other holds it, and this session stays quiet.
+        assert_eq!(occupant_in(LIST, "old"), Occupant::OtherSession);
+        assert_eq!(occupant_in(LIST, "nope"), Occupant::OtherSession);
+        assert_eq!(occupant_in(r#"{"sessions":[]}"#, "s1"), Occupant::Nobody);
+        assert_eq!(
+            occupant_in(
+                r#"{"sessions":[{"attachment_id":"01A","session":"old","attached":false}]}"#,
+                "s1"
+            ),
+            Occupant::Nobody
+        );
+        assert_eq!(occupant_in("not json", "s1"), Occupant::Nobody);
+    }
+
+    fn claims(principal: &str, left: i64, active: bool) -> String {
+        format!(
+            r#"{{"claims":[{{"agent":"{principal}","patterns":["agent://a"],"active":{active},"expires_in_secs":{left}}}]}}"#
+        )
+    }
+
+    #[test]
+    fn a_claim_near_or_past_expiry_is_renewed_only_when_it_is_ours() {
+        assert!(claim_needs_renewal(
+            &claims("session:01B", 99, true),
+            "session:01B",
+            "agent://a",
+            120
+        ));
+        assert!(claim_needs_renewal(
+            &claims("session:01B", -5, true),
+            "session:01B",
+            "agent://a",
+            120
+        ));
+        assert!(!claim_needs_renewal(
+            &claims("session:01B", 599, true),
+            "session:01B",
+            "agent://a",
+            120
+        ));
+        assert!(!claim_needs_renewal(
+            &claims("session:01B", 99, false),
+            "session:01B",
+            "agent://a",
+            120
+        ));
+        // A rite channel took the identity over: its claim is not ours to renew.
+        assert!(!claim_needs_renewal(
+            &claims("session:01C", 99, true),
+            "session:01B",
+            "agent://a",
+            120
+        ));
+        assert!(!claim_needs_renewal(
+            &claims("session:01B", 99, true),
+            "session:01B",
+            "agent://b",
+            120
+        ));
+        assert!(!claim_needs_renewal(
+            "nope",
+            "session:01B",
+            "agent://a",
+            120
+        ));
+    }
+
+    #[test]
+    fn session_id_is_absent_when_the_harness_did_not_say() {
+        assert_eq!(session_id_from(None), None);
+        assert_eq!(session_id_from(Some("")), None);
+        assert_eq!(session_id_from(Some("not json")), None);
+        assert_eq!(
+            session_id_from(Some(r#"{"hook_event_name":"SessionStart"}"#)),
+            None
+        );
+        assert_eq!(session_id_from(Some(r#"{"session_id":""}"#)), None);
+        assert_eq!(session_id_from(Some(r#"{"session_id":"has space"}"#)), None);
+        assert_eq!(session_id_from(Some(r#"{"session_id":42}"#)), None);
     }
 
     #[test]

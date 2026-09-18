@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- The Claude hooks occupy `agent://<name>` as a rite session attachment of the harness session (`rite sessions attach --harness claude --kind pull`, from the hook payload's `session_id`) instead of an ownerless claim. Tool activity renews the attachment before its ten-minute claim lapses and SessionEnd detaches it. An ownerless claim made `rite channel` refuse the identity in the same session; a `pull` attachment of the same agent is what the channel takes over (rite bn-316s; a channel without it still refuses when the hook attaches first). A session whose start-time attach was refused, or that started before the previous session's detach ran, attaches on its next tool call. A harness whose hooks carry no session id keeps the ownerless claim. edict installs no Codex hooks, so a Codex launcher still owns reserve, attach, and detach itself.
+
 ## [0.29.1] — 2026-09-07
 
 ### Fixed
