@@ -77,6 +77,19 @@ pub fn execute(params: &ExecuteParams) -> anyhow::Result<()> {
         return Ok(());
     }
 
+    // A risk:critical bone needs a human approval that no protocol state records.
+    // Fail closed rather than emit merge steps an agent would run on a security LGTM.
+    if merge_needs_human_approval(&bone_info.labels, no_merge) {
+        guidance.blocked(format!(
+            "bone {bone_id} is risk:critical and requires human approval before merge. \
+             protocol finish does not emit merge steps for it. After an authorized approver \
+             approves, the approver or the lead merges manually (see finish.md), or run \
+             edict protocol finish {bone_id} --no-merge to close the bone without merging."
+        ));
+        print_guidance(&guidance, format)?;
+        return Ok(());
+    }
+
     // Check agent holds bone claim
     let held_bone_claims = ctx.held_bone_claims();
     let holds_claim = held_bone_claims.iter().any(|(id, _)| *id == bone_id);
@@ -288,8 +301,21 @@ fn build_finish_guidance(guidance: &mut ProtocolGuidance, gc: &mut GuidanceCtx) 
     false
 }
 
-/// Build the standard finish steps: commit workspace, merge, close, announce,
+/// Whether finishing this bone would merge code that needs a human approval.
+///
+/// `risk:critical` requires an authorized human to approve before merge. That
+/// approval is a Rite message, not Seal state, so no gate here can verify it.
+/// With `--no-merge` nothing merges, so the lead's merge path owns the check.
+fn merge_needs_human_approval(labels: &[String], no_merge: bool) -> bool {
+    !no_merge && labels.iter().any(|l| l == "risk:critical")
+}
+
+/// Build the standard finish steps: commit or record, merge, close, announce,
 /// release claims.
+///
+/// With a review, the code was committed before the review was created, and a
+/// blanket `git add -A` now would merge files no reviewer saw. The only commit
+/// after the LGTM is the review log itself, recorded just before the merge.
 fn build_finish_steps(guidance: &mut ProtocolGuidance, params: &FinishStepsParams) {
     let FinishStepsParams {
         bone_id,
@@ -303,40 +329,43 @@ fn build_finish_steps(guidance: &mut ProtocolGuidance, params: &FinishStepsParam
 
     let mut steps = Vec::new();
 
-    // 1. Stage workspace changes
-    steps.push(format!("maw exec {workspace} -- git add -A"));
+    if let Some(rid) = review_id {
+        // 1. Record the review in the workspace before the merge destroys it.
+        //    With --no-merge the lead records it in `edict protocol merge`:
+        //    a merged review no longer passes that merge gate.
+        if !no_merge {
+            steps.extend(shell::seal_record_cmds(workspace, rid));
+        }
+    } else {
+        // 1. Stage and commit workspace changes
+        steps.push(format!("maw exec {workspace} -- git add -A"));
+        steps.push(format!(
+            "maw exec {} -- git commit -m {}",
+            workspace,
+            shell::shell_escape(&format!(
+                "{bone_id}: {bead_title}\n\nCo-Authored-By: Claude <noreply@anthropic.com>"
+            ))
+        ));
+    }
 
-    // 2. Commit workspace changes
-    steps.push(format!(
-        "maw exec {} -- git commit -m {}",
-        workspace,
-        shell::shell_escape(&format!(
-            "{bone_id}: {bead_title}\n\nCo-Authored-By: Claude <noreply@anthropic.com>"
-        ))
-    ));
-
-    // 3. Merge workspace (unless --no-merge)
+    // 2. Merge workspace (unless --no-merge)
     if !no_merge {
         // Use a conventional commit message derived from the bone title
         let merge_msg = format!("feat: {bead_title}");
         let target = merge_target.map_or(shell::MergeTarget::Default, shell::MergeTarget::Change);
-        steps.push(shell::ws_merge_cmd(workspace, target, &merge_msg));
-    }
-
-    // 4. Mark review as merged (if review exists)
-    if let Some(rid) = review_id {
-        steps.push(format!(
-            "maw exec default -- seal reviews mark-merged {rid}"
+        steps.push(review_id.map_or_else(
+            || shell::ws_merge_cmd(workspace, target, &merge_msg),
+            |rid| shell::ws_merge_reviewed_cmd(workspace, rid, target, &merge_msg),
         ));
     }
 
-    // 5. Close the bone
+    // 3. Close the bone
     steps.push(shell::bn_done_cmd(
         bone_id,
         &format!("Completed in workspace {workspace}"),
     ));
 
-    // 6. Announce completion on rite
+    // 4. Announce completion on rite
     steps.push(shell::rite_send_cmd(
         "agent",
         project,
@@ -344,7 +373,7 @@ fn build_finish_steps(guidance: &mut ProtocolGuidance, params: &FinishStepsParam
         "task-done",
     ));
 
-    // 7. Release all claims
+    // 5. Release all claims
     steps.push(shell::claims_release_all_cmd("agent"));
 
     guidance.steps(steps);
@@ -534,10 +563,8 @@ mod tests {
             },
         );
 
-        assert!(guidance.steps.len() >= 6);
-        // Should have git add + commit
-        assert!(guidance.steps.iter().any(|s| s.contains("git add -A")));
-        assert!(guidance.steps.iter().any(|s| s.contains("git commit -m")));
+        // Nothing but the review log is committed after the LGTM
+        assert!(!guidance.steps.iter().any(|s| s.contains("git add -A")));
         // Should have ws merge with --message
         assert!(
             guidance
@@ -551,12 +578,28 @@ mod tests {
                 .iter()
                 .any(|s| s.contains("--message") && s.contains("test feature"))
         );
-        // Should have mark-merged
-        assert!(
+        // The review is marked merged and committed in the workspace, before
+        // the merge destroys it. Nothing runs in default.
+        let pos = |needle: &str| {
             guidance
                 .steps
                 .iter()
-                .any(|s| s.contains("seal reviews mark-merged cr-123"))
+                .position(|s| s.contains(needle))
+                .unwrap_or_else(|| panic!("no step contains {needle:?}: {:#?}", guidance.steps))
+        };
+        let clean = pos(
+            "git status --porcelain --untracked-files=all -- . ':(exclude).seal/reviews/cr-123'",
+        );
+        let mark = pos("maw exec frost-castle -- seal reviews mark-merged cr-123");
+        assert!(clean < mark);
+        let commit = pos("git commit -m 'chore: seal review cr-123' -- .seal/reviews/cr-123");
+        let merge = pos("maw ws merge frost-castle");
+        assert!(mark < commit && commit < merge);
+        assert!(
+            !guidance
+                .steps
+                .iter()
+                .any(|s| s.contains("maw exec default -- seal"))
         );
         // Should have bn done
         assert!(guidance.steps.iter().any(|s| s.contains("bn done")));
@@ -564,6 +607,43 @@ mod tests {
         assert!(guidance.steps.iter().any(|s| s.contains("task-done")));
         // Should have claims release
         assert!(guidance.steps.iter().any(|s| s.contains("claims release")));
+    }
+
+    /// With --no-merge the lead merges. A merged review fails the lead's merge
+    /// gate, so the worker must leave the review open for the lead to record.
+    #[test]
+    fn test_build_finish_steps_no_merge_leaves_review_to_lead() {
+        let mut guidance = ProtocolGuidance::new("finish");
+
+        build_finish_steps(
+            &mut guidance,
+            &FinishStepsParams {
+                bone_id: "bd-abc",
+                bead_title: "test feature",
+                project: "myproject",
+                workspace: "frost-castle",
+                merge_target: None,
+                review_id: Some("cr-123"),
+                no_merge: true,
+            },
+        );
+
+        assert!(!guidance.steps.iter().any(|s| s.contains("mark-merged")));
+        assert!(!guidance.steps.iter().any(|s| s.contains("git commit")));
+        assert!(!guidance.steps.iter().any(|s| s.contains("maw ws merge")));
+        assert!(guidance.steps.iter().any(|s| s.contains("bn done")));
+    }
+
+    #[test]
+    fn risk_critical_blocks_merging_finish() {
+        let critical = vec!["risk:critical".to_string()];
+        assert!(merge_needs_human_approval(&critical, false));
+        assert!(!merge_needs_human_approval(&critical, true));
+        assert!(!merge_needs_human_approval(
+            &["risk:high".to_string()],
+            false
+        ));
+        assert!(!merge_needs_human_approval(&[], false));
     }
 
     #[test]

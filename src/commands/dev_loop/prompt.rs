@@ -470,8 +470,8 @@ Get the bone title from: maw exec default -- bn show <id>
 Use the appropriate conventional commit prefix: feat: for features, fix: for bugs, chore: for maintenance.
 
 This checks bone status, review gate, and conflicts in one step. Read the output:
-  - Ready → proceed with Merge Protocol below, then follow the post-merge steps from the output
-    (mark review merged, sync bones, announce).
+  - Ready → proceed with Merge Protocol below. The output's review steps (mark-merged, commit
+    .seal/reviews/<review-id>) run in step c2, BEFORE the merge destroys the workspace.
   - NeedsReview → review required before merging (see NeedsReview handling below).
   - Blocked → read diagnostics for recovery steps (conflicts, bone not closed, review blocked).
   - Unavailable (exit 1) → fall back to manual merge paths at the bottom of this section.
@@ -484,10 +484,13 @@ After protocol merge reports Ready, close the bone:
 
 Every merge into default MUST follow this protocol to prevent concurrent merge conflicts:
 
-  a0. COMMIT WORKER FILES (critical — workers may have uncommitted changes):
+  a0. COMMIT WORKER FILES (unreviewed workspaces only — workers may have uncommitted changes):
       Workers may edit files without committing. Ensure changes are committed before merge:
         maw exec $WS -- git add -A && maw exec $WS -- git commit -m "<id>: worker changes" --allow-empty
       If you skip this step, maw ws merge may miss uncommitted worker changes.
+      Reviewed workspace: do NOT run this. The review covers only committed code. If
+      maw exec $WS -- git status --porcelain lists anything outside .seal/, those changes were
+      never reviewed: re-request review instead of merging.
 
   a. PREFLIGHT CHECK (outside mutex — early conflict detection):
      maw ws merge $WS --into default --check
@@ -511,8 +514,22 @@ Every merge into default MUST follow this protocol to prevent concurrent merge c
           For registry files (match arms, mod declarations, use statements), this usually means keeping all entries.
        5. After resolving: maw exec $WS -- git add -A && maw exec $WS -- git commit -m "<id>: <summary> (conflict resolved)"
 
-  d. MERGE:
-     maw ws merge $WS --into default --destroy --message "feat: <bone-title>"
+  c2. RECORD REVIEW (reviewed workspaces only — the LAST step before the merge):
+     maw exec $WS -- git status --porcelain --untracked-files=all
+       Must list nothing outside .seal/reviews/<review-id>/. maw ws merge also merges
+       uncommitted files, which no reviewer saw: if anything else is listed, do not merge.
+     maw exec $WS -- seal reviews mark-merged <review-id> --agent {agent}
+     maw exec $WS -- git add .seal/reviews/<review-id>
+     maw exec $WS -- git commit -m "chore: seal review <review-id>" -- .seal/reviews/<review-id>
+     The review log lives in the workspace. This commit is the only way it reaches default, and
+     it is the only commit allowed after the LGTM. Never mark-merged after step d: the workspace
+     is gone. If mark-merged exits 1 ("the approval does not cover the current code"), code was
+     committed after the LGTM: re-request the reviewer and do not merge.
+
+  d. MERGE (reviewed workspace: repeat the c2 status check in the SAME command):
+     {{ out=$(maw exec $WS -- git status --porcelain --untracked-files=all -- . ':(exclude).seal/reviews/<review-id>') && test -z "$out" || {{ echo "unreviewed changes: stop" >&2; false; }}; }} && \
+       maw ws merge $WS --into default --destroy --message "feat: <bone-title>"
+     Unreviewed workspace: maw ws merge $WS --into default --destroy --message "feat: <bone-title>"
      (Use a conventional commit prefix: feat: for features, fix: for bugs, chore: for maintenance, etc.
       Replace <bone-title> with the actual bone title from `bn show <id>`.)
 
@@ -560,12 +577,11 @@ Every merge into default MUST follow this protocol to prevent concurrent merge c
   If it fails (exit 1 = command unavailable), fall back to the manual paths below.
 
   Already reviewed and approved (LGTM):
-    maw exec default -- seal reviews mark-merged <review-id> --agent {agent}
-    If it exits 1 with "the approval does not cover the current code", you committed after
-    the LGTM. Re-request the reviewer and wait for a fresh LGTM, which moves the approval
-    onto the new commit. Use --allow-stale-approval only when the new commits are provably
-    outside what was reviewed, and record why on the bone.
-    Run MERGE PROTOCOL above for $WS
+    Run MERGE PROTOCOL above for $WS. Step c2 marks the review merged and commits its log.
+    If mark-merged exits 1 with "the approval does not cover the current code", code was
+    committed after the LGTM. Re-request the reviewer and wait for a fresh LGTM, which moves
+    the approval onto the new commit. Use --allow-stale-approval only when the new commits are
+    provably outside what was reviewed, and record why on the bone.
     maw exec default -- bn done <id> --reason="Completed"
     rite send --agent {agent} {project} "Completed <id>: <title>" -L task-done
 

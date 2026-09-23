@@ -1,5 +1,17 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Seal review logs now reach trunk. Seal keeps each review in `.seal/reviews/<id>/` in the workspace that created it, and no workflow step committed it, so `maw ws merge --destroy` discarded every review. Whoever merges now runs `seal reviews mark-merged` in the workspace while HEAD is still the approved commit, commits only `.seal/reviews/<id>`, and then merges. `edict protocol merge` and `edict protocol finish` emit these steps before the merge, and the commit step is a no-op on a retry.
+- `edict protocol finish` and `edict protocol merge` refuse to emit merge steps for a `risk:critical` bone, even with `--force`. `protocol merge --force` also blocks when it cannot load a bone bound to that exact workspace (a sole unrelated bone claim no longer counts), or when `bn show` fails, because it cannot then rule out `risk:critical`. Its human approval lives in a Rite message that no protocol state verifies, and the standalone worker prompt ran the protocol before its human-approval check. The worker prompt now runs that check first.
+- After the review is recorded, a merge conflict whose resolution changes code outside `.seal/` and `.bones/` needs a fresh review. This includes restoring `.agents/` or `.claude/`. The docs and the conflict-recovery guidance say so.
+- The record steps refuse to continue when anything outside `.seal/reviews/<id>/` is uncommitted. `maw ws merge` also merges uncommitted additions and deletions, so a change made after the LGTM without a commit passed `mark-merged` and landed unreviewed. The merge step repeats the check in the same shell command, in every protocol step and documented merge command, and a failed `git status` stops the merge instead of reading as clean. A small window remains while maw snapshots the workspace; closing it needs a maw merge of committed content only.
+- The managed AGENTS.md section routes every merge recipe (change recipe, quick reference, lead merge workflow) through `edict protocol merge` and its steps. A bare `maw ws merge --destroy` is only for work with no review.
+- No step runs `mark-merged` in a destroyed workspace. `merge-check.md` ran it inside the workspace after `--destroy`, and the protocol commands ran it in `default`, where the review does not exist.
+- The docs no longer forbid every commit after the LGTM: the review log commit is the one exception. The lead's merge protocol no longer runs `git add -A` on a reviewed workspace, which merged uncommitted files that no reviewer saw. `protocol finish` also stops committing everything after an approved review. A standalone worker records the review and merges itself. A dispatched worker (`--no-merge`) leaves the review open for the lead's merge gate.
+
 ## [0.30.0] - 2026-09-18
 
 ### Changed

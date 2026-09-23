@@ -477,6 +477,97 @@ pub fn ws_merge_cmd(workspace: &str, target: MergeTarget<'_>, message: &str) -> 
     )
 }
 
+/// Build the steps that record a Seal review in its workspace before the merge.
+///
+/// Seal keeps each review as an event log under `.seal/reviews/<id>/` in the
+/// workspace that created it. The log reaches trunk only when it is committed
+/// there, so these steps must run before `maw ws merge --destroy`:
+///
+/// 1. Refuse when anything outside the review log is uncommitted. `maw ws merge`
+///    captures uncommitted additions and deletions too, but the approval covers
+///    only a commit, so those changes would land unreviewed.
+/// 2. `seal reviews mark-merged` while HEAD is still the approved commit. Run
+///    after the log commit, a branch-anchored review counts that commit as
+///    unreviewed and refuses.
+/// 3. Stage the log and commit it alone. The commit is skipped when nothing is
+///    staged, so a retry after a failed merge is safe.
+///
+/// Only the agent that runs the merge may emit these. A merged review no longer
+/// satisfies the merge gate, so marking it earlier blocks the merge.
+///
+/// The merge step itself must repeat the check: see [`ws_merge_reviewed_cmd`].
+#[must_use]
+pub fn seal_record_cmds(workspace: &str, review_id: &str) -> Vec<String> {
+    let workspace_safe = if validate_workspace_name(workspace).is_ok() {
+        safe_ident(workspace)
+    } else {
+        std::borrow::Cow::Owned(shell_escape(workspace))
+    };
+    let (review_id_safe, log_path) = if validate_review_id(review_id).is_ok() {
+        (safe_ident(review_id), format!(".seal/reviews/{review_id}"))
+    } else {
+        (
+            std::borrow::Cow::Owned(shell_escape(review_id)),
+            shell_escape(&format!(".seal/reviews/{review_id}")),
+        )
+    };
+    let message = shell_escape(&format!("chore: seal review {review_id}"));
+
+    vec![
+        seal_clean_check_cmd(workspace, review_id),
+        format!("maw exec {workspace_safe} -- seal reviews mark-merged {review_id_safe}"),
+        format!("maw exec {workspace_safe} -- git add {log_path}"),
+        format!(
+            "maw exec {workspace_safe} -- git diff --cached --quiet -- {log_path} || \
+             maw exec {workspace_safe} -- git commit -m {message} -- {log_path}"
+        ),
+    ]
+}
+
+/// Build a check that fails when anything outside the review log is uncommitted.
+///
+/// `maw ws merge` merges the live workspace, including uncommitted additions
+/// and deletions, but a Seal approval covers only committed history. The check
+/// keeps the merged tree equal to the reviewed commits plus the review log.
+#[must_use]
+pub fn seal_clean_check_cmd(workspace: &str, review_id: &str) -> String {
+    let workspace_safe = if validate_workspace_name(workspace).is_ok() {
+        safe_ident(workspace)
+    } else {
+        std::borrow::Cow::Owned(shell_escape(workspace))
+    };
+    let exclude = shell_escape(&format!(":(exclude).seal/reviews/{review_id}"));
+    // `out=$(...)` takes the exit status of `git status`, so a failed
+    // inspection stops here instead of reading as an empty, clean tree.
+    format!(
+        "{{ out=$(maw exec {workspace_safe} -- git status --porcelain \
+         --untracked-files=all -- . {exclude}) && test -z \"$out\" || {{ echo 'uncommitted \
+         changes outside the review log were never reviewed, or the workspace could not be \
+         inspected: commit them and get a fresh LGTM' >&2; false; }}; }}"
+    )
+}
+
+/// Build the merge step for a reviewed workspace: the clean check, then the
+/// merge, in one shell command.
+///
+/// The record steps check first, but `mark-merged`, the log commit, and any
+/// hook they run can leave files behind. Chaining the check onto the merge
+/// narrows the window to the time maw takes to snapshot the workspace. Only a
+/// maw merge of committed content can close it.
+#[must_use]
+pub fn ws_merge_reviewed_cmd(
+    workspace: &str,
+    review_id: &str,
+    target: MergeTarget<'_>,
+    message: &str,
+) -> String {
+    format!(
+        "{} && {}",
+        seal_clean_check_cmd(workspace, review_id),
+        ws_merge_cmd(workspace, target, message)
+    )
+}
+
 /// Build: `maw exec <ws> -- seal reviews create --agent <agent> --title '<bone-id>: <title>' --reviewers <reviewers>`
 ///
 /// The `<bone-id>: ` prefix is applied HERE rather than by callers. A review is
@@ -593,6 +684,83 @@ pub fn rite_statuses_clear_cmd(agent: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The record steps run through `sh -c` in --execute mode. Every step,
+    /// including the nested quoting of the dirty-tree check, must parse.
+    #[test]
+    fn seal_record_cmds_are_valid_shell() {
+        for id in ["cr-123", "cr-bad'id"] {
+            let mut steps = seal_record_cmds("frost-castle", id);
+            steps.push(ws_merge_reviewed_cmd(
+                "frost-castle",
+                id,
+                MergeTarget::Default,
+                "feat: it's done",
+            ));
+            assert!(steps[0].contains("git status --porcelain --untracked-files=all"));
+            assert!(steps[0].contains("&& test -z \"$out\""));
+            for step in &steps {
+                let status = std::process::Command::new("sh")
+                    .args(["-n", "-c", step])
+                    .status()
+                    .expect("sh runs");
+                assert!(status.success(), "sh -n rejects: {step}");
+            }
+        }
+    }
+
+    /// The clean check is a security gate: a `git status` that fails with no
+    /// output must stop the merge, not read as a clean tree. A fake `maw` on
+    /// PATH fails or passes the status call and records whether the merge ran.
+    #[cfg(unix)]
+    #[test]
+    fn reviewed_merge_fails_closed_when_status_fails() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir().join(format!("edict-fake-maw-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let marker = dir.join("merged");
+        let fake = dir.join("maw");
+        std::fs::write(
+            &fake,
+            format!(
+                "#!/bin/sh\ncase \"$1\" in\n  exec) exit \"$FAKE_STATUS_RC\" ;;\n  ws) touch '{}' ;;\nesac\n",
+                marker.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let cmd = ws_merge_reviewed_cmd("frost-castle", "cr-123", MergeTarget::Default, "feat: x");
+        let path = format!(
+            "{}:{}",
+            dir.display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
+        let merged_with_status = |rc: &str| {
+            let _ = std::fs::remove_file(&marker);
+            let status = std::process::Command::new("sh")
+                .args(["-c", &cmd])
+                .env("PATH", &path)
+                .env("FAKE_STATUS_RC", rc)
+                .stderr(std::process::Stdio::null())
+                .status()
+                .expect("sh runs");
+            (status.success(), marker.exists())
+        };
+
+        assert_eq!(
+            merged_with_status("1"),
+            (false, false),
+            "failed status must not merge"
+        );
+        assert_eq!(
+            merged_with_status("0"),
+            (true, true),
+            "clean status must merge"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     // --- shell_escape tests ---
 

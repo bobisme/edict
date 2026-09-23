@@ -364,23 +364,33 @@ Go directly to:
         } else {
             format!(
                 r#"7. FINISH (only reached after LGTM from step 0, or after step 6 when REVIEW is false):
+   RISK:CRITICAL CHECK FIRST — before any finish path, for a risk:critical bone:
+     Verify human approval exists: rite history {project} -n 50 -L review-request | look for approval message referencing this bone/review from an authorized approver.
+     If no approval found, do NOT merge. Post: rite send --agent {agent} {project} "Waiting for human approval on risk:critical <id>" -L review-request. STOP.
+     If approval found, record it: maw exec default -- bn bone comment add <id> "Human approval: <approver> via rite message <msg-id>"
+     protocol finish refuses to merge a risk:critical bone. Use the manual finish below after the approval.
    Try protocol command: edict protocol finish <bone-id> --agent {agent}
-   Read the output carefully. If status is Ready, run the suggested commands.
+   Read the output carefully. If status is Ready, run the suggested commands in order. With a
+   review they record it in the workspace (mark-merged, commit .seal/reviews/<review-id>)
+   BEFORE the merge destroys the workspace.
    If it fails (exit 1 = command unavailable), fall back to manual finish:
-     If a review was conducted:
-       maw exec default -- seal reviews mark-merged <review-id> --agent {agent}.
-       Exits 1 if you committed after the LGTM ("the approval does not cover the current
+     If a review was conducted, record it in the workspace. Do not commit code after the LGTM:
+       maw exec $WS -- git status --porcelain --untracked-files=all
+       Must list nothing outside .seal/reviews/<review-id>/ (the merge takes uncommitted files too).
+       If anything else is listed, it was never reviewed: commit it and get a fresh LGTM.
+       maw exec $WS -- seal reviews mark-merged <review-id> --agent {agent}
+       Exits 1 if code was committed after the LGTM ("the approval does not cover the current
        code"). Re-request the reviewer for a fresh LGTM rather than forcing it;
        --allow-stale-approval is the deliberate override and needs a reason on the bone.
-     RISK:CRITICAL CHECK — Before merging a risk:critical bone:
-       Verify human approval exists: rite history {project} -n 50 -L review-request | look for approval message referencing this bone/review from an authorized approver.
-       If no approval found, do NOT merge. Post: rite send --agent {agent} {project} "Waiting for human approval on risk:critical <id>" -L review-request. STOP.
-       If approval found, record it: maw exec default -- bn bone comment add <id> "Human approval: <approver> via rite message <msg-id>"
+       maw exec $WS -- git add .seal/reviews/<review-id>
+       maw exec $WS -- git commit -m "chore: seal review <review-id>" -- .seal/reviews/<review-id>
+     {{ out=$(maw exec $WS -- git status --porcelain --untracked-files=all -- . ':(exclude).seal/reviews/<review-id>') && test -z "$out" || {{ echo "unreviewed changes: stop" >&2; false; }}; }} && \
+       maw ws merge $WS --into default --destroy --message "feat: <bone-title>"
+       (Drop the test when no review exists. Never run mark-merged after this: the workspace is gone.)
      maw exec default -- bn bone comment add <id> "Completed by {agent}".
      maw exec default -- bn done <id> --reason "Completed" --suggest-next.
      rite send --agent {agent} {project} "Completed <id>: <title>" -L task-done.
-     rite claims release --agent {agent} "bone://{project}/<id>".
-     Keep workspace claim — the lead will merge it.
+     rite claims release --agent {agent} --all.
    STOP — do not proceed to RELEASE CHECK (only leads check for releases after merging)."#,
                 agent = self.agent,
                 project = self.project,

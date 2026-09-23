@@ -115,7 +115,7 @@ You can re-run individual phases without re-running setup. Each phase script re-
 | 5 | alpha-security | Opus | Reviews code from workspace, finds /debug vulnerability, CRITICAL comment, BLOCKs |
 | 6 | alpha-dev | Opus | Reads block, removes /debug, replies on crit thread, re-requests review |
 | 7 | alpha-security | Opus | Re-reviews from workspace, verifies fix, LGTMs |
-| 8 | alpha-dev | Opus | Full finish: ws merge, mark-merged (from default), close bead, release claims, version bump, tag, announce |
+| 8 | alpha-dev | Opus | Full finish: mark-merged + commit review log (in workspace), ws merge, close bead, release claims, version bump, tag, announce |
 
 ### Planted Defects
 

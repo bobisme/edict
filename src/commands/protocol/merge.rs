@@ -196,7 +196,9 @@ pub fn execute(
     }
 
     // Try to find the associated bone from workspace claims
-    let bone_id = find_bone_for_workspace(&ctx, workspace);
+    // --force skips the review gate, so the bone must be bound to this exact
+    // workspace: its labels are the only risk:critical check left.
+    let bone_id = find_bone_for_workspace(&ctx, workspace, force);
 
     if check_bone_gate(&mut guidance, &ctx, bone_id.as_deref(), force, format)? {
         return Ok(());
@@ -285,6 +287,17 @@ fn check_bone_gate(
     format: OutputFormat,
 ) -> anyhow::Result<bool> {
     let Some(bone_id) = bone_id else {
+        // --force skips the review gate, and only the bone's labels show
+        // whether the work is risk:critical. Without a bone, --force would emit
+        // merge steps for critical work that no human approved.
+        if force {
+            block_force_without_labels(
+                guidance,
+                "No bone is linked to this workspace through a bone claim held by this agent",
+            );
+            print_guidance(guidance, format)?;
+            return Ok(true);
+        }
         guidance.diagnostic(
             "No associated bone found for this workspace. Proceeding without bone check."
                 .to_string(),
@@ -303,6 +316,23 @@ fn check_bone_gate(
             id: bone_id.to_string(),
             title: bone_info.title.clone(),
         });
+
+        // risk:critical needs a human approval that no protocol state records,
+        // so the protocol never emits its merge steps. --force does not lift this.
+        if bone_info.labels.iter().any(|l| l == "risk:critical") {
+            guidance.status = ProtocolStatus::Blocked;
+            guidance.diagnostic(format!(
+                "Bone {bone_id} is risk:critical and requires human approval before merge. \
+                 edict protocol merge does not emit merge steps for it."
+            ));
+            guidance.advise(
+                "Verify the authorized human approval in rite history, record it on the bone, \
+                 then merge manually (see merge-check.md: record the review, then maw ws merge)."
+                    .to_string(),
+            );
+            print_guidance(guidance, format)?;
+            return Ok(true);
+        }
 
         if bone_info.state != "done" && !force {
             guidance.status = ProtocolStatus::Blocked;
@@ -344,12 +374,30 @@ fn check_bone_gate(
             print_guidance(guidance, format)?;
             return Ok(true);
         }
-        guidance.diagnostic(format!(
-            "Could not fetch bone {bone_id} — proceeding with --force."
-        ));
+        block_force_without_labels(guidance, &format!("Could not fetch bone {bone_id}"));
+        print_guidance(guidance, format)?;
+        return Ok(true);
     }
 
     Ok(false)
+}
+
+/// Block a `--force` merge whose bone labels could not be loaded.
+///
+/// `--force` lifts the done-state and review checks, never the risk:critical
+/// human-approval gate. That gate reads the bone's labels, so a forced merge
+/// needs an identified bone.
+fn block_force_without_labels(guidance: &mut ProtocolGuidance, reason: &str) {
+    guidance.status = ProtocolStatus::Blocked;
+    guidance.diagnostic(format!(
+        "{reason}, so its labels are unknown. --force cannot rule out risk:critical, \
+         which needs human approval, so it does not emit merge steps."
+    ));
+    guidance.advise(
+        "Stake the bone claim as this agent so protocol merge can load the bone, or verify \
+         the bone is not risk:critical and merge manually (see merge-check.md)."
+            .to_string(),
+    );
 }
 
 /// Classify whether the review's approved commit still matches the
@@ -612,7 +660,14 @@ fn check_conflict_gate(
                 if let Some(message) = check.message.as_deref() {
                     guidance.diagnostic(message.to_string());
                 }
-                add_conflict_recovery_guidance(guidance, workspace, merge_target, message);
+                let review_id = guidance.review.as_ref().map(|r| r.review_id.clone());
+                add_conflict_recovery_guidance(
+                    guidance,
+                    workspace,
+                    merge_target,
+                    message,
+                    review_id.as_deref().map(|rid| (rid, false)),
+                );
                 print_guidance(guidance, format)?;
                 return Ok(true);
             }
@@ -658,7 +713,7 @@ struct MergeStepsParams<'a> {
     push_main: bool,
 }
 
-/// Build the merge steps: merge, mark-merged, sync, push.
+/// Build the merge steps: record the review, merge, push, announce.
 /// Also includes conflict recovery guidance as diagnostics.
 fn build_merge_steps(guidance: &mut ProtocolGuidance, params: &MergeStepsParams) {
     let MergeStepsParams {
@@ -673,16 +728,18 @@ fn build_merge_steps(guidance: &mut ProtocolGuidance, params: &MergeStepsParams)
 
     let mut steps = Vec::new();
 
-    // 1. Merge workspace with the required commit message
-    let target = merge_target.map_or(shell::MergeTarget::Default, shell::MergeTarget::Change);
-    steps.push(shell::ws_merge_cmd(workspace, target, message));
-
-    // 2. Mark review as merged (if review exists)
+    // 1. Record the review in the workspace. The merge destroys the
+    //    workspace, so this is the last point where the log can be committed.
     if let Some(rid) = review_id {
-        steps.push(format!(
-            "maw exec default -- seal reviews mark-merged {rid}"
-        ));
+        steps.extend(shell::seal_record_cmds(workspace, rid));
     }
+
+    // 2. Merge workspace with the required commit message
+    let target = merge_target.map_or(shell::MergeTarget::Default, shell::MergeTarget::Change);
+    steps.push(review_id.map_or_else(
+        || shell::ws_merge_cmd(workspace, target, message),
+        |rid| shell::ws_merge_reviewed_cmd(workspace, rid, target, message),
+    ));
 
     // 3. Push (if enabled)
     if push_main {
@@ -704,18 +761,36 @@ fn build_merge_steps(guidance: &mut ProtocolGuidance, params: &MergeStepsParams)
     guidance.steps(steps);
 
     // Add conflict recovery guidance
-    add_conflict_recovery_guidance(guidance, workspace, merge_target, message);
+    add_conflict_recovery_guidance(
+        guidance,
+        workspace,
+        merge_target,
+        message,
+        review_id.map(|rid| (rid, true)),
+    );
 }
 
 /// Append comprehensive maw/git conflict recovery guidance as diagnostics.
+///
+/// `review` is the review id and whether its record steps already ran. Before
+/// they run, a raw retry would skip them and lose the log, so the retry is the
+/// protocol itself. After, the retry carries the clean check.
 fn add_conflict_recovery_guidance(
     guidance: &mut ProtocolGuidance,
     workspace: &str,
     merge_target: Option<&str>,
     merge_msg: &str,
+    review: Option<(&str, bool)>,
 ) {
     let target = merge_target.map_or(shell::MergeTarget::Default, shell::MergeTarget::Change);
-    let retry_cmd = shell::ws_merge_cmd(workspace, target, merge_msg);
+    let retry_cmd = match review {
+        Some((rid, true)) => shell::ws_merge_reviewed_cmd(workspace, rid, target, merge_msg),
+        Some((_, false)) => format!(
+            "edict protocol merge {workspace} --message {}",
+            shell::shell_escape(merge_msg)
+        ),
+        None => shell::ws_merge_cmd(workspace, target, merge_msg),
+    };
     let check_cmd = shell::ws_merge_check_cmd(workspace, target);
     guidance.diagnostic(format!(
         "Conflict recovery — workspace is preserved (not destroyed). Conflicts are data, not \
@@ -732,6 +807,9 @@ fn add_conflict_recovery_guidance(
          \n\
          maw exec {workspace} -- git restore --source refs/heads/main -- .bones/ .claude/ .agents/\n\
          \n\
+         Once the review is recorded, restore only .bones/. A change to .claude/ or .agents/ \
+         after the approval needs a fresh review.\n\
+         \n\
          3. Resolve remaining conflicts — prefer `maw ws resolve` over hand-editing markers:\n\
          \n\
          maw ws resolve {workspace} --keep epoch|{workspace}|both|union   # whole-workspace\n\
@@ -745,6 +823,11 @@ fn add_conflict_recovery_guidance(
          4. After resolving:\n\
          \n\
          {retry_cmd}              # retry merge\n\
+         \n\
+         If this merge had a review, it is already marked merged. Retry directly only when the \
+         resolution changed nothing outside .seal/ and .bones/. Any other resolution is \
+         unreviewed code: commit it, create a fresh review for the bone, and rerun \
+         `edict protocol merge` after its LGTM.\n\
          \n\
          (or resolve inline at merge time with --resolve-all={workspace} / --resolve cf-id=<name>)\n\
          \n\
@@ -795,7 +878,11 @@ fn holds_bone_claim(ctx: &ProtocolContext, bone_id: &str) -> bool {
 ///
 /// Returning `None` leaves the review gate with nothing to match against, which
 /// keeps the merge blocked as `NeedsReview` rather than letting it through.
-fn find_bone_for_workspace(ctx: &ProtocolContext, workspace: &str) -> Option<String> {
+///
+/// `exact` drops Method 2. A sole bone claim says which bone the caller holds,
+/// not which workspace it belongs to, so under `--force` it would check an
+/// unrelated bone's labels for this workspace.
+fn find_bone_for_workspace(ctx: &ProtocolContext, workspace: &str, exact: bool) -> Option<String> {
     // Method 1: the workspace claim's memo names the bone it was staked for.
     //
     // Two filters, both load-bearing. `claim.agent == ctx.agent()` because
@@ -832,7 +919,7 @@ fn find_bone_for_workspace(ctx: &ProtocolContext, workspace: &str) -> Option<Str
     // Method 2: if there's exactly one bone claim, use that. Already corroborated —
     // held_bone_claims() only returns claims this agent holds.
     let bone_claims = ctx.held_bone_claims();
-    if bone_claims.len() == 1 {
+    if !exact && bone_claims.len() == 1 {
         return Some(bone_claims[0].0.to_string());
     }
 
@@ -877,7 +964,14 @@ fn execute_and_render(
         conflict_guidance.diagnostic(format!(
             "Merge completed with CONFLICTS. Workspace {workspace} is preserved (not destroyed)."
         ));
-        add_conflict_recovery_guidance(&mut conflict_guidance, workspace, None, merge_msg);
+        let review_id = guidance.review.as_ref().map(|r| r.review_id.as_str());
+        add_conflict_recovery_guidance(
+            &mut conflict_guidance,
+            workspace,
+            None,
+            merge_msg,
+            review_id.map(|rid| (rid, true)),
+        );
 
         let output = render::render(&conflict_guidance, format)
             .map_err(|e| anyhow::anyhow!("render error: {e}"))?;
@@ -989,6 +1083,52 @@ mod tests {
         );
     }
 
+    /// The merge destroys the workspace, so every review step must run in the
+    /// workspace before it. Run after, `mark-merged` hits a missing workspace
+    /// and the review log never reaches trunk.
+    #[test]
+    fn test_build_merge_steps_records_review_before_merge() {
+        let mut guidance = ProtocolGuidance::new("merge");
+        build_merge_steps(
+            &mut guidance,
+            &MergeStepsParams {
+                workspace: "frost-castle",
+                project: "myproject",
+                message: "feat: add login flow",
+                merge_target: None,
+                bone_id: Some("bd-abc"),
+                review_id: Some("cr-123"),
+                push_main: false,
+            },
+        );
+
+        let pos = |needle: &str| {
+            guidance
+                .steps
+                .iter()
+                .position(|s| s.contains(needle))
+                .unwrap_or_else(|| panic!("no step contains {needle:?}: {:#?}", guidance.steps))
+        };
+        let clean = pos(
+            "git status --porcelain --untracked-files=all -- . ':(exclude).seal/reviews/cr-123'",
+        );
+        let mark = pos("maw exec frost-castle -- seal reviews mark-merged cr-123");
+        assert!(clean < mark);
+        let add = pos("maw exec frost-castle -- git add .seal/reviews/cr-123");
+        let commit = pos("git commit -m 'chore: seal review cr-123' -- .seal/reviews/cr-123");
+        let merge = pos("maw ws merge frost-castle");
+        assert!(mark < add && add < commit && commit < merge);
+        // The merge step repeats the clean check in the same shell command.
+        assert!(guidance.steps[merge].starts_with("{ out=$(maw exec frost-castle"));
+        assert!(guidance.steps[merge].contains("&& maw ws merge frost-castle"));
+        assert!(
+            !guidance
+                .steps
+                .iter()
+                .any(|s| s.contains("maw exec default -- seal"))
+        );
+    }
+
     #[test]
     fn test_build_merge_steps_no_push() {
         let mut guidance = ProtocolGuidance::new("merge");
@@ -1097,7 +1237,7 @@ mod tests {
             ]}"#,
         );
         assert_eq!(
-            find_bone_for_workspace(&ctx, "bn-24r").as_deref(),
+            find_bone_for_workspace(&ctx, "bn-24r", false).as_deref(),
             Some("bn-24r")
         );
 
@@ -1110,7 +1250,7 @@ mod tests {
                 {"agent": "green-vertex", "patterns": ["bone://edict/bn-24r"], "active": true}
             ]}"#,
         );
-        assert_eq!(find_bone_for_workspace(&ctx, "bn-24r"), None);
+        assert_eq!(find_bone_for_workspace(&ctx, "bn-24r", false), None);
     }
 
     /// Method 1 (memo) runs BEFORE the workspace-name path, so it needs the same
@@ -1132,7 +1272,7 @@ mod tests {
         claims[0].memo = Some("bn-victim".to_string());
         let ctx = ProtocolContext::for_test("crimson-storm", claims, Vec::new());
         assert_eq!(
-            find_bone_for_workspace(&ctx, "my-ws"),
+            find_bone_for_workspace(&ctx, "my-ws", false),
             None,
             "a claim memo must not nominate a bone the caller does not hold"
         );
@@ -1149,7 +1289,32 @@ mod tests {
         claims[0].memo = Some("bn-mine".to_string());
         let ctx = ProtocolContext::for_test("crimson-storm", claims, Vec::new());
         assert_eq!(
-            find_bone_for_workspace(&ctx, "my-ws").as_deref(),
+            find_bone_for_workspace(&ctx, "my-ws", false).as_deref(),
+            Some("bn-mine")
+        );
+    }
+
+    /// Under --force only an exact workspace-to-bone binding counts. A sole bone
+    /// claim does not say which workspace it belongs to, so it must not supply
+    /// the labels that the risk:critical check reads.
+    #[test]
+    fn exact_lookup_ignores_a_sole_unrelated_bone_claim() {
+        let claims = super::super::adapters::parse_claims(
+            r#"{"claims": [
+                {"agent": "crimson-storm", "patterns": ["bone://edict/bn-mine"], "active": true}
+            ]}"#,
+        )
+        .unwrap()
+        .claims;
+        let ctx = ProtocolContext::for_test("crimson-storm", claims, Vec::new());
+        assert_eq!(
+            find_bone_for_workspace(&ctx, "other-ws", false).as_deref(),
+            Some("bn-mine")
+        );
+        assert_eq!(find_bone_for_workspace(&ctx, "other-ws", true), None);
+        // A workspace named after the held bone is an exact binding.
+        assert_eq!(
+            find_bone_for_workspace(&ctx, "bn-mine", true).as_deref(),
             Some("bn-mine")
         );
     }
@@ -1174,7 +1339,7 @@ mod tests {
         // held bone claim, which is corroborated — so the answer is right, but it
         // came from a source the caller cannot forge.
         assert_eq!(
-            find_bone_for_workspace(&ctx, "my-ws").as_deref(),
+            find_bone_for_workspace(&ctx, "my-ws", false).as_deref(),
             Some("bn-mine")
         );
 
@@ -1188,7 +1353,7 @@ mod tests {
         .claims;
         claims[0].memo = Some("bn-victim".to_string());
         let ctx = ProtocolContext::for_test("crimson-storm", claims, Vec::new());
-        assert_eq!(find_bone_for_workspace(&ctx, "my-ws"), None);
+        assert_eq!(find_bone_for_workspace(&ctx, "my-ws", false), None);
     }
 
     /// `bone_status` fails fast on a malformed ID (no subprocess needed), which
@@ -1212,20 +1377,40 @@ mod tests {
         assert_eq!(guidance.status, ProtocolStatus::Blocked);
     }
 
+    /// --force skips the review gate, so only the bone's labels can reveal
+    /// risk:critical. A bone whose labels cannot be loaded must block even
+    /// under --force, or critical work merges without human approval.
     #[test]
-    fn check_bone_gate_force_bypasses_unresolvable_bone() {
+    fn check_bone_gate_force_blocks_unresolvable_bone() {
         let ctx = ProtocolContext::for_test("crimson-storm", Vec::new(), Vec::new());
         let mut guidance = ProtocolGuidance::new("merge");
-        let stop = check_bone_gate(
+        // The renderer rejects the malformed id, so check the guidance state.
+        let _ = check_bone_gate(
             &mut guidance,
             &ctx,
             Some("not_a_valid_id"),
             true,
             OutputFormat::Json,
-        )
-        .unwrap();
-        assert!(!stop, "--force must still bypass the bone-status gate");
-        assert_ne!(guidance.status, ProtocolStatus::Blocked);
+        );
+        assert_eq!(guidance.status, ProtocolStatus::Blocked);
+    }
+
+    #[test]
+    fn check_bone_gate_force_blocks_missing_bone() {
+        let ctx = ProtocolContext::for_test("crimson-storm", Vec::new(), Vec::new());
+        let mut guidance = ProtocolGuidance::new("merge");
+        let stop = check_bone_gate(&mut guidance, &ctx, None, true, OutputFormat::Json).unwrap();
+        assert!(stop);
+        assert_eq!(guidance.status, ProtocolStatus::Blocked);
+        assert!(guidance.steps.iter().all(|s| !s.contains("maw ws merge")));
+    }
+
+    #[test]
+    fn check_bone_gate_missing_bone_without_force_defers_to_review_gate() {
+        let ctx = ProtocolContext::for_test("crimson-storm", Vec::new(), Vec::new());
+        let mut guidance = ProtocolGuidance::new("merge");
+        let stop = check_bone_gate(&mut guidance, &ctx, None, false, OutputFormat::Json).unwrap();
+        assert!(!stop);
     }
 
     // --- classify_commit_freshness ---

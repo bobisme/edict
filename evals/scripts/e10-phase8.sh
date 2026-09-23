@@ -50,12 +50,14 @@ Your code review ${REVIEW_ID} has been approved (LGTM). Complete the full finish
 2. FINISH PROTOCOL:
    Follow these steps in order — this is the mandatory teardown:
 
-   a. Merge workspace FIRST: maw ws merge ${WS} --destroy
+   a. Mark review merged in the workspace, BEFORE the merge:
+      maw exec ${WS} -- crit reviews mark-merged ${REVIEW_ID}
+      - The review log lives in the workspace. jj snapshots it into the working-copy
+        commit, so the merge carries it to main.
+   b. Merge workspace: maw ws merge ${WS} --destroy
       - The --destroy flag is required — it cleans up after merging
       - If merge fails due to conflicts, try: maw exec ${WS} -- jj restore --from main .bones/
         then retry maw ws merge ${WS} --destroy
-   b. Mark review merged (from default workspace, AFTER merge):
-      maw exec default -- crit reviews mark-merged ${REVIEW_ID}
    c. Close bone: maw exec default -- bn done ${BEAD}
    d. Release all claims: bus claims release --agent ${ALPHA_DEV} --all
 
@@ -71,7 +73,7 @@ Your code review ${REVIEW_ID} has been approved (LGTM). Complete the full finish
 
 Key rules:
 - After workspace merge, all commands run from default workspace: maw exec default -- ...
-- IMPORTANT: Merge workspace BEFORE mark-merged (otherwise the event is lost with the workspace)
+- IMPORTANT: mark-merged in the workspace BEFORE the merge (the merge destroys the workspace, and a later mark-merged has no workspace to run in)
 - Use jj (not git) via maw exec
 - The finish protocol steps must all complete — they prevent workspace leaks and keep the bone ledger synchronized"
 
