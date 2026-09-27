@@ -364,7 +364,12 @@ fn build_blocked_guidance(
     // Step 1: Read review feedback
     steps.push(shell::seal_show_cmd(workspace, review_id));
 
-    // Step 2: After addressing feedback, re-request review
+    // Step 2: After addressing feedback, retarget the review to the fixed
+    // commits before re-requesting — otherwise `seal reviews request` leaves
+    // the review's target commit pinned at the old, pre-fix anchor.
+    steps.push(shell::seal_retarget_cmd(workspace, review_id, agent));
+
+    // Step 3: Re-request review
     let reviewers_str = reviewer_names.join(",");
     steps.push(shell::seal_request_cmd(
         workspace,
@@ -373,7 +378,7 @@ fn build_blocked_guidance(
         agent,
     ));
 
-    // Step 3: Announce re-request on rite
+    // Step 4: Announce re-request on rite
     let mentions: Vec<String> = decision
         .blocked_by
         .iter()
@@ -408,7 +413,8 @@ fn build_blocked_guidance(
         review_detail.open_thread_count,
     ));
     guidance.advise(format!(
-        "Read review feedback, address issues, then re-request review. {}",
+        "Read review feedback, address issues, retarget the review to the fixed commits, \
+         then re-request review. {}",
         shell::review_wait_advice(agent, project),
     ));
 
@@ -589,5 +595,69 @@ mod tests {
         let config = make_config(vec![]);
         let result = resolve_reviewers(Some("valid,bad name with spaces"), &config, "proj");
         assert!(result.is_err());
+    }
+
+    fn make_review_detail(open_thread_count: usize) -> super::super::adapters::ReviewDetail {
+        super::super::adapters::ReviewDetail {
+            review_id: "cr-123".into(),
+            title: None,
+            status: "open".into(),
+            status_changed_at: None,
+            status_changed_by: None,
+            change_id: None,
+            votes: vec![],
+            open_thread_count,
+        }
+    }
+
+    fn make_blocked_decision(blocked_by: Vec<&str>) -> review_gate::ReviewGateDecision {
+        review_gate::ReviewGateDecision {
+            status: ReviewGateStatus::Blocked,
+            missing_approvals: vec![],
+            newer_block_after_lgtm: vec![],
+            total_required: 1,
+            approved_by: vec![],
+            blocked_by: blocked_by.into_iter().map(String::from).collect(),
+            stale_approval: false,
+        }
+    }
+
+    /// A blocked review must be retargeted to the fixed commits *before*
+    /// re-requesting — otherwise the review's target commit stays pinned at
+    /// the pre-fix anchor (the bug behind bn-w912).
+    #[test]
+    fn blocked_guidance_retargets_before_re_requesting() {
+        let mut guidance = ProtocolGuidance::new("review");
+        let decision = make_blocked_decision(vec!["edict-security"]);
+        let review_detail = make_review_detail(2);
+
+        build_blocked_guidance(
+            &mut guidance,
+            &decision,
+            &review_detail,
+            "cr-123",
+            "frost-castle",
+            &["edict-security".to_string()],
+            "edict",
+            "crimson-storm",
+            false,
+        )
+        .unwrap();
+
+        let retarget_pos = guidance
+            .steps
+            .iter()
+            .position(|s| s.contains("seal reviews retarget cr-123"))
+            .expect("retarget step present");
+        let request_pos = guidance
+            .steps
+            .iter()
+            .position(|s| s.contains("seal reviews request cr-123"))
+            .expect("request step present");
+        assert!(
+            retarget_pos < request_pos,
+            "retarget must come before re-request: {:?}",
+            guidance.steps
+        );
     }
 }

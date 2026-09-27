@@ -162,6 +162,7 @@ Distributed code review system. Reviews are tied to workspace diffs, with file-l
 **Review lifecycle:**
 ```bash
 maw exec $WS -- seal reviews create --agent $AGENT --title "..." --reviewers <name>  # Create review + assign reviewer
+maw exec $WS -- seal reviews retarget <id> --agent $AGENT         # Move target to HEAD, clear votes (after fixes, BEFORE re-request)
 maw exec $WS -- seal reviews request <id> --reviewers <name> --agent $AGENT  # Re-assign reviewer (after fixes)
 maw exec $WS -- seal review <id> [--format json] [--since time]  # Show full review with threads
 maw exec $WS -- seal comment --file <path> --line <n> <review-id> "msg"  # Add line comment
@@ -180,9 +181,13 @@ maw exec $WS -- seal inbox --agent $AGENT                        # Show reviews/
   branch/workspace fork point and prints the resolved range plus commit count. `--base <rev>`
   sets it explicitly; `--base <target>~1` restores tip-only. The base is persisted on the
   `ReviewCreated` event, so later commits extend the range instead of shifting it.
+- `seal reviews request` re-assigns reviewers on an **existing** review but does not move its
+  target commit. After new commits, run `seal reviews retarget <id>` (seal >= 0.29) first — it
+  moves the review to the workspace's current HEAD and clears votes, requiring fresh approval.
+  Skipping it leaves the dedicated reviewer verifying a stale, pre-fix diff.
 - An approval records the commit it covered. `seal reviews mark-merged` **exits 1** when
-  commits landed after the approval. The fix is a repeat LGTM (which moves the approval onto
-  the new commit); `--allow-stale-approval` is the deliberate override.
+  commits landed after the approval. The fix is `seal reviews retarget` followed by a fresh
+  LGTM; `--allow-stale-approval` is the deliberate override.
 - `seal diff <id> --format json` reports `base_is_persisted`, `approval_stale`,
   `approved_commit` and `uncovered_commits`. `edict protocol merge` reads `approval_stale`
   and agrees with seal, falling back to comparing the target commit against the workspace
@@ -660,6 +665,9 @@ launch the one-review Daybreak session in
 `@<project>-security` mention: the ambient hook is retired.
 
 ```bash
+# Retarget first — `seal reviews request` alone leaves the review's target
+# commit pinned at the old, pre-fix anchor.
+maw exec $WS -- seal reviews retarget <review-id> --agent $AGENT
 maw exec $WS -- seal reviews request <review-id> --reviewers $PROJECT-security --agent $AGENT
 req=$(rite send --agent $AGENT $PROJECT "Dedicated security re-review requested: <review-id> in $WS" -L review-response --format json | jq -r .id)
 bn bone comment add <bone-id> "Review anchor: $req for <review-id>"

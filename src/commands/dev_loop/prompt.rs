@@ -195,8 +195,11 @@ For EACH unfinished bone:
           - Reply: maw exec $WS -- seal reply <thread-id> --agent {agent} "Fixed: <what you did>"
           - Resolve: maw exec $WS -- seal threads resolve <thread-id> --agent {agent}
        3. Commit changes: maw exec $WS -- git add -A && maw exec $WS -- git commit -m "<id>: <summary> (addressed review feedback)"
-       4. Re-request: maw exec $WS -- seal reviews request <review-id> --reviewers {project}-security --agent {agent}
-       5. Announce and wait for the re-review:
+       4. Retarget: maw exec $WS -- seal reviews retarget <review-id> --agent {agent}
+          (required before re-requesting — `seal reviews request` alone leaves the review's
+          target commit pinned at the old, pre-fix anchor)
+       5. Re-request: maw exec $WS -- seal reviews request <review-id> --reviewers {project}-security --agent {agent}
+       6. Announce and wait for the re-review:
 {review_update_recipe}
      * If PENDING (no votes yet): STOP this iteration — wait for reviewer
      * If review not found: DO NOT merge or create a new review. The reviewer may still be starting up (hooks have latency). STOP this iteration and wait. Only create a new review if the workspace was destroyed AND 3+ iterations have passed since the review comment.
@@ -490,7 +493,8 @@ Every merge into default MUST follow this protocol to prevent concurrent merge c
       If you skip this step, maw ws merge may miss uncommitted worker changes.
       Reviewed workspace: do NOT run this. The review covers only committed code. If
       maw exec $WS -- git status --porcelain lists anything outside .seal/, those changes were
-      never reviewed: re-request review instead of merging.
+      never reviewed: retarget the review to the current commit (seal reviews retarget
+      <review-id> --agent {agent}), then re-request instead of merging.
 
   a. PREFLIGHT CHECK (outside mutex — early conflict detection):
      maw ws merge $WS --into default --check
@@ -524,7 +528,8 @@ Every merge into default MUST follow this protocol to prevent concurrent merge c
      The review log lives in the workspace. This commit is the only way it reaches default, and
      it is the only commit allowed after the LGTM. Never mark-merged after step d: the workspace
      is gone. If mark-merged exits 1 ("the approval does not cover the current code"), code was
-     committed after the LGTM: re-request the reviewer and do not merge.
+     committed after the LGTM: retarget the review to the current commit (seal reviews retarget
+     <review-id> --agent {agent}), re-request the reviewer, and do not merge.
 
   d. MERGE (reviewed workspace: repeat the c2 status check in the SAME command):
      {{ out=$(maw exec $WS -- git status --porcelain --untracked-files=all -- . ':(exclude).seal/reviews/<review-id>') && test -z "$out" || {{ echo "unreviewed changes: stop" >&2; false; }}; }} && \
@@ -940,6 +945,26 @@ mod tests {
         assert!(t.contains("do NOT pick up unrelated"));
         // Disabled missions render nothing.
         assert!(build_mission_triage(false, Some("bn-mission")).is_empty());
+    }
+
+    /// Fixing a blocked review's threads must retarget the review to the new
+    /// commits before re-requesting (bn-w912): `seal reviews request` alone
+    /// leaves the review's target commit pinned at the pre-fix anchor.
+    #[test]
+    fn crash_recovery_retargets_before_re_requesting_blocked_review() {
+        let ctx = test_ctx();
+        let prompt = build(&ctx, None, &[], None);
+
+        let retarget_pos = prompt
+            .find("seal reviews retarget <review-id>")
+            .expect("crash-recovery re-request path must retarget the review");
+        let request_pos = prompt
+            .find("seal reviews request <review-id> --reviewers")
+            .expect("crash-recovery re-request path must re-request the review");
+        assert!(
+            retarget_pos < request_pos,
+            "retarget must be taught before re-request"
+        );
     }
 
     /// The review flow must explicitly launch and verify the exact reviewer,

@@ -513,7 +513,11 @@ fn evaluate_found_review(
                 review_id,
                 decision.blocked_by.join(", ")
             ));
-            guidance.advise("Address reviewer feedback, then re-request review.".to_string());
+            guidance.advise(
+                "Address reviewer feedback, retarget the review to the fixed commits, then \
+                 re-request review."
+                    .to_string(),
+            );
 
             let steps = vec![shell::seal_show_cmd(workspace, review_id)];
             guidance.steps(steps);
@@ -541,21 +545,15 @@ fn evaluate_found_review(
                  approval covers the current code."
             ));
             guidance.advise(
-                "Re-request review and wait for a fresh LGTM, which moves the approval onto \
-                 the new commit. Only pass --allow-stale-approval when the new commits are \
-                 provably outside what was reviewed."
+                "Retarget the review to this commit, then re-request review and wait for a \
+                 fresh LGTM. `seal reviews request` alone leaves the review's target commit \
+                 pinned at the old, already-approved anchor — only `seal reviews retarget` \
+                 moves it and requires fresh votes. Only pass --allow-stale-approval when the \
+                 new commits are provably outside what was reviewed."
                     .to_string(),
             );
 
-            let steps = vec![
-                shell::seal_request_cmd(
-                    workspace,
-                    review_id,
-                    &required_reviewers.join(","),
-                    ctx.agent(),
-                ),
-                shell::seal_show_cmd(workspace, review_id),
-            ];
+            let steps = stale_approval_steps(workspace, review_id, required_reviewers, ctx.agent());
             guidance.steps(steps);
 
             print_guidance(guidance, format)?;
@@ -579,6 +577,25 @@ fn evaluate_found_review(
     }
 
     Ok(false)
+}
+
+/// Steps to recover a review whose approval no longer covers the workspace
+/// HEAD: retarget it to the current commit first, then re-request.
+///
+/// `seal reviews request` alone leaves the review's target commit pinned at
+/// the old, already-approved anchor (bn-w912) — only `seal reviews retarget`
+/// moves it and requires fresh votes.
+fn stale_approval_steps(
+    workspace: &str,
+    review_id: &str,
+    required_reviewers: &[String],
+    agent: &str,
+) -> Vec<String> {
+    vec![
+        shell::seal_retarget_cmd(workspace, review_id, agent),
+        shell::seal_request_cmd(workspace, review_id, &required_reviewers.join(","), agent),
+        shell::seal_show_cmd(workspace, review_id),
+    ]
 }
 
 /// No live review exists for this bone. Returns `Ok(true)` when the caller
@@ -1000,6 +1017,33 @@ fn print_guidance(guidance: &ProtocolGuidance, format: OutputFormat) -> anyhow::
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A stale approval (new commits landed since the LGTM) must retarget the
+    /// review to the current commit before re-requesting (bn-w912):
+    /// `seal reviews request` alone leaves the review's target commit pinned
+    /// at the old, already-approved anchor.
+    #[test]
+    fn stale_approval_steps_retargets_before_re_requesting() {
+        let steps = stale_approval_steps(
+            "frost-castle",
+            "cr-123",
+            &["edict-security".to_string()],
+            "crimson-storm",
+        );
+
+        let retarget_pos = steps
+            .iter()
+            .position(|s| s.contains("seal reviews retarget cr-123"))
+            .expect("retarget step present");
+        let request_pos = steps
+            .iter()
+            .position(|s| s.contains("seal reviews request cr-123"))
+            .expect("request step present");
+        assert!(
+            retarget_pos < request_pos,
+            "retarget must come before re-request: {steps:?}"
+        );
+    }
 
     #[test]
     fn test_build_merge_steps_basic() {

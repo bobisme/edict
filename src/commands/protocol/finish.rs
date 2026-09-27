@@ -403,9 +403,11 @@ fn build_blocked_section(
         ));
     }
 
-    // Output commands to check review feedback and re-request
+    // Output commands to check review feedback, retarget to the fixed
+    // commits, and re-request.
     let mut steps = Vec::new();
     steps.push(shell::seal_show_cmd(workspace, review_id));
+    steps.push(shell::seal_retarget_cmd(workspace, review_id, "agent"));
     steps.push(shell::seal_request_cmd(
         workspace,
         review_id,
@@ -420,7 +422,7 @@ fn build_blocked_section(
     ));
     guidance.steps(steps);
     guidance.advise(format!(
-        "Review {review_id} is blocked. Address reviewer feedback, then re-request the same review and explicitly dispatch its assigned reviewers. For security, follow .agents/edict/security-review.md."
+        "Review {review_id} is blocked. Address reviewer feedback, retarget the review to the fixed commits, then re-request the same review and explicitly dispatch its assigned reviewers. For security, follow .agents/edict/security-review.md."
     ));
 }
 
@@ -709,6 +711,59 @@ mod tests {
         assert!(
             commit_step.contains("'\\''"),
             "single quotes in title should be escaped in git commit"
+        );
+    }
+
+    /// A blocked review at finish time must be retargeted to the fixed
+    /// commits before it is re-requested (bn-w912): `seal reviews request`
+    /// alone leaves the review's target commit pinned at the pre-fix anchor.
+    #[test]
+    fn build_blocked_section_retargets_before_re_requesting() {
+        let mut guidance = ProtocolGuidance::new("finish");
+        let decision = review_gate::ReviewGateDecision {
+            status: ReviewGateStatus::Blocked,
+            missing_approvals: vec![],
+            newer_block_after_lgtm: vec![],
+            total_required: 1,
+            approved_by: vec![],
+            blocked_by: vec!["edict-security".to_string()],
+            stale_approval: false,
+        };
+        let review_detail = super::super::adapters::ReviewDetail {
+            review_id: "cr-123".into(),
+            title: None,
+            status: "open".into(),
+            status_changed_at: None,
+            status_changed_by: None,
+            change_id: None,
+            votes: vec![],
+            open_thread_count: 1,
+        };
+
+        build_blocked_section(
+            &mut guidance,
+            &decision,
+            &review_detail,
+            "cr-123",
+            "frost-castle",
+            "myproject",
+            &["edict-security".to_string()],
+        );
+
+        let retarget_pos = guidance
+            .steps
+            .iter()
+            .position(|s| s.contains("seal reviews retarget cr-123"))
+            .expect("retarget step present");
+        let request_pos = guidance
+            .steps
+            .iter()
+            .position(|s| s.contains("seal reviews request cr-123"))
+            .expect("request step present");
+        assert!(
+            retarget_pos < request_pos,
+            "retarget must come before re-request: {:?}",
+            guidance.steps
         );
     }
 }

@@ -149,8 +149,11 @@ Proceed only if Seal records the required vote from `$reviewer` on the current
 review range **and** teardown succeeds. The author sends the anchored
 `review-done` Rite message after that verification, using the Agentbus result
 only for its concise finding summary. If the review is blocked, fix the
-findings in the authoring workspace, re-request the **same** review, create a
-fresh Rite anchor, and run this contract again with the new target commit.
+findings in the authoring workspace, retarget the **same** review to the
+fixed commits (`maw exec "$ws" -- seal reviews retarget "$review_id" --agent
+"$AGENT"` — `seal reviews request` alone leaves the review's target commit
+pinned at the old anchor), re-request it, create a fresh Rite anchor, and run
+this contract again with the new target commit.
 
 ## Reviewer boundaries
 

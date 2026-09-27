@@ -463,8 +463,11 @@ At the end of your work, output exactly one of these completion signals:
             - Fix the code in the workspace (use absolute WS_PATH for file edits)
             - Reply: maw exec $WS -- seal reply <thread-id> --agent {agent} "Fixed: <what you did>"
             - Resolve: maw exec $WS -- seal threads resolve <thread-id> --agent {agent}
-         3. Re-request: maw exec $WS -- seal reviews request <review-id> --reviewers {project}-security --agent {agent}
-         4. Announce and wait for the re-review:
+         3. Retarget: maw exec $WS -- seal reviews retarget <review-id> --agent {agent}
+            (required before re-requesting — `seal reviews request` alone leaves the review's
+            target commit pinned at the old, pre-fix anchor)
+         4. Re-request: maw exec $WS -- seal reviews request <review-id> --reviewers {project}-security --agent {agent}
+         5. Announce and wait for the re-review:
 {review_update_recipe}
        * If PENDING (no votes yet): STOP this iteration. Wait for the reviewer.
        * If review not found: DO NOT merge or create a new review. Inspect the recorded dedicated-review session and its Agentbus result. STOP. Only create a new review if the workspace was destroyed AND 3+ iterations have passed since the review comment.
@@ -1048,6 +1051,42 @@ mod tests {
         assert!(prompt.contains("security-review.md"));
         assert!(prompt.contains("gpt-daybreak-blue-latest"));
         assert!(prompt.contains("Do NOT auto-retry"));
+    }
+
+    /// Resuming a blocked review must retarget it to the fixed commits before
+    /// re-requesting (bn-w912): `seal reviews request` alone leaves the
+    /// review's target commit pinned at the pre-fix anchor.
+    #[test]
+    fn build_prompt_retargets_before_re_requesting_blocked_review() {
+        unsafe {
+            std::env::set_var("EDICT_BONE", "");
+            std::env::set_var("EDICT_WORKSPACE", "");
+        }
+
+        let worker = WorkerLoop {
+            project_root: PathBuf::from("/test"),
+            agent: "test-worker".to_string(),
+            project: "testproject".to_string(),
+            model_pool: vec!["haiku".to_string()],
+            timeout: 900,
+            review_enabled: true,
+            critical_approvers: vec![],
+            dispatched_bone: None,
+            dispatched_workspace: None,
+            dispatched_mission: None,
+            dispatched_siblings: None,
+            dispatched_mission_outcome: None,
+            dispatched_file_hints: None,
+        };
+
+        let prompt = worker.build_prompt();
+        let retarget_pos = prompt
+            .find("seal reviews retarget <review-id>")
+            .expect("resume path must retarget the review before re-requesting");
+        let request_pos = prompt
+            .find("seal reviews request <review-id> --reviewers")
+            .expect("resume path must re-request the review");
+        assert!(retarget_pos < request_pos);
     }
 
     #[test]

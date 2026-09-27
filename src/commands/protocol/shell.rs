@@ -650,6 +650,36 @@ pub fn seal_request_cmd(workspace: &str, review_id: &str, reviewers: &str, agent
     )
 }
 
+/// Build: `maw exec <ws> -- seal reviews retarget <id> --agent <agent>`
+///
+/// Moves an existing review's target commit to the workspace's current HEAD
+/// and clears votes so the next round requires fresh approval. Must run
+/// before re-requesting review on new commits — `seal reviews request` alone
+/// leaves the review's target commit pinned to the old anchor (seal 0.29).
+///
+/// # Panics
+///
+/// Panics if `agent` is not a valid identifier.
+#[must_use]
+pub fn seal_retarget_cmd(workspace: &str, review_id: &str, agent: &str) -> String {
+    validate_identifier("agent", agent).expect("invalid agent name");
+    let agent_safe = safe_ident(agent);
+
+    let workspace_safe = if validate_workspace_name(workspace).is_ok() {
+        safe_ident(workspace)
+    } else {
+        std::borrow::Cow::Owned(shell_escape(workspace))
+    };
+
+    let review_id_safe = if validate_review_id(review_id).is_ok() {
+        safe_ident(review_id)
+    } else {
+        std::borrow::Cow::Owned(shell_escape(review_id))
+    };
+
+    format!("maw exec {workspace_safe} -- seal reviews retarget {review_id_safe} --agent {agent_safe}")
+}
+
 /// Build: `maw exec <ws> -- seal review <id>`
 #[must_use]
 pub fn seal_show_cmd(workspace: &str, review_id: &str) -> String {
@@ -1161,6 +1191,15 @@ mod tests {
     fn seal_show_basic() {
         let cmd = seal_show_cmd("frost-castle", "cr-123");
         assert_eq!(cmd, "maw exec frost-castle -- seal review cr-123");
+    }
+
+    #[test]
+    fn seal_retarget_basic() {
+        let cmd = seal_retarget_cmd("frost-castle", "cr-123", "crimson-storm");
+        assert_eq!(
+            cmd,
+            "maw exec frost-castle -- seal reviews retarget cr-123 --agent crimson-storm"
+        );
     }
 
     // --- Deterministic output tests ---

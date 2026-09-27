@@ -197,8 +197,10 @@ pub fn review_recipe(ask: ReviewAsk, agent: &str, project: &str, indent: &str) -
   Do not use an @mention or scan for another pending review.
 - Agentbus done + a real Seal vote from `{project}-security` on this review is required before
   continuing. Confirm it with `maw exec $WS -- seal review <review-id> --format json`.
-  LGTM -> continue to finish in THIS iteration. BLOCKED -> fix the threads now, then re-request
-  the same review with a NEW Rite anchor and its new commit.
+  LGTM -> continue to finish in THIS iteration. BLOCKED -> fix the threads now, retarget the
+  review to the fixed commits (`maw exec $WS -- seal reviews retarget <review-id> --agent
+  {agent}` — `seal reviews request` alone leaves the review's target commit pinned at the old,
+  pre-fix anchor), then re-request the same review with a NEW Rite anchor.
 - Agentbus unresolved, blocked, unavailable, or timeout: snapshot and terminate the named Vessel
   session, then post one anchored `task-blocked` message and record it on the bone. Release
   `review://{project}/<review-id>` only after teardown succeeds; otherwise retain the claim and
@@ -299,6 +301,24 @@ mod tests {
             recipe.matches("Do NOT auto-retry").count(),
             1,
             "a failed direct-review launch must not silently retry"
+        );
+    }
+
+    /// A blocked review must be retargeted to the fixed commits before it is
+    /// re-requested (bn-w912): `seal reviews request` alone leaves the
+    /// review's target commit pinned at the pre-fix anchor.
+    #[test]
+    fn review_recipe_retargets_before_re_requesting_a_blocked_review() {
+        let recipe = review_recipe(ReviewAsk::New, "edict-dev", "edict", "");
+        let retarget_pos = recipe
+            .find("seal reviews retarget <review-id>")
+            .expect("recipe must teach retargeting a blocked review");
+        let request_pos = recipe
+            .find("re-request the same review")
+            .expect("recipe must teach re-requesting a blocked review");
+        assert!(
+            retarget_pos < request_pos,
+            "retarget must be taught before re-request"
         );
     }
 

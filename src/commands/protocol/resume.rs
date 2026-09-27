@@ -239,8 +239,9 @@ fn build_bone_guidance(
             ));
             guidance.step(shell::seal_show_cmd(ws_name, &review.review_id));
             guidance.step(format!(
-                "# Fix issues in ws/{ws_name}/, then re-request review:"
+                "# Fix issues in ws/{ws_name}/, retarget to the fixed commits, then re-request review:"
             ));
+            guidance.step(shell::seal_retarget_cmd(ws_name, &review.review_id, "agent"));
             guidance.step(shell::seal_request_cmd(
                 ws_name,
                 &review.review_id,
@@ -385,6 +386,20 @@ mod tests {
                 .iter()
                 .any(|s| s.contains("seal reviews request"))
         );
+        // Retarget to the fixed commits must come before the re-request
+        // (bn-w912): `seal reviews request` alone leaves the review's target
+        // commit pinned at the pre-fix anchor.
+        let retarget_pos = guidance
+            .steps
+            .iter()
+            .position(|s| s.contains("seal reviews retarget cr-xyz"))
+            .expect("retarget step present");
+        let request_pos = guidance
+            .steps
+            .iter()
+            .position(|s| s.contains("seal reviews request cr-xyz"))
+            .expect("request step present");
+        assert!(retarget_pos < request_pos);
     }
 
     #[test]

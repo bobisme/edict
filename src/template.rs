@@ -415,6 +415,55 @@ mod tests {
         }
     }
 
+    /// Split a rendered doc into markdown sections (by `#`-headings *outside*
+    /// fenced code blocks — a `#`-prefixed shell comment inside a fenced bash
+    /// block is not a heading).
+    fn markdown_sections(rendered: &str) -> Vec<String> {
+        let mut sections = vec![String::new()];
+        let mut in_fence = false;
+        for line in rendered.lines() {
+            if line.trim_start().starts_with("```") {
+                in_fence = !in_fence;
+            } else if !in_fence
+                && line.starts_with('#')
+                && line.trim_start_matches('#').starts_with(' ')
+            {
+                sections.push(String::new());
+            }
+            let section = sections.last_mut().expect("at least one section");
+            section.push_str(line);
+            section.push('\n');
+        }
+        sections
+    }
+
+    /// A review that already exists is only ever moved forward by `seal
+    /// reviews retarget` (bn-w912) — `seal reviews request` alone leaves its
+    /// target commit pinned at the old anchor. Every workflow-doc mention of
+    /// re-requesting review on an existing review must retarget it first, in
+    /// the same section (initial `seal reviews create` calls are exempt: they
+    /// have no prior target to move).
+    #[test]
+    fn workflow_docs_retarget_before_re_requesting_review() {
+        for (name, content) in WORKFLOW_DOCS {
+            for layout in [Layout::Bare, Layout::Root] {
+                let rendered = render_workflow_doc(content, layout)
+                    .unwrap_or_else(|e| panic!("{name} failed to render ({layout:?}): {e}"));
+
+                for section in markdown_sections(&rendered) {
+                    if section.contains("reviews request") {
+                        assert!(
+                            section.contains("reviews retarget"),
+                            "{name} ({layout:?}) tells the agent to `seal reviews request` \
+                             (re-request) without retargeting the review first in the same \
+                             section:\n{section}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn security_review_contract_terminates_its_exact_vessel_session() {
         let content = WORKFLOW_DOCS
