@@ -46,7 +46,7 @@ claim="review://$EDICT_PROJECT/$review_id"
 session="security-${review_id}-${head:0:12}"
 
 rite claims stake --agent "$reviewer" "$claim" \
-  -m "Dedicated Daybreak review $review_id in $ws" --ttl 20m
+  -m "Dedicated Daybreak review $review_id in $ws" --ttl 1200
 
 vessel spawn --name "$session" \
   --label "project:$EDICT_PROJECT" \
@@ -54,7 +54,7 @@ vessel spawn --name "$session" \
   --label "workspace:$ws" \
   --label "role:security-review" \
   --rows 50 --cols 200 --timeout 900 --record \
-  --cwd "{{ ws_prefix }}$ws" \
+  --cwd "$(maw cd "$ws")" \
   --env "AGENT=$reviewer" \
   --env "RITE_AGENT=$reviewer" \
   --env "EDICT_PROJECT=$EDICT_PROJECT" \

@@ -378,6 +378,43 @@ mod tests {
         }
     }
 
+    /// Launch contracts in the workflow docs must be directly executable:
+    /// `rite claims stake --ttl` takes whole seconds (no `m`/`h`/`d` unit
+    /// suffix), and any `vessel spawn --cwd` must be an absolute path (or a
+    /// command substitution that resolves to one) rather than a path that is
+    /// relative to the vessel server's own working directory (bn-2c38).
+    #[test]
+    fn workflow_docs_have_no_unit_suffixed_ttl_or_relative_vessel_cwd() {
+        let ttl_re = regex::Regex::new(r"--ttl[= ]+(\S+)").unwrap();
+        let cwd_re = regex::Regex::new(r#"--cwd[= ]+"([^"]*)""#).unwrap();
+
+        for (name, content) in WORKFLOW_DOCS {
+            for layout in [Layout::Bare, Layout::Root] {
+                let rendered = render_workflow_doc(content, layout)
+                    .unwrap_or_else(|e| panic!("{name} failed to render ({layout:?}): {e}"));
+
+                for cap in ttl_re.captures_iter(&rendered) {
+                    let value = &cap[1];
+                    assert!(
+                        value.chars().all(|c| c.is_ascii_digit()),
+                        "{name} ({layout:?}) has a unit-suffixed --ttl value: {value:?}; \
+                         rite claims stake --ttl takes whole seconds"
+                    );
+                }
+
+                for cap in cwd_re.captures_iter(&rendered) {
+                    let value = &cap[1];
+                    assert!(
+                        value.starts_with('/') || value.starts_with("$("),
+                        "{name} ({layout:?}) has a relative vessel --cwd: {value:?}; \
+                         it must be absolute (it resolves against the vessel server's cwd, \
+                         not the caller's)"
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn security_review_contract_terminates_its_exact_vessel_session() {
         let content = WORKFLOW_DOCS
