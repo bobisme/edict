@@ -333,7 +333,7 @@ Migrations run automatically during `edict sync` when the config version is behi
 
 **`edict init`** does everything: interactive config, creates `.agents/edict/`, copies all files, generates AGENTS.md + `.edict.toml`, initializes external tools (`bn init`, `maw init`, `seal init`), registers rite hooks, seeds initial bones, creates .gitignore.
 
-**`edict sync`** is incremental: checks staleness, runs pending migrations, updates only changed components, preserves user edits outside managed markers. `--check` mode exits non-zero without changing anything (CI use).
+**`edict sync`** is incremental: checks staleness, runs pending migrations, updates only changed components, preserves user edits outside managed markers. `--check` mode exits non-zero without changing anything (CI use). `--dry-run` lists what a sync would change — files created/updated (with a `+N -M lines` summary), migration steps, rite hooks to create/update/adopt/replace (name, channel, cwd, command), `git`/`bn` calls and the commit — then exits 0 without writing anything or running a mutating subprocess. Every sync side effect goes through `crate::effects::Effects` (`src/effects.rs`), which performs it or, under `--dry-run`, records it; new sync steps must use it (`fx.write`, `fx.run`, `fx.run_command`, `fx.announce`) rather than `fs::write`/`Tool::run` directly.
 
 ## .edict.toml Config
 

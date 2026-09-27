@@ -6,6 +6,7 @@ use clap::Args;
 use sha2::{Digest, Sha256};
 
 use crate::config::Config;
+use crate::effects::Effects;
 use crate::error::ExitError;
 use crate::layout::Layout;
 use crate::subprocess::{Tool, run_command};
@@ -19,6 +20,10 @@ pub struct SyncArgs {
     /// Check mode: exit non-zero if anything is stale, without making changes
     #[arg(long)]
     pub check: bool,
+    /// Preview: list the files, migrations, rite hooks and commit sync would
+    /// change, then exit 0 without changing anything
+    #[arg(long, conflicts_with = "check")]
+    pub dry_run: bool,
     /// Disable auto-commit (default: enabled)
     #[arg(long)]
     pub no_commit: bool,
@@ -87,6 +92,9 @@ impl SyncArgs {
     /// Returns `Err` if config loading, file I/O, or a subprocess invocation fails,
     /// or if `--check` is set and components are out of sync.
     ///
+    /// With `--dry-run`, every change is recorded by [`Effects`] instead of
+    /// performed, and the plan is printed.
+    ///
     /// # Panics
     ///
     /// Panics if the current working directory cannot be determined.
@@ -96,10 +104,29 @@ impl SyncArgs {
             .clone()
             .unwrap_or_else(|| std::env::current_dir().expect("Failed to get current dir"));
 
+        let effects = if self.dry_run {
+            Effects::record()
+        } else {
+            Effects::apply()
+        };
+
         // Detect maw v2 bare repo
         if crate::config::find_config(&project_root.join("ws/default")).is_some() {
-            return self.handle_bare_repo(&project_root);
+            return self.handle_bare_repo(&effects, &project_root);
         }
+
+        self.sync_project(&effects, &project_root)?;
+        if effects.is_recording() {
+            print!("{}", effects.render_plan(&project_root));
+        } else if !self.check {
+            println!("Sync complete");
+        }
+        Ok(())
+    }
+
+    /// Sync one (non-bare) project, performing or recording each change via `fx`.
+    fn sync_project(&self, fx: &Effects, project_root: &Path) -> Result<()> {
+        let project_root = project_root.to_path_buf();
 
         // Detect the on-disk workspace layout (bare ws/ vs root .maw/workspaces).
         // When reached via handle_bare_repo's `maw exec default -- edict sync`,
@@ -129,9 +156,9 @@ impl SyncArgs {
             let json_content = fs::read_to_string(&json_path)?;
             match crate::config::json_to_toml(&json_content) {
                 Ok(toml_content) => {
-                    fs::write(&toml_path, &toml_content)?;
-                    fs::remove_file(&json_path)?;
-                    println!("Migrated .botbox.json -> .edict.toml");
+                    fx.write(&toml_path, &toml_content)?;
+                    fx.remove_file(&json_path)?;
+                    fx.announce("Migrated .botbox.json -> .edict.toml");
                 }
                 Err(e) => {
                     tracing::warn!("failed to migrate .botbox.json to .edict.toml: {e}");
@@ -142,16 +169,16 @@ impl SyncArgs {
         // Migrate .botbox.toml -> .edict.toml (botbox era → edict era)
         let legacy_toml_path = project_root.join(crate::config::CONFIG_TOML_LEGACY);
         if legacy_toml_path.exists() && !toml_path.exists() {
-            match fs::rename(&legacy_toml_path, &toml_path) {
-                Ok(()) => println!("Migrated .botbox.toml -> .edict.toml"),
+            match fx.rename(&legacy_toml_path, &toml_path) {
+                Ok(()) => fx.announce("Migrated .botbox.toml -> .edict.toml"),
                 Err(e) => tracing::warn!("failed to rename .botbox.toml to .edict.toml: {e}"),
             }
         }
 
         // Migrate .agents/botbox/ -> .agents/edict/ (botbox era → edict era)
         if agents_dir_legacy.exists() && !agents_dir_edict.exists() {
-            match fs::rename(&agents_dir_legacy, &agents_dir_edict) {
-                Ok(()) => println!("Migrated .agents/botbox/ -> .agents/edict/"),
+            match fx.rename(&agents_dir_legacy, &agents_dir_edict) {
+                Ok(()) => fx.announce("Migrated .agents/botbox/ -> .agents/edict/"),
                 Err(e) => tracing::warn!("failed to rename .agents/botbox/ to .agents/edict/: {e}"),
             }
         }
@@ -190,96 +217,100 @@ impl SyncArgs {
         }
 
         // Clean up per-repo hooks (now managed globally)
-        self.cleanup_per_repo_hooks(&project_root)?;
+        self.cleanup_per_repo_hooks(fx, &project_root)?;
 
         // Perform updates
         let mut changed_files = Vec::new();
 
-        let active_config_path =
-            crate::config::find_config(&project_root).unwrap_or_else(|| config_path.clone());
-        if migrate_retired_model_defaults(&active_config_path)? {
+        // Seen through fx, so a dry-run plans against the config a migration
+        // above would have renamed into place.
+        let active_config_path = if fx.exists(&toml_path) {
+            toml_path
+        } else {
+            crate::config::find_config(&project_root).unwrap_or_else(|| config_path.clone())
+        };
+        if migrate_retired_model_defaults(fx, &active_config_path)? {
             changed_files.push(".edict.toml");
-            println!("Updated retired model defaults");
+            fx.announce("Updated retired model defaults");
         }
-        if migrate_retired_reviewer_config(&active_config_path)? {
+        if migrate_retired_reviewer_config(fx, &active_config_path)? {
             changed_files.push(".edict.toml");
-            println!("Removed retired reviewer-loop configuration");
+            fx.announce("Removed retired reviewer-loop configuration");
         }
 
         if docs_stale {
-            Self::sync_workflow_docs(&agents_dir, layout)?;
+            Self::sync_workflow_docs(fx, &agents_dir, layout)?;
             changed_files.push(".agents/edict/*.md");
-            println!("Updated workflow docs");
+            fx.announce("Updated workflow docs");
         }
 
         if managed_stale {
-            Self::sync_managed_section(&project_root, &config, layout)?;
+            Self::sync_managed_section(fx, &project_root, &config, layout)?;
             changed_files.push("AGENTS.md");
-            println!("Updated AGENTS.md managed section");
+            fx.announce("Updated AGENTS.md managed section");
         }
 
         if design_docs_stale {
-            Self::sync_design_docs(&agents_dir)?;
+            Self::sync_design_docs(fx, &agents_dir)?;
             changed_files.push(".agents/edict/design/*.md");
-            println!("Updated design docs");
+            fx.announce("Updated design docs");
         }
 
         // Clean up legacy JS artifacts (scripts, shell hooks)
-        self.cleanup_legacy_artifacts(&agents_dir, &mut changed_files);
+        self.cleanup_legacy_artifacts(fx, &agents_dir, &mut changed_files);
 
         // Migrate rite hooks from bun .mjs to edict run
-        migrate_rite_hooks(&config);
+        migrate_rite_hooks(fx, &config);
 
         // The ambient reviewer loop is retired. Only remove hooks that Edict
         // can prove it owns; a project's independently managed mention hooks
         // are outside this migration's authority.
-        retire_owned_reviewer_hooks(&config);
+        retire_owned_reviewer_hooks(fx, &config);
 
         // Migrate rite hooks from botbox: descriptions to edict: descriptions
-        migrate_botbox_rite_hooks_to_edict(&config, &project_root);
+        migrate_botbox_rite_hooks_to_edict(fx, &config, &project_root);
 
         // Fix hook --cwd for maw v2 (ws/default → repo root)
-        migrate_hook_cwd(&config, &project_root);
+        migrate_hook_cwd(fx, &config, &project_root);
 
         // Migrate router hook claim from agent://{name}-router → agent://{name}-dev
-        migrate_router_hook_claim(&config, &project_root);
+        migrate_router_hook_claim(fx, &config, &project_root);
 
         // Migrate botty → vessel (config key + rite hooks)
         if !self.check {
-            migrate_vessel_hooks(&config, &project_root, &config_path);
+            migrate_vessel_hooks(fx, &config, &project_root, &active_config_path);
         }
 
         // Migrate BOTBUS_* → RITE_* env vars in hook commands
         if !self.check {
-            migrate_botbus_env_hooks(&config, &project_root);
+            migrate_botbus_env_hooks(fx, &config, &project_root);
         }
 
         // Forward RITE_BATCH_* so spawned agents can resolve their reply anchor
         if !self.check {
-            migrate_hook_reply_env(&config, &project_root);
+            migrate_hook_reply_env(fx, &config, &project_root);
         }
 
         // Ensure the router hook exists — a project channel with no responder
         // silently answers nobody (see ensure_router_hook)
         if !self.check {
-            ensure_router_hook(&config, &project_root);
+            ensure_router_hook(fx, &config, &project_root);
         }
 
         // Migrate beads → bones (config, data, tooling files)
         if !self.check {
-            migrate_beads_to_bones(&project_root, &config_path)?;
+            migrate_beads_to_bones(fx, &project_root, &active_config_path)?;
         }
 
         // Auto-commit if changes were made
         if !changed_files.is_empty() && !self.no_commit {
-            Self::auto_commit(&project_root, &changed_files)?;
+            Self::auto_commit(fx, &project_root, &changed_files)?;
         }
 
-        println!("Sync complete");
         Ok(())
     }
 
-    fn handle_bare_repo(&self, project_root: &Path) -> Result<()> {
+    fn handle_bare_repo(&self, fx: &Effects, project_root: &Path) -> Result<()> {
         // Canonicalize project_root to prevent path traversal
         let project_root = project_root
             .canonicalize()
@@ -302,8 +333,17 @@ impl SyncArgs {
         if self.no_commit {
             args.push("--no-commit");
         }
+        if self.dry_run {
+            args.push("--dry-run");
+        }
 
-        run_command("maw", &args, Some(&project_root))?;
+        // Not an effect: the inner sync applies or records by the same flags.
+        let inner = run_command("maw", &args, Some(&project_root))?;
+        if fx.is_recording() {
+            println!("ws/default:");
+            print!("{inner}");
+            println!("\nBare repo root:");
+        }
 
         // Clean up stale legacy config files at bare repo root.
         //
@@ -327,11 +367,11 @@ impl SyncArgs {
                         ExitError::new(1, format!("Stale {stale_name} at bare repo root")).into(),
                     );
                 }
-                match fs::remove_file(&stale_path) {
-                    Ok(()) => println!(
+                match fx.remove_file(&stale_path) {
+                    Ok(()) => fx.announce(format!(
                         "Removed stale {stale_name} from bare repo root \
                          (authoritative config lives in ws/default/)"
-                    ),
+                    )),
                     Err(e) => {
                         tracing::warn!("failed to remove stale {stale_name} at bare root: {e}");
                     }
@@ -344,8 +384,8 @@ impl SyncArgs {
         let stub_content = "**Do not edit the root AGENTS.md for memories or instructions. Use the AGENTS.md in ws/default/.**\n@ws/default/AGENTS.md\n";
 
         if !stub_agents.exists() {
-            fs::write(&stub_agents, stub_content)?;
-            println!("Created bare-root AGENTS.md stub");
+            fx.write(&stub_agents, stub_content)?;
+            fx.announce("Created bare-root AGENTS.md stub");
         }
 
         // Symlink .claude directory — use atomic approach to avoid TOCTOU
@@ -358,20 +398,9 @@ impl SyncArgs {
                 .map_or(true, |target| target != Path::new("ws/default/.claude"));
 
             if needs_symlink {
-                // Use atomic rename pattern: create temp symlink, then rename over target
-                let tmp_link = project_root.join(".claude.tmp");
-                let _ = fs::remove_file(&tmp_link); // clean up any stale temp
-                #[cfg(unix)]
-                std::os::unix::fs::symlink("ws/default/.claude", &tmp_link)?;
-                #[cfg(windows)]
-                std::os::windows::fs::symlink_dir("ws/default/.claude", &tmp_link)?;
-
-                // Atomic rename (on same filesystem)
-                if let Err(e) = fs::rename(&tmp_link, &root_claude_dir) {
-                    let _ = fs::remove_file(&tmp_link);
-                    return Err(e).context("creating .claude symlink");
-                }
-                println!("Symlinked .claude → ws/default/.claude");
+                // Atomic: temp symlink, then rename over the target
+                fx.symlink_replace("ws/default/.claude", &root_claude_dir)?;
+                fx.announce("Symlinked .claude → ws/default/.claude");
             }
         }
 
@@ -384,37 +413,35 @@ impl SyncArgs {
                 .map_or(true, |target| target != Path::new("ws/default/.pi"));
 
             if needs_symlink {
-                let tmp_link = project_root.join(".pi.tmp");
-                let _ = fs::remove_file(&tmp_link);
-                #[cfg(unix)]
-                std::os::unix::fs::symlink("ws/default/.pi", &tmp_link)?;
-                #[cfg(windows)]
-                std::os::windows::fs::symlink_dir("ws/default/.pi", &tmp_link)?;
-
-                if let Err(e) = fs::rename(&tmp_link, &root_pi_dir) {
-                    let _ = fs::remove_file(&tmp_link);
-                    return Err(e).context("creating .pi symlink");
-                }
-                println!("Symlinked .pi → ws/default/.pi");
+                fx.symlink_replace("ws/default/.pi", &root_pi_dir)?;
+                fx.announce("Symlinked .pi → ws/default/.pi");
             }
         }
 
+        if fx.is_recording() {
+            print!("{}", fx.render_plan(&project_root));
+        }
         Ok(())
     }
 
     /// Remove legacy JS-era artifacts that are no longer needed.
     /// The Rust rewrite builds loops into the binary, so .mjs scripts and
     /// shell hook wrappers are dead weight.
-    fn cleanup_legacy_artifacts(&self, agents_dir: &Path, changed_files: &mut Vec<&str>) {
+    fn cleanup_legacy_artifacts(
+        &self,
+        fx: &Effects,
+        agents_dir: &Path,
+        changed_files: &mut Vec<&str>,
+    ) {
         // Remove .agents/botbox/scripts/ (JS loop scripts)
         let scripts_dir = agents_dir.join("scripts");
         if scripts_dir.is_dir() {
             if self.check {
                 tracing::warn!("legacy scripts/ directory exists (will be removed on sync)");
             } else {
-                match fs::remove_dir_all(&scripts_dir) {
+                match fx.remove_dir_all(&scripts_dir) {
                     Ok(()) => {
-                        println!("Removed legacy scripts/ directory");
+                        fx.announce("Removed legacy scripts/ directory");
                         changed_files.push(".agents/botbox/scripts/");
                     }
                     Err(e) => tracing::warn!("failed to remove legacy scripts/: {e}"),
@@ -428,9 +455,9 @@ impl SyncArgs {
             if self.check {
                 tracing::warn!("legacy hooks/ directory exists (will be removed on sync)");
             } else {
-                match fs::remove_dir_all(&hooks_dir) {
+                match fx.remove_dir_all(&hooks_dir) {
                     Ok(()) => {
-                        println!("Removed legacy hooks/ directory");
+                        fx.announce("Removed legacy hooks/ directory");
                         changed_files.push(".agents/botbox/hooks/");
                     }
                     Err(e) => tracing::warn!("failed to remove legacy hooks/: {e}"),
@@ -442,7 +469,7 @@ impl SyncArgs {
         for marker in &[".scripts-version", ".hooks-version"] {
             let path = agents_dir.join(marker);
             if path.exists() && !self.check {
-                let _ = fs::remove_file(&path);
+                let _ = fx.remove_file(&path);
             }
         }
     }
@@ -478,7 +505,7 @@ impl SyncArgs {
 
     /// Clean up per-repo hooks that are now managed globally.
     /// Removes botbox hooks from per-repo .claude/settings.json and .pi/extensions/.
-    fn cleanup_per_repo_hooks(&self, project_root: &Path) -> Result<()> {
+    fn cleanup_per_repo_hooks(&self, fx: &Effects, project_root: &Path) -> Result<()> {
         if self.check {
             return Ok(());
         }
@@ -535,17 +562,17 @@ impl SyncArgs {
 
                     // Only write back if there's other content; delete if empty
                     if settings.as_object().is_some_and(serde_json::Map::is_empty) {
-                        fs::remove_file(&settings_path)?;
+                        fx.remove_file(&settings_path)?;
                         // Also remove .claude dir if empty
                         let claude_dir = project_root.join(".claude");
                         if claude_dir.exists() && fs::read_dir(&claude_dir)?.next().is_none() {
-                            fs::remove_dir(&claude_dir)?;
+                            fx.remove_dir(&claude_dir)?;
                         }
                     } else {
-                        fs::write(&settings_path, serde_json::to_string_pretty(&settings)?)?;
+                        fx.write(&settings_path, serde_json::to_string_pretty(&settings)?)?;
                     }
-                    println!(
-                        "Cleaned up per-repo botbox hooks from .claude/settings.json (now managed globally via `botbox hooks install`)"
+                    fx.announce(
+                        "Cleaned up per-repo botbox hooks from .claude/settings.json (now managed globally via `botbox hooks install`)",
                     );
                 }
             }
@@ -554,18 +581,18 @@ impl SyncArgs {
         // Clean up per-repo Pi extension
         let pi_ext = project_root.join(".pi/extensions/botbox-hooks.ts");
         if pi_ext.exists() {
-            fs::remove_file(&pi_ext)?;
+            fx.remove_file(&pi_ext)?;
             // Clean up empty dirs
             let pi_ext_dir = project_root.join(".pi/extensions");
             if pi_ext_dir.exists() && fs::read_dir(&pi_ext_dir)?.next().is_none() {
-                fs::remove_dir(&pi_ext_dir)?;
+                fx.remove_dir(&pi_ext_dir)?;
             }
             let pi_dir = project_root.join(".pi");
             if pi_dir.exists() && fs::read_dir(&pi_dir)?.next().is_none() {
-                fs::remove_dir(&pi_dir)?;
+                fx.remove_dir(&pi_dir)?;
             }
-            println!(
-                "Cleaned up per-repo Pi extension (now managed globally via `botbox hooks install`)"
+            fx.announce(
+                "Cleaned up per-repo Pi extension (now managed globally via `botbox hooks install`)",
             );
         }
 
@@ -584,17 +611,17 @@ impl SyncArgs {
         Ok(installed != current)
     }
 
-    fn sync_workflow_docs(agents_dir: &Path, layout: Layout) -> Result<()> {
+    fn sync_workflow_docs(fx: &Effects, agents_dir: &Path, layout: Layout) -> Result<()> {
         for (name, content) in WORKFLOW_DOCS {
             let path = agents_dir.join(name);
             let rendered = render_workflow_doc(content, layout)
                 .with_context(|| format!("Failed to render {name}"))?;
-            fs::write(&path, rendered)
+            fx.write(&path, rendered)
                 .with_context(|| format!("Failed to write {}", path.display()))?;
         }
 
         let version = compute_docs_version(layout);
-        fs::write(agents_dir.join(".version"), version)?;
+        fx.write(&agents_dir.join(".version"), version)?;
 
         // These files belonged to the retired ambient reviewer loop. They are
         // generated artifacts, so sync may remove them without touching
@@ -607,50 +634,55 @@ impl SyncArgs {
         ] {
             let path = agents_dir.join(legacy);
             if path.exists() {
-                fs::remove_file(path)?;
+                fx.remove_file(&path)?;
             }
         }
         let prompts_dir = agents_dir.join("prompts");
         if prompts_dir.exists() && fs::read_dir(&prompts_dir)?.next().is_none() {
-            fs::remove_dir(prompts_dir)?;
+            fx.remove_dir(&prompts_dir)?;
         }
 
         Ok(())
     }
 
-    fn sync_managed_section(project_root: &Path, config: &Config, layout: Layout) -> Result<()> {
+    fn sync_managed_section(
+        fx: &Effects,
+        project_root: &Path,
+        config: &Config,
+        layout: Layout,
+    ) -> Result<()> {
         let agents_md = project_root.join("AGENTS.md");
         if !agents_md.exists() {
             return Ok(()); // Skip if no AGENTS.md
         }
 
-        let content = fs::read_to_string(&agents_md)?;
+        let content = fx.read_to_string(&agents_md)?;
         let ctx = TemplateContext::from_config(config, layout);
         let updated = update_managed_section(&content, &ctx)?;
 
-        fs::write(&agents_md, updated)?;
+        fx.write(&agents_md, updated)?;
         Ok(())
     }
 
     // sync_hooks removed — hooks are now installed globally via `botbox hooks install`
 
-    fn sync_design_docs(agents_dir: &Path) -> Result<()> {
+    fn sync_design_docs(fx: &Effects, agents_dir: &Path) -> Result<()> {
         let design_dir = agents_dir.join("design");
-        fs::create_dir_all(&design_dir)?;
+        fx.create_dir_all(&design_dir)?;
 
         for (name, content) in DESIGN_DOCS {
             let path = design_dir.join(name);
-            fs::write(&path, content)
+            fx.write(&path, content)
                 .with_context(|| format!("Failed to write {}", path.display()))?;
         }
 
         let version = compute_design_docs_version();
-        fs::write(design_dir.join(".design-docs-version"), version)?;
+        fx.write(&design_dir.join(".design-docs-version"), version)?;
 
         Ok(())
     }
 
-    fn auto_commit(project_root: &Path, changed_files: &[&str]) -> Result<()> {
+    fn auto_commit(fx: &Effects, project_root: &Path, changed_files: &[&str]) -> Result<()> {
         let vcs = detect_vcs(project_root);
         if vcs == Vcs::None {
             return Ok(()); // No VCS found, skip commit
@@ -687,14 +719,17 @@ impl SyncArgs {
                 }
                 let mut args = vec!["add", "--"];
                 args.extend_from_slice(&existing);
-                run_command("git", &args, Some(project_root))?;
+                fx.run_command("git", &args, Some(project_root))?;
 
                 // Only commit if there are staged changes
-                let status =
-                    run_command("git", &["diff", "--cached", "--quiet"], Some(project_root));
-                if status.is_err() {
+                // A dry-run staged nothing, so assume the add above would have.
+                let staged = fx.probe(true, || {
+                    run_command("git", &["diff", "--cached", "--quiet"], Some(project_root))
+                        .is_err()
+                });
+                if staged {
                     // diff --cached --quiet exits 1 when there are staged changes
-                    run_command("git", &["commit", "-m", &message], Some(project_root))?;
+                    fx.run_command("git", &["commit", "-m", &message], Some(project_root))?;
                 }
             }
             Vcs::None => unreachable!(),
@@ -706,8 +741,9 @@ impl SyncArgs {
 
 /// Replace known retired model defaults in their expected tier. Custom model
 /// entries and retired-looking models in other tiers are left untouched.
-fn migrate_retired_model_defaults(config_path: &Path) -> Result<bool> {
-    let source = fs::read_to_string(config_path)
+fn migrate_retired_model_defaults(fx: &Effects, config_path: &Path) -> Result<bool> {
+    let source = fx
+        .read_to_string(config_path)
         .with_context(|| format!("reading {}", config_path.display()))?;
     let mut document = source
         .parse::<toml_edit::DocumentMut>()
@@ -771,7 +807,7 @@ fn migrate_retired_model_defaults(config_path: &Path) -> Result<bool> {
     }
 
     if changed {
-        fs::write(config_path, document.to_string())
+        fx.write(config_path, document.to_string())
             .with_context(|| format!("writing {}", config_path.display()))?;
     }
 
@@ -781,8 +817,9 @@ fn migrate_retired_model_defaults(config_path: &Path) -> Result<bool> {
 /// Remove the configuration block that only configured the retired ambient
 /// reviewer loop. `review.reviewers` remains: it names the reviewers Seal must
 /// collect votes from, including the dedicated Daybreak security reviewer.
-fn migrate_retired_reviewer_config(config_path: &Path) -> Result<bool> {
-    let source = fs::read_to_string(config_path)
+fn migrate_retired_reviewer_config(fx: &Effects, config_path: &Path) -> Result<bool> {
+    let source = fx
+        .read_to_string(config_path)
         .with_context(|| format!("reading {}", config_path.display()))?;
     let mut document = source
         .parse::<toml_edit::DocumentMut>()
@@ -799,7 +836,7 @@ fn migrate_retired_reviewer_config(config_path: &Path) -> Result<bool> {
         return Ok(false);
     }
 
-    fs::write(config_path, document.to_string())
+    fx.write(config_path, document.to_string())
         .with_context(|| format!("writing {}", config_path.display()))?;
     Ok(true)
 }
@@ -807,7 +844,7 @@ fn migrate_retired_reviewer_config(config_path: &Path) -> Result<bool> {
 /// Remove a named reviewer-loop hook only when it is demonstrably owned by
 /// Edict. A project may have its own `@project-security` automation, so a
 /// matching mention alone is deliberately insufficient authority to remove it.
-fn retire_owned_reviewer_hooks(config: &Config) {
+fn retire_owned_reviewer_hooks(fx: &Effects, config: &Config) {
     let output = match Tool::new("rite")
         .args(&["hooks", "list", "--format", "json"])
         .run()
@@ -830,8 +867,10 @@ fn retire_owned_reviewer_hooks(config: &Config) {
         let Some(id) = hook.get("id").and_then(|id| id.as_str()) else {
             continue;
         };
-        match Tool::new("rite").args(&["hooks", "remove", id]).run() {
-            Ok(output) if output.success() => println!("Retired Edict reviewer hook {id}"),
+        match fx.run(&Tool::new("rite").args(&["hooks", "remove", id])) {
+            Ok(output) if output.success() => {
+                fx.announce(format!("Retired Edict reviewer hook {id}"));
+            }
             Ok(output) => {
                 tracing::warn!(hook_id = %id, stderr = %output.stderr, "failed to retire Edict reviewer hook");
             }
@@ -856,7 +895,7 @@ fn is_owned_reviewer_hook(hook: &serde_json::Value, project_name: &str) -> bool 
 /// Finds hooks with `botbox:{name}:responder` or `botbox:{name}:reviewer-*` descriptions,
 /// removes them, and re-registers with `edict:` prefix and `edict run` commands.
 /// Called during `edict sync` on projects that were previously set up with `botbox`.
-fn migrate_botbox_rite_hooks_to_edict(config: &Config, project_root: &Path) {
+fn migrate_botbox_rite_hooks_to_edict(fx: &Effects, config: &Config, project_root: &Path) {
     let output = match Tool::new("rite")
         .args(&["hooks", "list", "--format", "json"])
         .run()
@@ -908,9 +947,8 @@ fn migrate_botbox_rite_hooks_to_edict(config: &Config, project_root: &Path) {
         };
 
         // Remove old botbox hook
-        if Tool::new("rite")
-            .args(&["hooks", "remove", id])
-            .run()
+        if fx
+            .run(&Tool::new("rite").args(&["hooks", "remove", id]))
             .is_err()
         {
             tracing::warn!(hook_id = %id, "failed to remove botbox-era hook during edict migration");
@@ -924,10 +962,10 @@ fn migrate_botbox_rite_hooks_to_edict(config: &Config, project_root: &Path) {
                 .responder
                 .as_ref()
                 .and_then(|r| r.memory_limit.as_deref());
-            super::init::register_router_hook(&root_str, &root_str, name, &agent, responder_ml);
-            println!("  Migrated hook {desc} → edict:{name}:responder");
+            super::init::register_router_hook(fx, &root_str, &root_str, name, &agent, responder_ml);
+            fx.announce(format!("  Migrated hook {desc} → edict:{name}:responder"));
         } else if desc.starts_with(&format!("botbox:{name}:reviewer-")) {
-            println!("  Retired legacy reviewer hook {desc}");
+            fx.announce(format!("  Retired legacy reviewer hook {desc}"));
         }
     }
 }
@@ -938,7 +976,7 @@ fn migrate_botbox_rite_hooks_to_edict(config: &Config, project_root: &Path) {
 /// (bun-based, old naming, missing descriptions), removes them, and
 /// re-registers via `ensure_rite_hook` with proper descriptions for
 /// future idempotent management.
-fn migrate_rite_hooks(config: &Config) {
+fn migrate_rite_hooks(fx: &Effects, config: &Config) {
     let output = match Tool::new("rite")
         .args(&["hooks", "list", "--format", "json"])
         .run()
@@ -1004,19 +1042,20 @@ fn migrate_rite_hooks(config: &Config) {
 
         // Remove old hook (ensure_rite_hook handles dedup by description,
         // but these legacy hooks have no description so we remove manually)
-        let remove = Tool::new("rite").args(&["hooks", "remove", &id]).run();
+        let remove = fx.run(&Tool::new("rite").args(&["hooks", "remove", &id]));
 
         if remove.is_err() || !remove.as_ref().expect("remove is Ok here").success() {
             tracing::warn!(hook_id = %id, "failed to remove legacy hook");
             continue;
         }
 
-        reregister_legacy_router_hook(config, name, &agent, env_inherit, spawn_cwd, &id);
+        reregister_legacy_router_hook(fx, config, name, &agent, env_inherit, spawn_cwd, &id);
     }
 }
 
 /// Re-register a legacy router hook with the current `edict run responder` command.
 fn reregister_legacy_router_hook(
+    fx: &Effects,
     config: &Config,
     name: &str,
     agent: &str,
@@ -1067,8 +1106,8 @@ fn reregister_legacy_router_hook(
         "responder",
     ]);
 
-    match crate::subprocess::ensure_rite_hook(&description, &router_args) {
-        Ok(_) => println!("  Migrated router hook {id} → edict run responder"),
+    match crate::subprocess::ensure_rite_hook_with(fx, &description, &router_args) {
+        Ok(_) => fx.announce(format!("  Migrated router hook {id} → edict run responder")),
         Err(e) => tracing::warn!("failed to re-register router hook: {e}"),
     }
 }
@@ -1078,7 +1117,7 @@ fn reregister_legacy_router_hook(
 /// Earlier versions of `detect_hook_paths` checked for `.jj` to identify bare repos,
 /// which broke after the migration to Git+manifold. This re-registers hooks that have
 /// `--cwd .../ws/default` with `--cwd .../` (the repo root) instead.
-fn migrate_hook_cwd(config: &Config, project_root: &Path) {
+fn migrate_hook_cwd(fx: &Effects, config: &Config, project_root: &Path) {
     // Detect maw v2: project_root may be ws/default/ (inner sync) or the bare root
     let bare_root = if project_root.ends_with("ws/default") {
         project_root.parent().and_then(Path::parent)
@@ -1146,9 +1185,8 @@ fn migrate_hook_cwd(config: &Config, project_root: &Path) {
         };
 
         // Remove old hook first
-        if Tool::new("rite")
-            .args(&["hooks", "remove", id])
-            .run()
+        if fx
+            .run(&Tool::new("rite").args(&["hooks", "remove", id]))
             .is_err()
         {
             continue;
@@ -1161,10 +1199,10 @@ fn migrate_hook_cwd(config: &Config, project_root: &Path) {
                 .responder
                 .as_ref()
                 .and_then(|r| r.memory_limit.as_deref());
-            super::init::register_router_hook(&root_str, &root_str, name, &agent, responder_ml);
-            println!("  Fixed hook --cwd: {desc} → repo root");
+            super::init::register_router_hook(fx, &root_str, &root_str, name, &agent, responder_ml);
+            fx.announce(format!("  Fixed hook --cwd: {desc} → repo root"));
         } else {
-            println!("  Retired stale reviewer hook {desc}");
+            fx.announce(format!("  Retired stale reviewer hook {desc}"));
         }
     }
 }
@@ -1175,7 +1213,7 @@ fn migrate_hook_cwd(config: &Config, project_root: &Path) {
 /// Earlier versions used a vestigial `-router` claim that nobody actually staked.
 /// The new pattern uses `-dev` which matches the responder's own agent claim,
 /// preventing re-trigger while processing.
-fn migrate_router_hook_claim(config: &Config, project_root: &Path) {
+fn migrate_router_hook_claim(fx: &Effects, config: &Config, project_root: &Path) {
     let output = match Tool::new("rite")
         .args(&["hooks", "list", "--format", "json"])
         .run()
@@ -1220,9 +1258,8 @@ fn migrate_router_hook_claim(config: &Config, project_root: &Path) {
         };
 
         // Remove old hook and re-register with new claim pattern
-        if Tool::new("rite")
-            .args(&["hooks", "remove", id])
-            .run()
+        if fx
+            .run(&Tool::new("rite").args(&["hooks", "remove", id]))
             .is_err()
         {
             continue;
@@ -1249,37 +1286,39 @@ fn migrate_router_hook_claim(config: &Config, project_root: &Path) {
             .responder
             .as_ref()
             .and_then(|r| r.memory_limit.as_deref());
-        super::init::register_router_hook(&root_str, &root_str, name, &agent, responder_ml);
-        println!("  Migrated router hook claim: agent://{name}-router → agent://{name}-dev");
+        super::init::register_router_hook(fx, &root_str, &root_str, name, &agent, responder_ml);
+        fx.announce(format!(
+            "  Migrated router hook claim: agent://{name}-router → agent://{name}-dev"
+        ));
     }
 }
 
 /// Migrate botty → vessel: update config key on disk and re-register rite hooks.
 ///
 /// Idempotent — skips steps already done.
-fn migrate_vessel_hooks(config: &Config, project_root: &Path, config_path: &Path) {
+fn migrate_vessel_hooks(fx: &Effects, config: &Config, project_root: &Path, config_path: &Path) {
     // 1. Update config TOML on disk: botty → vessel, crit → seal, botbus → rite
-    if let Ok(content) = fs::read_to_string(config_path) {
+    if let Ok(content) = fx.read_to_string(config_path) {
         let mut updated = content;
         let mut changed = false;
 
         if updated.contains("botty = ") {
             updated = updated.replace("botty = ", "vessel = ");
             changed = true;
-            println!("Migrated config: tools.botty → tools.vessel");
+            fx.announce("Migrated config: tools.botty → tools.vessel");
         }
         if updated.contains("crit = ") {
             updated = updated.replace("crit = ", "seal = ");
             changed = true;
-            println!("Migrated config: tools.crit → tools.seal");
+            fx.announce("Migrated config: tools.crit → tools.seal");
         }
         if updated.contains("botbus = ") {
             updated = updated.replace("botbus = ", "rite = ");
             changed = true;
-            println!("Migrated config: tools.botbus → tools.rite");
+            fx.announce("Migrated config: tools.botbus → tools.rite");
         }
 
-        if changed && let Err(e) = fs::write(config_path, updated) {
+        if changed && let Err(e) = fx.write(config_path, updated) {
             tracing::warn!("failed to update config tool renames: {e}");
         }
     }
@@ -1345,13 +1384,13 @@ fn migrate_vessel_hooks(config: &Config, project_root: &Path, config_path: &Path
                 .responder
                 .as_ref()
                 .and_then(|r| r.memory_limit.as_deref());
-            super::init::register_router_hook(&root_str, &root_str, name, &agent, ml);
-            println!("  Migrated router hook: vessel spawn (was botty)");
+            super::init::register_router_hook(fx, &root_str, &root_str, name, &agent, ml);
+            fx.announce("  Migrated router hook: vessel spawn (was botty)");
         } else if let Some(role) = desc
             .strip_prefix(&format!("edict:{name}:reviewer-"))
             .filter(|r| !r.is_empty())
         {
-            println!("  Reviewer hook {role} will be retired");
+            fx.announce(format!("  Reviewer hook {role} will be retired"));
         }
     }
 }
@@ -1376,7 +1415,7 @@ const fn router_hook_enabled(config: &Config) -> bool {
 /// Sync already guarantees this for reviewer hooks. Without the same guarantee
 /// for the router hook, `edict sync` reports success on a project whose channel
 /// answers nobody.
-fn ensure_router_hook(config: &Config, project_root: &Path) {
+fn ensure_router_hook(fx: &Effects, config: &Config, project_root: &Path) {
     if !router_hook_enabled(config) {
         return;
     }
@@ -1420,8 +1459,8 @@ fn ensure_router_hook(config: &Config, project_root: &Path) {
 
     // register_router_hook listens on `name`, so report that, not
     // `config.channel()` — the two differ on projects renamed since init.
-    super::init::register_router_hook(&root_str, &root_str, name, &agent, ml);
-    println!("  Registered missing router hook for #{name}");
+    super::init::register_router_hook(fx, &root_str, &root_str, name, &agent, ml);
+    fx.announce(format!("  Registered missing router hook for #{name}"));
 }
 
 /// Migrate hooks that still use BOTBUS_* env-inherit vars to RITE_*.
@@ -1429,7 +1468,7 @@ fn ensure_router_hook(config: &Config, project_root: &Path) {
 /// These hooks have correct `edict:` descriptions but were registered before
 /// rite was renamed from botbus, so their `--env-inherit` still references
 /// `BOTBUS_CHANNEL`, `BOTBUS_MESSAGE_ID`, etc.
-fn migrate_botbus_env_hooks(config: &Config, project_root: &Path) {
+fn migrate_botbus_env_hooks(fx: &Effects, config: &Config, project_root: &Path) {
     let output = match Tool::new("rite")
         .args(&["hooks", "list", "--format", "json"])
         .run()
@@ -1491,13 +1530,13 @@ fn migrate_botbus_env_hooks(config: &Config, project_root: &Path) {
                 .responder
                 .as_ref()
                 .and_then(|r| r.memory_limit.as_deref());
-            super::init::register_router_hook(&root_str, &root_str, name, &agent, ml);
-            println!("  Migrated router hook: RITE_* env vars (was BOTBUS_*)");
+            super::init::register_router_hook(fx, &root_str, &root_str, name, &agent, ml);
+            fx.announce("  Migrated router hook: RITE_* env vars (was BOTBUS_*)");
         } else if let Some(role) = desc
             .strip_prefix(&format!("edict:{name}:reviewer-"))
             .filter(|r| !r.is_empty())
         {
-            println!("  Reviewer hook {role} will be retired");
+            fx.announce(format!("  Reviewer hook {role} will be retired"));
         }
     }
 }
@@ -1511,7 +1550,7 @@ fn migrate_botbus_env_hooks(config: &Config, project_root: &Path) {
 /// namespace, and any list edict adopts later.
 ///
 /// Idempotent — a hook already carrying the current list is skipped.
-fn migrate_hook_reply_env(config: &Config, project_root: &Path) {
+fn migrate_hook_reply_env(fx: &Effects, config: &Config, project_root: &Path) {
     let output = match Tool::new("rite")
         .args(&["hooks", "list", "--format", "json"])
         .run()
@@ -1560,13 +1599,13 @@ fn migrate_hook_reply_env(config: &Config, project_root: &Path) {
                 .responder
                 .as_ref()
                 .and_then(|r| r.memory_limit.as_deref());
-            super::init::register_router_hook(&root_str, &root_str, name, &agent, ml);
-            println!("  Converged router hook --env-inherit");
+            super::init::register_router_hook(fx, &root_str, &root_str, name, &agent, ml);
+            fx.announce("  Converged router hook --env-inherit");
         } else if let Some(role) = desc
             .strip_prefix(&format!("edict:{name}:reviewer-"))
             .filter(|r| !r.is_empty())
         {
-            println!("  Reviewer hook {role} will be retired");
+            fx.announce(format!("  Reviewer hook {role} will be retired"));
         }
     }
 }
@@ -1592,18 +1631,18 @@ fn resolve_hook_root(project_root: &Path) -> String {
 /// Migrate beads → bones: config key, data directory, .maw.toml, .sealignore, .gitignore.
 ///
 /// This is idempotent — checks each step before acting.
-fn migrate_beads_to_bones(project_root: &Path, config_path: &Path) -> Result<()> {
+fn migrate_beads_to_bones(fx: &Effects, project_root: &Path, config_path: &Path) -> Result<()> {
     let beads_dir = project_root.join(".beads");
     let bones_dir = project_root.join(".bones");
 
     // 1. If config has `tools.beads` (in TOML), rename to `tools.bones`
     //    The serde alias handles deserialization, but we want the file itself updated.
     if config_path.exists() {
-        let content = fs::read_to_string(config_path)?;
+        let content = fx.read_to_string(config_path)?;
         if content.contains("beads") && !content.contains("bones") {
             let updated = content.replace("beads = ", "bones = ");
-            fs::write(config_path, updated)?;
-            println!("Migrated config: tools.beads → tools.bones");
+            fx.write(config_path, updated)?;
+            fx.announce("Migrated config: tools.beads → tools.bones");
         }
     }
 
@@ -1611,19 +1650,19 @@ fn migrate_beads_to_bones(project_root: &Path, config_path: &Path) -> Result<()>
     if beads_dir.exists() && !bones_dir.exists() {
         let beads_db = beads_dir.join("beads.db");
         // Initialize bones first
-        match run_command("bn", &["init"], Some(project_root)) {
-            Ok(_) => println!("Initialized bones"),
+        match fx.run_command("bn", &["init"], Some(project_root)) {
+            Ok(_) => fx.announce("Initialized bones"),
             Err(e) => tracing::warn!("bn init failed: {e}"),
         }
         // Migrate data if beads.db exists
         if beads_db.exists() {
             let db_path = beads_db.to_string_lossy().to_string();
-            match run_command(
+            match fx.run_command(
                 "bn",
                 &["data", "migrate-from-beads", "--beads-db", &db_path],
                 Some(project_root),
             ) {
-                Ok(_) => println!("Migrated beads data to bones"),
+                Ok(_) => fx.announce("Migrated beads data to bones"),
                 Err(e) => tracing::warn!("beads data migration failed: {e}"),
             }
         }
@@ -1632,7 +1671,7 @@ fn migrate_beads_to_bones(project_root: &Path, config_path: &Path) -> Result<()>
     // 3. Update .maw.toml: remove .beads/** entry (set auto_resolve_from_main to empty)
     let maw_toml = project_root.join(".maw.toml");
     if maw_toml.exists() {
-        let content = fs::read_to_string(&maw_toml)?;
+        let content = fx.read_to_string(&maw_toml)?;
         if content.contains(".beads/") {
             // Remove the .beads/** line and set to empty array if it was the only entry
             let updated = content
@@ -1645,15 +1684,15 @@ fn migrate_beads_to_bones(project_root: &Path, config_path: &Path) -> Result<()>
                 "auto_resolve_from_main = [\n]",
                 "auto_resolve_from_main = []",
             );
-            fs::write(&maw_toml, format!("{updated}\n"))?;
-            println!("Updated .maw.toml: removed .beads/** entry");
+            fx.write(&maw_toml, format!("{updated}\n"))?;
+            fx.announce("Updated .maw.toml: removed .beads/** entry");
         }
     }
 
     // 4. Update .sealignore: remove .beads/ line (bones handles its own sealignore)
     let sealignore = project_root.join(".sealignore");
     if sealignore.exists() {
-        let content = fs::read_to_string(&sealignore)?;
+        let content = fx.read_to_string(&sealignore)?;
         if content.contains(".beads/") {
             let updated: String = content
                 .lines()
@@ -1665,15 +1704,15 @@ fn migrate_beads_to_bones(project_root: &Path, config_path: &Path) -> Result<()>
             } else {
                 updated
             };
-            fs::write(&sealignore, updated)?;
-            println!("Updated .sealignore: removed .beads/ entry");
+            fx.write(&sealignore, updated)?;
+            fx.announce("Updated .sealignore: removed .beads/ entry");
         }
     }
 
     // 5. Update .gitignore: remove .bv/ line (bones is tracked, not ignored)
     let gitignore = project_root.join(".gitignore");
     if gitignore.exists() {
-        let content = fs::read_to_string(&gitignore)?;
+        let content = fx.read_to_string(&gitignore)?;
         if content.contains(".bv/") {
             let updated: String = content
                 .lines()
@@ -1686,8 +1725,8 @@ fn migrate_beads_to_bones(project_root: &Path, config_path: &Path) -> Result<()>
             } else {
                 updated
             };
-            fs::write(&gitignore, updated)?;
-            println!("Updated .gitignore: removed .bv/ entry");
+            fx.write(&gitignore, updated)?;
+            fx.announce("Updated .gitignore: removed .bv/ entry");
         }
     }
 
@@ -1804,8 +1843,8 @@ strong = ["anthropic/claude-opus-4-6:high", "openai-codex/gpt-5.3-codex:xhigh"]
         )
         .unwrap();
 
-        assert!(migrate_retired_model_defaults(&config_path).unwrap());
-        assert!(!migrate_retired_model_defaults(&config_path).unwrap());
+        assert!(migrate_retired_model_defaults(&Effects::apply(), &config_path).unwrap());
+        assert!(!migrate_retired_model_defaults(&Effects::apply(), &config_path).unwrap());
 
         let migrated = fs::read_to_string(config_path).unwrap();
         assert!(migrated.contains("openai-codex/gpt-5.6-sol"));
@@ -1860,8 +1899,8 @@ reviewers = ["security"]
         )
         .unwrap();
 
-        assert!(migrate_retired_reviewer_config(&config_path).unwrap());
-        assert!(!migrate_retired_reviewer_config(&config_path).unwrap());
+        assert!(migrate_retired_reviewer_config(&Effects::apply(), &config_path).unwrap());
+        assert!(!migrate_retired_reviewer_config(&Effects::apply(), &config_path).unwrap());
         let migrated = fs::read_to_string(&config_path).unwrap();
         assert!(!migrated.contains("[agents.reviewer]"));
         assert!(migrated.contains("[agents.worker]"));

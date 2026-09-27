@@ -885,7 +885,14 @@ fn register_spawn_hooks(project_dir: &Path, name: &str, config: &Config) {
         .responder
         .as_ref()
         .and_then(|r| r.memory_limit.as_deref());
-    register_router_hook(&hook_cwd, &spawn_cwd, name, &agent, responder_memory_limit);
+    register_router_hook(
+        &crate::effects::Effects::apply(),
+        &hook_cwd,
+        &spawn_cwd,
+        name,
+        &agent,
+        responder_memory_limit,
+    );
 }
 
 fn detect_hook_paths(abs_path: &Path) -> (String, String) {
@@ -902,7 +909,10 @@ fn detect_hook_paths(abs_path: &Path) -> (String, String) {
     (abs_str.clone(), abs_str)
 }
 
+/// Register (or converge) the router hook. Its mutating `rite` calls go
+/// through `fx`, so a dry-run records the registration instead.
 pub(super) fn register_router_hook(
+    fx: &crate::effects::Effects,
     hook_cwd: &str,
     spawn_cwd: &str,
     name: &str,
@@ -948,8 +958,8 @@ pub(super) fn register_router_hook(
         "responder",
     ]);
 
-    match crate::subprocess::ensure_rite_hook(&description, &args) {
-        Ok((action, _id)) => println!("Router hook {action} for #{name}"),
+    match crate::subprocess::ensure_rite_hook_with(fx, &description, &args) {
+        Ok((action, _id)) => fx.announce(format!("Router hook {action} for #{name}")),
         Err(e) => eprintln!("Warning: Failed to register router hook: {e}"),
     }
 }

@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 
+use crate::effects::Effects;
 use crate::error::ExitError;
 
 // On Unix, CommandExt lets us call .process_group(0) to detach the child
@@ -193,6 +194,13 @@ impl Tool {
         }
     }
 
+    /// The program and arguments this invocation would spawn (after any
+    /// `maw exec` wrapping) — what a dry-run plan shows.
+    #[must_use]
+    pub fn command_line(&self) -> (String, Vec<String>) {
+        self.build_command()
+    }
+
     fn build_command(&self) -> (String, Vec<String>) {
         self.maw_workspace.as_ref().map_or_else(
             || (self.program.clone(), self.args.clone()),
@@ -307,6 +315,22 @@ fn run_with_timeout(
 ///
 /// Returns `Err` if the `rite hooks add` command cannot be run or fails.
 pub fn ensure_rite_hook(description: &str, add_args: &[&str]) -> anyhow::Result<(String, String)> {
+    ensure_rite_hook_with(&Effects::apply(), description, add_args)
+}
+
+/// [`ensure_rite_hook`], with every mutating `rite` call routed through `fx`.
+///
+/// A dry-run records the converge instead of performing it. The `rite hooks
+/// list` and `--help` probes that decide the plan run in both modes.
+///
+/// # Errors
+///
+/// Returns `Err` if the `rite hooks add` command cannot be run or fails.
+pub fn ensure_rite_hook_with(
+    fx: &Effects,
+    description: &str,
+    add_args: &[&str],
+) -> anyhow::Result<(String, String)> {
     let hooks = list_rite_hooks();
     let named = rite_supports_named_hooks();
     let plan = plan_converge(&hooks, description, named);
@@ -317,8 +341,8 @@ pub fn ensure_rite_hook(description: &str, add_args: &[&str]) -> anyhow::Result<
         // Nothing to remove: the add updates the named record in place.
         ConvergePlan::UpdateInPlace | ConvergePlan::Create => {}
         ConvergePlan::Adopt { id, duplicates } => {
-            let set_ok = Tool::new("rite")
-                .args(&[
+            let set_ok = fx
+                .run(&Tool::new("rite").args(&[
                     "hooks",
                     "set",
                     id,
@@ -326,24 +350,23 @@ pub fn ensure_rite_hook(description: &str, add_args: &[&str]) -> anyhow::Result<
                     description,
                     "--owner",
                     HOOK_OWNER,
-                ])
-                .run()
+                ]))
                 .is_ok_and(|o| o.success());
             if set_ok {
                 adopted = true;
             } else {
                 // Could not name it in place — fall back to replacing it.
-                let _ = Tool::new("rite").args(&["hooks", "remove", id]).run();
+                let _ = fx.run(&Tool::new("rite").args(&["hooks", "remove", id]));
                 removed = true;
             }
             for dup in duplicates {
-                let _ = Tool::new("rite").args(&["hooks", "remove", dup]).run();
+                let _ = fx.run(&Tool::new("rite").args(&["hooks", "remove", dup]));
                 removed = true;
             }
         }
         ConvergePlan::Replace(ids) => {
             for id in ids {
-                let _ = Tool::new("rite").args(&["hooks", "remove", id]).run();
+                let _ = fx.run(&Tool::new("rite").args(&["hooks", "remove", id]));
                 removed = true;
             }
         }
@@ -355,7 +378,13 @@ pub fn ensure_rite_hook(description: &str, add_args: &[&str]) -> anyhow::Result<
     }
     args.extend_from_slice(add_args);
 
-    let result = Tool::new("rite").args(&args).run()?;
+    let intent = match &plan {
+        ConvergePlan::UpdateInPlace => "update in place".to_string(),
+        ConvergePlan::Adopt { id, .. } => format!("adopt {id}"),
+        ConvergePlan::Replace(ids) => format!("replace {}", ids.join(", ")),
+        ConvergePlan::Create => "create".to_string(),
+    };
+    let result = fx.run_as(Some(&intent), &Tool::new("rite").args(&args))?;
 
     if !result.success() {
         anyhow::bail!("rite hooks add failed: {}", result.stderr.trim());

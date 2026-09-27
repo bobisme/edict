@@ -1,5 +1,6 @@
 mod commands;
 mod config;
+mod effects;
 mod error;
 mod hooks;
 mod layout;
