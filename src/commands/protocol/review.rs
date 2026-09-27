@@ -547,7 +547,7 @@ mod tests {
                 check_command: None,
                 critical_approvers: None,
             },
-            tools: Default::default(),
+            tools: crate::config::ToolsConfig::default(),
             review: crate::config::ReviewConfig {
                 enabled: true,
                 reviewers: reviewers
@@ -556,9 +556,9 @@ mod tests {
                     .collect(),
             },
             push_main: false,
-            agents: Default::default(),
-            models: Default::default(),
-            env: Default::default(),
+            agents: crate::config::AgentsConfig::default(),
+            models: crate::config::ModelsConfig::default(),
+            env: std::collections::HashMap::default(),
         }
     }
 

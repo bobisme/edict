@@ -920,7 +920,7 @@ mod tests {
             multi_lead_enabled: false,
             multi_lead_config: None,
             project_dir: "/home/test/project".to_string(),
-            spawn_env: Default::default(),
+            spawn_env: std::collections::HashMap::default(),
             worker_memory_limit: None,
         }
     }

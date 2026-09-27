@@ -641,9 +641,9 @@ mod tests {
         assert!(json_with.get("command").is_some());
         // The command field may or may not be serialized when None due to skip_serializing_if
         // but if present should be null or omitted
-        match json_without.get("command") {
-            Some(cmd) => assert!(cmd.is_null()),
-            None => {} // Also acceptable if field is completely omitted
+        // A missing field is also acceptable.
+        if let Some(cmd) = json_without.get("command") {
+            assert!(cmd.is_null());
         }
     }
 }

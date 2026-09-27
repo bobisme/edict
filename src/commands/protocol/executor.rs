@@ -582,7 +582,7 @@ mod tests {
     // --- Real subprocess test (optional, can be slow) ---
 
     #[test]
-    #[ignore] // Run with `cargo test -- --ignored` to include subprocess tests
+    #[ignore = "spawns real subprocesses; run with `cargo test -- --ignored`"]
     fn execute_steps_real_subprocess() {
         let steps = vec!["echo hello".to_string(), "echo world".to_string()];
         let report = execute_steps(&steps).unwrap();
@@ -593,7 +593,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "spawns real subprocesses; run with `cargo test -- --ignored`"]
     fn execute_steps_stops_on_failure() {
         let steps = vec![
             "true".to_string(),

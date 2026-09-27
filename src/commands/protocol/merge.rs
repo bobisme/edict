@@ -1401,7 +1401,7 @@ mod tests {
     }
 
     /// `bone_status` fails fast on a malformed ID (no subprocess needed), which
-    /// is enough to exercise check_bone_gate's Err arm deterministically. The
+    /// is enough to exercise `check_bone_gate`'s Err arm deterministically. The
     /// same malformed ID also fails `print_guidance`'s own bone-id validation
     /// (an unrelated shell-safety check, elsewhere in this module), so the
     /// call's `Result` isn't meaningful here — what matters is that `guidance`

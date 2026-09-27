@@ -559,9 +559,9 @@ mod tests {
                 reviewers: vec![],
             },
             push_main: false,
-            agents: Default::default(),
-            models: Default::default(),
-            env: Default::default(),
+            agents: crate::config::AgentsConfig::default(),
+            models: crate::config::ModelsConfig::default(),
+            env: std::collections::HashMap::default(),
         };
 
         let bare =
@@ -606,9 +606,9 @@ mod tests {
                 reviewers: vec!["security".to_string()],
             },
             push_main: false,
-            agents: Default::default(),
-            models: Default::default(),
-            env: Default::default(),
+            agents: crate::config::AgentsConfig::default(),
+            models: crate::config::ModelsConfig::default(),
+            env: std::collections::HashMap::default(),
         };
 
         let result = render_agents_md(&config, Layout::Bare).unwrap();
@@ -659,9 +659,9 @@ More custom content.
                 reviewers: vec![],
             },
             push_main: false,
-            agents: Default::default(),
-            models: Default::default(),
-            env: Default::default(),
+            agents: crate::config::AgentsConfig::default(),
+            models: crate::config::ModelsConfig::default(),
+            env: std::collections::HashMap::default(),
         };
 
         let ctx = TemplateContext::from_config(&config, Layout::Bare);
@@ -713,9 +713,9 @@ Old botbox-era managed content
                 reviewers: vec![],
             },
             push_main: false,
-            agents: Default::default(),
-            models: Default::default(),
-            env: Default::default(),
+            agents: crate::config::AgentsConfig::default(),
+            models: crate::config::ModelsConfig::default(),
+            env: std::collections::HashMap::default(),
         };
 
         let ctx = TemplateContext::from_config(&config, Layout::Bare);

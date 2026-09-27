@@ -791,7 +791,7 @@ mod tests {
 
     #[test]
     fn golden_status_variants_are_complete() {
-        let _statuses = [
+        let statuses = [
             ProtocolStatus::Ready,
             ProtocolStatus::Blocked,
             ProtocolStatus::Resumable,
@@ -801,7 +801,7 @@ mod tests {
             ProtocolStatus::HasWork,
             ProtocolStatus::Fresh,
         ];
-        assert_eq!(_statuses.len(), 8);
+        assert_eq!(statuses.len(), 8);
     }
 
     #[test]
@@ -909,13 +909,17 @@ mod tests {
     fn golden_compatibility_additive_only() {
         let g = ProtocolGuidance::new("start");
 
-        let _schema = g.schema;
-        let _command = g.command;
-        let _status = g.status;
-        let _snapshot_at = g.snapshot_at;
-        let _valid_for_sec = g.valid_for_sec;
-        let _steps = g.steps;
-        let _diagnostics = g.diagnostics;
+        // Referencing each field fails to compile if one is removed or
+        // renamed, which is the point of this test.
+        let _ = (
+            &g.schema,
+            &g.command,
+            &g.status,
+            &g.snapshot_at,
+            &g.valid_for_sec,
+            &g.steps,
+            &g.diagnostics,
+        );
 
         assert!(g.bone.is_none());
         assert!(g.workspace.is_none());
