@@ -275,6 +275,8 @@ THE single entrypoint for all project channel messages. Routes based on `!` pref
 
 **Flow:** Fetch message → route by prefix → dispatch to handler. Question mode enters a conversation loop with transcript buffer. Triage classifies bare messages and routes accordingly. Mid-conversation escalation creates a bone with conversation context and spawns dev-loop.
 
+**Turn failures:** a failed agent turn is logged and counted (`edict.responder.turn_failures_total`, attribute `addressed`), and posted as "Could not answer that: … Send it again to retry." only when the message was addressed to the responder. Addressed means: a DM with the responder, a `!`/colon command prefix, an @mention of the responder, a reply to a message the responder wrote, or a top-level message that mentions no one. A message that only @mentions other agents, or replies in someone else's thread, gets no failure post. For a hook batch (`RITE_BATCH_MESSAGE_IDS`) any addressed message counts. If the thread cannot be fetched (`rite history --thread <id> --format json`), the failure is posted. The logic lives in `src/commands/responder_addressing.rs`.
+
 **Config:** `.edict.toml` → `agents.responder.{model, timeout, wait_timeout, max_conversations}`
 
 ### `edict run triage` — Token-Efficient Triage

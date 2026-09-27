@@ -6,6 +6,7 @@ pub mod init;
 pub mod iteration_start;
 pub mod protocol;
 pub mod responder;
+pub mod responder_addressing;
 pub mod run;
 pub mod run_agent;
 pub mod schema;

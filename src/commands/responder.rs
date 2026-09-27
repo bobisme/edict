@@ -5,6 +5,8 @@ use anyhow::{Context, anyhow};
 use regex::Regex;
 use serde::Deserialize;
 
+use super::responder_addressing::Addressing;
+
 fn ansi_escape_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| Regex::new(r"\x1b\[[0-9;]*[A-Za-z]").expect("ANSI escape regex is valid"))
@@ -516,6 +518,10 @@ struct Responder {
     /// answered. Re-set on every turn, so a follow-up never inherits the
     /// previous turn's anchor.
     anchor: Option<String>,
+    /// Ids of the messages the turn in progress answers: the spawn batch on the
+    /// first turn, the follow-up afterwards. Decides whether a turn failure is
+    /// posted (see `responder_addressing`).
+    turn_ids: Vec<String>,
     multi_lead_enabled: bool,
     multi_lead_max_leads: u32,
     config: Option<Config>,
@@ -607,6 +613,7 @@ impl Responder {
             multi_lead_max_leads,
             transcript: Transcript::new(),
             anchor: crate::reply::anchor_from_env(),
+            turn_ids: Vec::new(),
             config,
             spawn_env,
         })
@@ -650,6 +657,12 @@ impl Responder {
     ///
     /// Falls back to the hook environment when the message carries no id.
     fn set_anchor(&mut self, message: &BusMessage) {
+        self.turn_ids = message
+            .id
+            .iter()
+            .filter(|id| crate::reply::is_ulid(id))
+            .cloned()
+            .collect();
         self.anchor = message
             .id
             .as_deref()
@@ -775,16 +788,32 @@ impl Responder {
     /// A responder that dies quietly looks identical to one that never woke up:
     /// the human sees their follow-up get no reply and the agent disappear. Say
     /// so instead, and leave the conversation open.
+    ///
+    /// Only when the message was addressed to the responder, though: the router
+    /// hook also wakes it for traffic between other agents, and a failure notice
+    /// in their thread is noise. Those failures are logged and counted only.
     fn report_turn_failure(&self, error: &anyhow::Error) {
-        let reason = error.to_string();
-        let reason = reason.lines().next().unwrap_or("unknown error");
-        let reason: String = reason.chars().take(200).collect();
-        eprintln!("Agent run failed: {reason}");
-        crate::telemetry::metrics::counter("edict.responder.turn_failures_total", 1, &[]);
-        let _ = self.rite_send(
-            &format!("Could not answer that: {reason}. Send it again to retry."),
-            Some("agent-error"),
-        );
+        let addressing = self.turn_addressing();
+        report_turn_failure_to(error, addressing, |message, label| {
+            let _ = self.rite_send(message, label);
+        });
+    }
+
+    /// Whether the messages this turn answers were addressed to the responder.
+    fn turn_addressing(&self) -> Addressing {
+        crate::commands::responder_addressing::resolve(
+            &self.agent,
+            &self.channel,
+            &self.turn_ids,
+            |id| {
+                let output = Tool::new("rite")
+                    .args(&["history", &self.channel, "--thread", id, "--format", "json"])
+                    .run_ok()
+                    .inspect_err(|e| eprintln!("Warning: could not fetch thread of {id}: {e}"))
+                    .ok()?;
+                crate::commands::responder_addressing::parse_thread(&output.stdout)
+            },
+        )
     }
 
     // --- Capture agent response from rite history ---
@@ -1722,6 +1751,10 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
         };
 
         self.set_anchor(&trigger_message);
+        self.turn_ids = turn_ids_from_batch(
+            std::env::var("RITE_BATCH_MESSAGE_IDS").ok().as_deref(),
+            &self.turn_ids,
+        );
 
         eprintln!(
             "Trigger: {}: {}...",
@@ -1906,6 +1939,51 @@ fn extract_bone_id(output: &str) -> Option<String> {
     Some(rest[..end].to_string())
 }
 
+/// Log, count and (when addressed) post a turn failure through `send`.
+///
+/// `send` is the seam to rite: it gets the message and label to post.
+fn report_turn_failure_to(
+    error: &anyhow::Error,
+    addressing: Addressing,
+    send: impl FnOnce(&str, Option<&str>),
+) {
+    let reason = error.to_string();
+    let reason = reason.lines().next().unwrap_or("unknown error");
+    let reason: String = reason.chars().take(200).collect();
+    crate::telemetry::metrics::counter(
+        "edict.responder.turn_failures_total",
+        1,
+        &[("addressed", addressing.as_attr())],
+    );
+    if addressing.posts_failure() {
+        eprintln!("Agent run failed: {reason}");
+        send(
+            &format!("Could not answer that: {reason}. Send it again to retry."),
+            Some("agent-error"),
+        );
+    } else {
+        eprintln!("Agent run failed: {reason} (not addressed to this responder; not posting)");
+    }
+}
+
+/// The ids the first turn answers: every ULID in the spawn batch, then the
+/// trigger's own ids, without duplicates.
+fn turn_ids_from_batch(batch_ids: Option<&str>, trigger_ids: &[String]) -> Vec<String> {
+    let mut ids: Vec<String> = Vec::new();
+    let batch = batch_ids
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|id| crate::reply::is_ulid(id))
+        .map(ToString::to_string);
+    for id in batch.chain(trigger_ids.iter().cloned()) {
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+    ids
+}
+
 // Allow BusMessage to be "cloned" for follow-up tracking
 impl BusMessage {
     fn clone_for_follow_up(&self) -> Self {
@@ -2075,6 +2153,58 @@ mod tests {
         assert_eq!(bone_title_from("   \n  "), "Untitled work request");
     }
 
+    // --- turn failure reporting ---
+
+    fn sends_for(addressing: Addressing) -> Vec<(String, Option<String>)> {
+        let mut sent = Vec::new();
+        let error = anyhow!("agent exited with status 1\nstack trace follows");
+        report_turn_failure_to(&error, addressing, |message, label| {
+            sent.push((message.to_string(), label.map(ToString::to_string)));
+        });
+        sent
+    }
+
+    #[test]
+    fn a_failure_on_an_unaddressed_message_sends_nothing() {
+        assert!(sends_for(Addressing::NotAddressed).is_empty());
+    }
+
+    #[test]
+    fn a_failure_on_an_addressed_message_is_posted() {
+        let sent = sends_for(Addressing::Addressed);
+        assert_eq!(sent.len(), 1);
+        assert_eq!(
+            sent[0].0,
+            "Could not answer that: agent exited with status 1. Send it again to retry."
+        );
+        assert_eq!(sent[0].1.as_deref(), Some("agent-error"));
+    }
+
+    #[test]
+    fn a_failure_when_addressing_is_unknown_is_posted() {
+        assert_eq!(sends_for(Addressing::Unknown).len(), 1);
+    }
+
+    #[test]
+    fn the_first_turn_covers_the_whole_batch() {
+        let a = "01M2KF5Y7GC3YQYXDHF2Y6E94Z".to_string();
+        let b = "01M2KF5Z4N3E0JN4GGGV2RRVWN".to_string();
+        let batch = format!("{a}, not-a-ulid,{b}");
+        assert_eq!(
+            turn_ids_from_batch(Some(&batch), std::slice::from_ref(&b)),
+            vec![a, b.clone()]
+        );
+        assert_eq!(turn_ids_from_batch(None, std::slice::from_ref(&b)), vec![b]);
+    }
+
+    #[test]
+    fn each_turn_classifies_only_its_own_message() {
+        let mut responder = test_responder(None);
+        responder.turn_ids = vec!["01M2KF5Y7GC3YQYXDHF2Y6E94Z".to_string()];
+        responder.set_anchor(&test_message(Some("01M2KF5Z4N3E0JN4GGGV2RRVWN")));
+        assert_eq!(responder.turn_ids, vec!["01M2KF5Z4N3E0JN4GGGV2RRVWN"]);
+    }
+
     // --- reply anchor tests ---
 
     fn test_responder(anchor: Option<&str>) -> Responder {
@@ -2088,6 +2218,7 @@ mod tests {
             max_conversations: 10,
             transcript: Transcript::new(),
             anchor: anchor.map(ToString::to_string),
+            turn_ids: Vec::new(),
             multi_lead_enabled: false,
             multi_lead_max_leads: 3,
             config: None,
