@@ -7,6 +7,7 @@ pub mod error;
 pub mod hooks;
 pub mod layout;
 pub mod reply;
+pub mod rite_hook_guard;
 pub mod subprocess;
 pub mod telemetry;
 pub mod template;

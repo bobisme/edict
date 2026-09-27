@@ -115,6 +115,12 @@ pub struct InitArgs {
     /// gather choices); pair with --no-interactive for a scripted preview.
     #[arg(long)]
     pub dry_run: bool,
+    /// Allow registering live rite hooks for a project rooted under the
+    /// system temp directory (refused by default, since a hook there would
+    /// otherwise register against the real rite data directory for a
+    /// throwaway project). Has no effect when `RITE_DATA_DIR` is set.
+    #[arg(long)]
+    pub allow_live_hooks: bool,
 }
 
 /// Collected user choices for init
@@ -279,7 +285,13 @@ impl InitArgs {
 
         // Register rite hooks
         if choices.tools.contains(&"rite".to_string()) {
-            register_spawn_hooks(fx, &project_dir, &choices.name, &config);
+            register_spawn_hooks(
+                fx,
+                &project_dir,
+                &choices.name,
+                &config,
+                self.allow_live_hooks,
+            )?;
         }
 
         // Generate .gitignore
@@ -295,32 +307,15 @@ impl InitArgs {
         Ok(())
     }
 
-    fn handle_bare_repo(&self, fx: &Effects, project_dir: &Path) -> Result<()> {
-        let project_dir = project_dir
-            .canonicalize()
-            .context("canonicalizing project root")?;
-
-        // Gather interactive choices HERE (where stdin is a terminal) so that
-        // the inner `maw exec` invocation can run non-interactively.
-        let ws_default = project_dir.join("ws/default");
-        let agents_md_path = ws_default.join("AGENTS.md");
-        let detected = if agents_md_path.exists() {
-            let content = fs::read_to_string(&agents_md_path)?;
-            detect_from_agents_md(&content)
-        } else {
-            DetectedConfig::default()
-        };
-
-        let interactive = !self.no_interactive && std::io::stdin().is_terminal();
-        let choices = self.gather_choices(interactive, &detected)?;
-
+    /// Build the `maw exec default -- edict init ...` args for the bare-repo
+    /// path, forwarding gathered choices and flags so the inner invocation
+    /// never needs interactive input.
+    fn build_bare_repo_init_args(&self, choices: &InitChoices) -> Vec<String> {
         let mut args: Vec<String> = vec!["exec", "default", "--", "edict", "init"]
             .into_iter()
             .map(Into::into)
             .collect();
 
-        // Always pass gathered choices as explicit args so inner invocation
-        // doesn't need interactive input.
         args.push("--name".into());
         args.push(choices.name.clone());
         args.push("--type".into());
@@ -360,8 +355,33 @@ impl InitArgs {
         if self.dry_run {
             args.push("--dry-run".into());
         }
+        if self.allow_live_hooks {
+            args.push("--allow-live-hooks".into());
+        }
+        args
+    }
+
+    fn handle_bare_repo(&self, fx: &Effects, project_dir: &Path) -> Result<()> {
+        let project_dir = project_dir
+            .canonicalize()
+            .context("canonicalizing project root")?;
+
+        // Gather interactive choices HERE (where stdin is a terminal) so that
+        // the inner `maw exec` invocation can run non-interactively.
+        let ws_default = project_dir.join("ws/default");
+        let agents_md_path = ws_default.join("AGENTS.md");
+        let detected = if agents_md_path.exists() {
+            let content = fs::read_to_string(&agents_md_path)?;
+            detect_from_agents_md(&content)
+        } else {
+            DetectedConfig::default()
+        };
+
+        let interactive = !self.no_interactive && std::io::stdin().is_terminal();
+        let choices = self.gather_choices(interactive, &detected)?;
 
         // Not an effect: the inner init applies or records by the same flags.
+        let args = self.build_bare_repo_init_args(&choices);
         let arg_refs: Vec<&str> = args.iter().map(std::string::String::as_str).collect();
         let inner = run_command("maw", &arg_refs, Some(&project_dir))?;
         if fx.is_recording() {
@@ -885,7 +905,13 @@ fn sync_design_docs(fx: &Effects, agents_dir: &Path) -> Result<()> {
 
 // --- Hook registration ---
 
-fn register_spawn_hooks(fx: &Effects, project_dir: &Path, name: &str, config: &Config) {
+fn register_spawn_hooks(
+    fx: &Effects,
+    project_dir: &Path,
+    name: &str,
+    config: &Config,
+    allow_live_hooks: bool,
+) -> anyhow::Result<()> {
     let abs_path = project_dir
         .canonicalize()
         .unwrap_or_else(|_| project_dir.to_path_buf());
@@ -896,7 +922,7 @@ fn register_spawn_hooks(fx: &Effects, project_dir: &Path, name: &str, config: &C
 
     // Check if rite supports hooks (read-only: runs in a dry-run too)
     if Tool::new("rite").arg("hooks").arg("list").run().is_err() {
-        return;
+        return Ok(());
     }
 
     // Register router hook
@@ -912,7 +938,8 @@ fn register_spawn_hooks(fx: &Effects, project_dir: &Path, name: &str, config: &C
         name,
         &agent,
         responder_memory_limit,
-    );
+        allow_live_hooks,
+    )
 }
 
 fn detect_hook_paths(abs_path: &Path) -> (String, String) {
@@ -938,7 +965,8 @@ pub(super) fn register_router_hook(
     name: &str,
     agent: &str,
     memory_limit: Option<&str>,
-) {
+    allow_live_hooks: bool,
+) -> anyhow::Result<()> {
     let env_inherit = crate::reply::hook_env_inherit();
     let claim_uri = format!("agent://{name}-dev");
     let spawn_name = format!("{name}-responder");
@@ -978,9 +1006,16 @@ pub(super) fn register_router_hook(
         "responder",
     ]);
 
-    match crate::subprocess::ensure_rite_hook_with(fx, &description, &args) {
-        Ok((action, _id)) => fx.announce(format!("Router hook {action} for #{name}")),
-        Err(e) => eprintln!("Warning: Failed to register router hook: {e}"),
+    match crate::subprocess::ensure_rite_hook_with(fx, &description, &args, allow_live_hooks) {
+        Ok((action, _id)) => {
+            fx.announce(format!("Router hook {action} for #{name}"));
+            Ok(())
+        }
+        Err(e) if e.is::<crate::rite_hook_guard::LiveHookRefused>() => Err(e),
+        Err(e) => {
+            eprintln!("Warning: Failed to register router hook: {e}");
+            Ok(())
+        }
     }
 }
 

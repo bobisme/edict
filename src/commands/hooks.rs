@@ -21,6 +21,11 @@ pub enum HooksCommand {
         /// Project root directory (for rite hook registration only)
         #[arg(long)]
         project_root: Option<PathBuf>,
+        /// Allow registering live rite hooks for a project rooted under the
+        /// system temp directory (refused by default). Has no effect when
+        /// `RITE_DATA_DIR` is set.
+        #[arg(long)]
+        allow_live_hooks: bool,
     },
     /// Remove global agent hooks from ~/.claude/settings.json
     Uninstall,
@@ -54,7 +59,10 @@ impl HooksCommand {
     /// Returns `Err` if the underlying install/uninstall/audit/run operation fails.
     pub fn execute(&self) -> anyhow::Result<()> {
         match self {
-            Self::Install { project_root } => install_hooks(project_root.as_deref()),
+            Self::Install {
+                project_root,
+                allow_live_hooks,
+            } => install_hooks(project_root.as_deref(), *allow_live_hooks),
             Self::Uninstall => uninstall_hooks(),
             Self::Audit {
                 project_root,
@@ -70,18 +78,18 @@ impl HooksCommand {
 /// Install global agent hooks into ~/.claude/settings.json (and Pi extensions).
 ///
 /// If `project_root` is provided, also registers the rite router hook.
-fn install_hooks(project_root: Option<&Path>) -> Result<()> {
+fn install_hooks(project_root: Option<&Path>, allow_live_hooks: bool) -> Result<()> {
     install_global_hooks(&Effects::apply())?;
 
     // If in an Edict project, also register the rite router hook.
     if let Some(root) = project_root {
         let root = resolve_project_root(Some(root))?;
         let config = load_config(&root)?;
-        register_rite_hooks(&root, &config)?;
+        register_rite_hooks(&root, &config, allow_live_hooks)?;
     } else if let Ok(root) = resolve_project_root(None)
         && let Ok(config) = load_config(&root)
     {
-        register_rite_hooks(&root, &config)?;
+        register_rite_hooks(&root, &config, allow_live_hooks)?;
     }
 
     println!("Hooks installed successfully");
@@ -424,7 +432,7 @@ fn validate_name(name: &str, label: &str) -> Result<()> {
     Ok(())
 }
 
-fn register_rite_hooks(root: &Path, config: &Config) -> Result<()> {
+fn register_rite_hooks(root: &Path, config: &Config, allow_live_hooks: bool) -> Result<()> {
     if !config.tools.rite {
         return Ok(());
     }
@@ -445,8 +453,8 @@ fn register_rite_hooks(root: &Path, config: &Config) -> Result<()> {
         &channel,
         &root_str,
         env_inherit,
-    );
-    Ok(())
+        allow_live_hooks,
+    )
 }
 
 /// Register the claim-based router hook for the responder agent.
@@ -457,7 +465,8 @@ fn register_router_hook(
     channel: &str,
     root_str: &str,
     env_inherit: &str,
-) {
+    allow_live_hooks: bool,
+) -> Result<()> {
     let router_claim = format!("agent://{project_name}-router");
     let spawn_name = format!("{project_name}-router");
     let description = format!("edict:{project_name}:responder");
@@ -502,9 +511,16 @@ fn register_router_hook(
         "responder",
     ]);
 
-    match crate::subprocess::ensure_rite_hook(&description, &router_args) {
-        Ok((action, _)) => println!("Router hook {action} for #{channel}"),
-        Err(e) => eprintln!("Warning: failed to register router hook: {e}"),
+    match crate::subprocess::ensure_rite_hook(&description, &router_args, allow_live_hooks) {
+        Ok((action, _)) => {
+            println!("Router hook {action} for #{channel}");
+            Ok(())
+        }
+        Err(e) if e.is::<crate::rite_hook_guard::LiveHookRefused>() => Err(e),
+        Err(e) => {
+            eprintln!("Warning: failed to register router hook: {e}");
+            Ok(())
+        }
     }
 }
 

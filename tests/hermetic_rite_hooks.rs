@@ -94,7 +94,10 @@ fn init_and_sync_register_rite_hooks_only_in_rite_data_dir() {
     // A throwaway git repo, since edict init/sync both expect to run inside
     // one and this keeps the scenario close to a real project.
     run_git(&project_dir, &["init", "-q"]);
-    run_git(&project_dir, &["config", "user.email", "hermetic@example.com"]);
+    run_git(
+        &project_dir,
+        &["config", "user.email", "hermetic@example.com"],
+    );
     run_git(&project_dir, &["config", "user.name", "Hermetic Test"]);
     run_git(
         &project_dir,

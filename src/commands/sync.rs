@@ -13,6 +13,7 @@ use crate::subprocess::{Tool, run_command};
 use crate::template::{TemplateContext, render_workflow_doc, update_managed_section};
 
 #[derive(Debug, Args)]
+#[allow(clippy::struct_excessive_bools, reason = "CLI argument flag struct")]
 pub struct SyncArgs {
     /// Project root directory
     #[arg(long)]
@@ -27,6 +28,11 @@ pub struct SyncArgs {
     /// Disable auto-commit (default: enabled)
     #[arg(long)]
     pub no_commit: bool,
+    /// Allow registering live rite hooks for a project rooted under the
+    /// system temp directory (refused by default). Has no effect when
+    /// `RITE_DATA_DIR` is set.
+    #[arg(long)]
+    pub allow_live_hooks: bool,
 }
 
 /// Embedded workflow docs
@@ -260,7 +266,7 @@ impl SyncArgs {
         self.cleanup_legacy_artifacts(fx, &agents_dir, &mut changed_files);
 
         // Migrate rite hooks from bun .mjs to edict run
-        migrate_rite_hooks(fx, &config);
+        migrate_rite_hooks(fx, &config, self.allow_live_hooks);
 
         // The ambient reviewer loop is retired. Only remove hooks that Edict
         // can prove it owns; a project's independently managed mention hooks
@@ -268,33 +274,41 @@ impl SyncArgs {
         retire_owned_reviewer_hooks(fx, &config);
 
         // Migrate rite hooks from botbox: descriptions to edict: descriptions
-        migrate_botbox_rite_hooks_to_edict(fx, &config, &project_root);
+        migrate_botbox_rite_hooks_to_edict(fx, &config, &project_root, self.allow_live_hooks);
 
         // Fix hook --cwd for maw v2 (ws/default → repo root)
-        migrate_hook_cwd(fx, &config, &project_root);
+        migrate_hook_cwd(fx, &config, &project_root, self.allow_live_hooks);
 
         // Migrate router hook claim from agent://{name}-router → agent://{name}-dev
-        migrate_router_hook_claim(fx, &config, &project_root);
+        migrate_router_hook_claim(fx, &config, &project_root, self.allow_live_hooks);
 
         // Migrate botty → vessel (config key + rite hooks)
         if !self.check {
-            migrate_vessel_hooks(fx, &config, &project_root, &active_config_path);
+            migrate_vessel_hooks(
+                fx,
+                &config,
+                &project_root,
+                &active_config_path,
+                self.allow_live_hooks,
+            );
         }
 
         // Migrate BOTBUS_* → RITE_* env vars in hook commands
         if !self.check {
-            migrate_botbus_env_hooks(fx, &config, &project_root);
+            migrate_botbus_env_hooks(fx, &config, &project_root, self.allow_live_hooks);
         }
 
         // Forward RITE_BATCH_* so spawned agents can resolve their reply anchor
         if !self.check {
-            migrate_hook_reply_env(fx, &config, &project_root);
+            migrate_hook_reply_env(fx, &config, &project_root, self.allow_live_hooks);
         }
 
         // Ensure the router hook exists — a project channel with no responder
-        // silently answers nobody (see ensure_router_hook)
+        // silently answers nobody (see ensure_router_hook). This one propagates:
+        // if the live-hook guard refuses, sync should fail loudly rather than
+        // report success while the channel answers nobody.
         if !self.check {
-            ensure_router_hook(fx, &config, &project_root);
+            ensure_router_hook(fx, &config, &project_root, self.allow_live_hooks)?;
         }
 
         // Migrate beads → bones (config, data, tooling files)
@@ -335,6 +349,9 @@ impl SyncArgs {
         }
         if self.dry_run {
             args.push("--dry-run");
+        }
+        if self.allow_live_hooks {
+            args.push("--allow-live-hooks");
         }
 
         // Not an effect: the inner sync applies or records by the same flags.
@@ -895,7 +912,12 @@ fn is_owned_reviewer_hook(hook: &serde_json::Value, project_name: &str) -> bool 
 /// Finds hooks with `botbox:{name}:responder` or `botbox:{name}:reviewer-*` descriptions,
 /// removes them, and re-registers with `edict:` prefix and `edict run` commands.
 /// Called during `edict sync` on projects that were previously set up with `botbox`.
-fn migrate_botbox_rite_hooks_to_edict(fx: &Effects, config: &Config, project_root: &Path) {
+fn migrate_botbox_rite_hooks_to_edict(
+    fx: &Effects,
+    config: &Config,
+    project_root: &Path,
+    allow_live_hooks: bool,
+) {
     let output = match Tool::new("rite")
         .args(&["hooks", "list", "--format", "json"])
         .run()
@@ -962,7 +984,15 @@ fn migrate_botbox_rite_hooks_to_edict(fx: &Effects, config: &Config, project_roo
                 .responder
                 .as_ref()
                 .and_then(|r| r.memory_limit.as_deref());
-            super::init::register_router_hook(fx, &root_str, &root_str, name, &agent, responder_ml);
+            let _ = super::init::register_router_hook(
+                fx,
+                &root_str,
+                &root_str,
+                name,
+                &agent,
+                responder_ml,
+                allow_live_hooks,
+            );
             fx.announce(format!("  Migrated hook {desc} → edict:{name}:responder"));
         } else if desc.starts_with(&format!("botbox:{name}:reviewer-")) {
             fx.announce(format!("  Retired legacy reviewer hook {desc}"));
@@ -976,7 +1006,7 @@ fn migrate_botbox_rite_hooks_to_edict(fx: &Effects, config: &Config, project_roo
 /// (bun-based, old naming, missing descriptions), removes them, and
 /// re-registers via `ensure_rite_hook` with proper descriptions for
 /// future idempotent management.
-fn migrate_rite_hooks(fx: &Effects, config: &Config) {
+fn migrate_rite_hooks(fx: &Effects, config: &Config, allow_live_hooks: bool) {
     let output = match Tool::new("rite")
         .args(&["hooks", "list", "--format", "json"])
         .run()
@@ -1049,11 +1079,24 @@ fn migrate_rite_hooks(fx: &Effects, config: &Config) {
             continue;
         }
 
-        reregister_legacy_router_hook(fx, config, name, &agent, env_inherit, spawn_cwd, &id);
+        reregister_legacy_router_hook(
+            fx,
+            config,
+            name,
+            &agent,
+            env_inherit,
+            spawn_cwd,
+            &id,
+            allow_live_hooks,
+        );
     }
 }
 
 /// Re-register a legacy router hook with the current `edict run responder` command.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "internal helper, plain param list is clearest"
+)]
 fn reregister_legacy_router_hook(
     fx: &Effects,
     config: &Config,
@@ -1062,6 +1105,7 @@ fn reregister_legacy_router_hook(
     env_inherit: &str,
     spawn_cwd: &str,
     id: &str,
+    allow_live_hooks: bool,
 ) {
     let claim_uri = format!("agent://{name}-dev");
     let spawn_name = format!("{name}-responder");
@@ -1106,7 +1150,8 @@ fn reregister_legacy_router_hook(
         "responder",
     ]);
 
-    match crate::subprocess::ensure_rite_hook_with(fx, &description, &router_args) {
+    match crate::subprocess::ensure_rite_hook_with(fx, &description, &router_args, allow_live_hooks)
+    {
         Ok(_) => fx.announce(format!("  Migrated router hook {id} → edict run responder")),
         Err(e) => tracing::warn!("failed to re-register router hook: {e}"),
     }
@@ -1117,7 +1162,7 @@ fn reregister_legacy_router_hook(
 /// Earlier versions of `detect_hook_paths` checked for `.jj` to identify bare repos,
 /// which broke after the migration to Git+manifold. This re-registers hooks that have
 /// `--cwd .../ws/default` with `--cwd .../` (the repo root) instead.
-fn migrate_hook_cwd(fx: &Effects, config: &Config, project_root: &Path) {
+fn migrate_hook_cwd(fx: &Effects, config: &Config, project_root: &Path, allow_live_hooks: bool) {
     // Detect maw v2: project_root may be ws/default/ (inner sync) or the bare root
     let bare_root = if project_root.ends_with("ws/default") {
         project_root.parent().and_then(Path::parent)
@@ -1199,7 +1244,15 @@ fn migrate_hook_cwd(fx: &Effects, config: &Config, project_root: &Path) {
                 .responder
                 .as_ref()
                 .and_then(|r| r.memory_limit.as_deref());
-            super::init::register_router_hook(fx, &root_str, &root_str, name, &agent, responder_ml);
+            let _ = super::init::register_router_hook(
+                fx,
+                &root_str,
+                &root_str,
+                name,
+                &agent,
+                responder_ml,
+                allow_live_hooks,
+            );
             fx.announce(format!("  Fixed hook --cwd: {desc} → repo root"));
         } else {
             fx.announce(format!("  Retired stale reviewer hook {desc}"));
@@ -1213,7 +1266,12 @@ fn migrate_hook_cwd(fx: &Effects, config: &Config, project_root: &Path) {
 /// Earlier versions used a vestigial `-router` claim that nobody actually staked.
 /// The new pattern uses `-dev` which matches the responder's own agent claim,
 /// preventing re-trigger while processing.
-fn migrate_router_hook_claim(fx: &Effects, config: &Config, project_root: &Path) {
+fn migrate_router_hook_claim(
+    fx: &Effects,
+    config: &Config,
+    project_root: &Path,
+    allow_live_hooks: bool,
+) {
     let output = match Tool::new("rite")
         .args(&["hooks", "list", "--format", "json"])
         .run()
@@ -1286,7 +1344,15 @@ fn migrate_router_hook_claim(fx: &Effects, config: &Config, project_root: &Path)
             .responder
             .as_ref()
             .and_then(|r| r.memory_limit.as_deref());
-        super::init::register_router_hook(fx, &root_str, &root_str, name, &agent, responder_ml);
+        let _ = super::init::register_router_hook(
+            fx,
+            &root_str,
+            &root_str,
+            name,
+            &agent,
+            responder_ml,
+            allow_live_hooks,
+        );
         fx.announce(format!(
             "  Migrated router hook claim: agent://{name}-router → agent://{name}-dev"
         ));
@@ -1296,7 +1362,13 @@ fn migrate_router_hook_claim(fx: &Effects, config: &Config, project_root: &Path)
 /// Migrate botty → vessel: update config key on disk and re-register rite hooks.
 ///
 /// Idempotent — skips steps already done.
-fn migrate_vessel_hooks(fx: &Effects, config: &Config, project_root: &Path, config_path: &Path) {
+fn migrate_vessel_hooks(
+    fx: &Effects,
+    config: &Config,
+    project_root: &Path,
+    config_path: &Path,
+    allow_live_hooks: bool,
+) {
     // 1. Update config TOML on disk: botty → vessel, crit → seal, botbus → rite
     if let Ok(content) = fx.read_to_string(config_path) {
         let mut updated = content;
@@ -1384,7 +1456,15 @@ fn migrate_vessel_hooks(fx: &Effects, config: &Config, project_root: &Path, conf
                 .responder
                 .as_ref()
                 .and_then(|r| r.memory_limit.as_deref());
-            super::init::register_router_hook(fx, &root_str, &root_str, name, &agent, ml);
+            let _ = super::init::register_router_hook(
+                fx,
+                &root_str,
+                &root_str,
+                name,
+                &agent,
+                ml,
+                allow_live_hooks,
+            );
             fx.announce("  Migrated router hook: vessel spawn (was botty)");
         } else if let Some(role) = desc
             .strip_prefix(&format!("edict:{name}:reviewer-"))
@@ -1415,9 +1495,14 @@ const fn router_hook_enabled(config: &Config) -> bool {
 /// Sync already guarantees this for reviewer hooks. Without the same guarantee
 /// for the router hook, `edict sync` reports success on a project whose channel
 /// answers nobody.
-fn ensure_router_hook(fx: &Effects, config: &Config, project_root: &Path) {
+fn ensure_router_hook(
+    fx: &Effects,
+    config: &Config,
+    project_root: &Path,
+    allow_live_hooks: bool,
+) -> Result<()> {
     if !router_hook_enabled(config) {
-        return;
+        return Ok(());
     }
 
     let output = match Tool::new("rite")
@@ -1425,16 +1510,16 @@ fn ensure_router_hook(fx: &Effects, config: &Config, project_root: &Path) {
         .run()
     {
         Ok(o) if o.success() => o,
-        _ => return,
+        _ => return Ok(()),
     };
 
     let parsed: serde_json::Value = match serde_json::from_str(&output.stdout) {
         Ok(v) => v,
-        Err(_) => return,
+        Err(_) => return Ok(()),
     };
 
     let Some(hooks) = parsed.get("hooks").and_then(|h| h.as_array()) else {
-        return;
+        return Ok(());
     };
 
     let name = &config.project.name;
@@ -1446,7 +1531,7 @@ fn ensure_router_hook(fx: &Effects, config: &Config, project_root: &Path) {
             .is_some_and(|d| d == description)
     });
     if exists {
-        return;
+        return Ok(());
     }
 
     let root_str = resolve_hook_root(project_root);
@@ -1459,8 +1544,21 @@ fn ensure_router_hook(fx: &Effects, config: &Config, project_root: &Path) {
 
     // register_router_hook listens on `name`, so report that, not
     // `config.channel()` — the two differ on projects renamed since init.
-    super::init::register_router_hook(fx, &root_str, &root_str, name, &agent, ml);
+    //
+    // Unlike the other migrations in this file, this one propagates: a
+    // guard refusal here means the project's channel would silently answer
+    // nobody, so `edict sync` should fail loudly rather than report success.
+    super::init::register_router_hook(
+        fx,
+        &root_str,
+        &root_str,
+        name,
+        &agent,
+        ml,
+        allow_live_hooks,
+    )?;
     fx.announce(format!("  Registered missing router hook for #{name}"));
+    Ok(())
 }
 
 /// Migrate hooks that still use BOTBUS_* env-inherit vars to RITE_*.
@@ -1468,7 +1566,12 @@ fn ensure_router_hook(fx: &Effects, config: &Config, project_root: &Path) {
 /// These hooks have correct `edict:` descriptions but were registered before
 /// rite was renamed from botbus, so their `--env-inherit` still references
 /// `BOTBUS_CHANNEL`, `BOTBUS_MESSAGE_ID`, etc.
-fn migrate_botbus_env_hooks(fx: &Effects, config: &Config, project_root: &Path) {
+fn migrate_botbus_env_hooks(
+    fx: &Effects,
+    config: &Config,
+    project_root: &Path,
+    allow_live_hooks: bool,
+) {
     let output = match Tool::new("rite")
         .args(&["hooks", "list", "--format", "json"])
         .run()
@@ -1530,7 +1633,15 @@ fn migrate_botbus_env_hooks(fx: &Effects, config: &Config, project_root: &Path) 
                 .responder
                 .as_ref()
                 .and_then(|r| r.memory_limit.as_deref());
-            super::init::register_router_hook(fx, &root_str, &root_str, name, &agent, ml);
+            let _ = super::init::register_router_hook(
+                fx,
+                &root_str,
+                &root_str,
+                name,
+                &agent,
+                ml,
+                allow_live_hooks,
+            );
             fx.announce("  Migrated router hook: RITE_* env vars (was BOTBUS_*)");
         } else if let Some(role) = desc
             .strip_prefix(&format!("edict:{name}:reviewer-"))
@@ -1550,7 +1661,12 @@ fn migrate_botbus_env_hooks(fx: &Effects, config: &Config, project_root: &Path) 
 /// namespace, and any list edict adopts later.
 ///
 /// Idempotent — a hook already carrying the current list is skipped.
-fn migrate_hook_reply_env(fx: &Effects, config: &Config, project_root: &Path) {
+fn migrate_hook_reply_env(
+    fx: &Effects,
+    config: &Config,
+    project_root: &Path,
+    allow_live_hooks: bool,
+) {
     let output = match Tool::new("rite")
         .args(&["hooks", "list", "--format", "json"])
         .run()
@@ -1599,7 +1715,15 @@ fn migrate_hook_reply_env(fx: &Effects, config: &Config, project_root: &Path) {
                 .responder
                 .as_ref()
                 .and_then(|r| r.memory_limit.as_deref());
-            super::init::register_router_hook(fx, &root_str, &root_str, name, &agent, ml);
+            let _ = super::init::register_router_hook(
+                fx,
+                &root_str,
+                &root_str,
+                name,
+                &agent,
+                ml,
+                allow_live_hooks,
+            );
             fx.announce("  Converged router hook --env-inherit");
         } else if let Some(role) = desc
             .strip_prefix(&format!("edict:{name}:reviewer-"))

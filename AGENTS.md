@@ -75,6 +75,12 @@ Hooks registered before named hooks existed carry no name. Adding a named hook b
 
 `RITE_MESSAGE_ID` is also the spawned agent's **reply anchor** — the message it must answer with `rite send --reply-to`. For a lease batch the anchor is the LAST id in `RITE_BATCH_MESSAGE_IDS` (chronological, triggering message last).
 
+### Hook Announcement and the Live-Hook Guard
+
+Before `ensure_rite_hook` mutates anything, it announces what's about to happen (`src/rite_hook_guard.rs`, `announce`): the resolved rite data dir (`RITE_DATA_DIR`, else `$XDG_DATA_HOME/rite`, else `$HOME/.local/share/rite` — mirroring `rite/src/core/project.rs::data_dir()`), printed once per process, followed by each hook's name/channel/cwd/command on stderr.
+
+It then guards (`guard`): if the hook's `--cwd` is under the system temp directory (`std::env::temp_dir()` or `/tmp`) and `RITE_DATA_DIR` is unset, registration is refused with an error naming `RITE_DATA_DIR` and `--dry-run` — a live hook there would otherwise spawn real agents against a throwaway project, using the machine's real rite data directory. Pass `--allow-live-hooks` to `edict init`/`edict sync`/`edict hooks install` to register anyway; setting `RITE_DATA_DIR` also allows it (and is the right choice for tests — see Testing below). `edict init`/`sync` fail non-zero when the guard refuses on their primary registration path; best-effort hook migrations in `edict sync` log a warning and continue.
+
 ### Observing Agents in Action
 
 ```bash

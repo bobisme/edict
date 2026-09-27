@@ -313,9 +313,14 @@ fn run_with_timeout(
 ///
 /// # Errors
 ///
-/// Returns `Err` if the `rite hooks add` command cannot be run or fails.
-pub fn ensure_rite_hook(description: &str, add_args: &[&str]) -> anyhow::Result<(String, String)> {
-    ensure_rite_hook_with(&Effects::apply(), description, add_args)
+/// Returns `Err` if the live-hook guard refuses the registration, or if the
+/// `rite hooks add` command cannot be run or fails.
+pub fn ensure_rite_hook(
+    description: &str,
+    add_args: &[&str],
+    allow_live_hooks: bool,
+) -> anyhow::Result<(String, String)> {
+    ensure_rite_hook_with(&Effects::apply(), description, add_args, allow_live_hooks)
 }
 
 /// [`ensure_rite_hook`], with every mutating `rite` call routed through `fx`.
@@ -323,14 +328,30 @@ pub fn ensure_rite_hook(description: &str, add_args: &[&str]) -> anyhow::Result<
 /// A dry-run records the converge instead of performing it. The `rite hooks
 /// list` and `--help` probes that decide the plan run in both modes.
 ///
+/// Before touching anything, this announces the resolved rite data dir and
+/// the hook about to be registered (see [`crate::rite_hook_guard::announce`]),
+/// then guards against registering a live hook for a project that looks like
+/// a throwaway unless `allow_live_hooks` is set or `RITE_DATA_DIR` is
+/// configured (see [`crate::rite_hook_guard::guard`]). In apply mode a
+/// refusal aborts with `Err`; in record mode (`--dry-run`) it is recorded as
+/// a planned refusal via `fx` and registration is skipped without aborting
+/// the rest of the plan.
+///
 /// # Errors
 ///
-/// Returns `Err` if the `rite hooks add` command cannot be run or fails.
+/// Returns `Err` if the live-hook guard refuses the registration in apply
+/// mode, or if the `rite hooks add` command cannot be run or fails.
 pub fn ensure_rite_hook_with(
     fx: &Effects,
     description: &str,
     add_args: &[&str],
+    allow_live_hooks: bool,
 ) -> anyhow::Result<(String, String)> {
+    crate::rite_hook_guard::announce(fx, description, add_args);
+    if !crate::rite_hook_guard::guard(fx, description, add_args, allow_live_hooks)? {
+        return Ok(("refused".to_string(), String::new()));
+    }
+
     let hooks = list_rite_hooks();
     let named = rite_supports_named_hooks();
     let plan = plan_converge(&hooks, description, named);

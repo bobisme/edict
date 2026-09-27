@@ -5,6 +5,7 @@ mod error;
 mod hooks;
 mod layout;
 mod reply;
+mod rite_hook_guard;
 mod subprocess;
 mod telemetry;
 mod template;
