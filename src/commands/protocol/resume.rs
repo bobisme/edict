@@ -241,7 +241,11 @@ fn build_bone_guidance(
             guidance.step(format!(
                 "# Fix issues in ws/{ws_name}/, retarget to the fixed commits, then re-request review:"
             ));
-            guidance.step(shell::seal_retarget_cmd(ws_name, &review.review_id, "agent"));
+            guidance.step(shell::seal_retarget_cmd(
+                ws_name,
+                &review.review_id,
+                "agent",
+            ));
             guidance.step(shell::seal_request_cmd(
                 ws_name,
                 &review.review_id,

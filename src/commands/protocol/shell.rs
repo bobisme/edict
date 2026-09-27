@@ -677,7 +677,9 @@ pub fn seal_retarget_cmd(workspace: &str, review_id: &str, agent: &str) -> Strin
         std::borrow::Cow::Owned(shell_escape(review_id))
     };
 
-    format!("maw exec {workspace_safe} -- seal reviews retarget {review_id_safe} --agent {agent_safe}")
+    format!(
+        "maw exec {workspace_safe} -- seal reviews retarget {review_id_safe} --agent {agent_safe}"
+    )
 }
 
 /// Build: `maw exec <ws> -- seal review <id>`
