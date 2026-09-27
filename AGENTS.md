@@ -79,7 +79,7 @@ Hooks registered before named hooks existed carry no name. Adding a named hook b
 
 Before `ensure_rite_hook` mutates anything, it announces what's about to happen (`src/rite_hook_guard.rs`, `announce`): the resolved rite data dir (`RITE_DATA_DIR`, else `$XDG_DATA_HOME/rite`, else `$HOME/.local/share/rite` — mirroring `rite/src/core/project.rs::data_dir()`), printed once per process, followed by each hook's name/channel/cwd/command on stderr.
 
-It then guards (`guard`): if the hook's `--cwd` is under the system temp directory (`std::env::temp_dir()` or `/tmp`) and `RITE_DATA_DIR` is unset, registration is refused with an error naming `RITE_DATA_DIR` and `--dry-run` — a live hook there would otherwise spawn real agents against a throwaway project, using the machine's real rite data directory. Pass `--allow-live-hooks` to `edict init`/`edict sync`/`edict hooks install` to register anyway; setting `RITE_DATA_DIR` also allows it (and is the right choice for tests — see Testing below). `edict init`/`sync` fail non-zero when the guard refuses on their primary registration path; best-effort hook migrations in `edict sync` log a warning and continue.
+It then guards (`guard`): if the hook's `--cwd` is under the system temp directory (`std::env::temp_dir()` or `/tmp`) and `RITE_DATA_DIR` is unset, registration is refused with an error naming `RITE_DATA_DIR` and `--dry-run` — a live hook there would otherwise spawn real agents against a throwaway project, using the machine's real rite data directory. Pass `--allow-live-hooks` to `edict init`/`edict sync`/`edict hooks install` to register anyway; setting `RITE_DATA_DIR` also allows it (and is the right choice for tests — see "Testing template changes safely" below). `edict init`/`sync` fail non-zero when the guard refuses on their primary registration path; best-effort hook migrations in `edict sync` log a warning and continue.
 
 ### Observing Agents in Action
 
@@ -425,15 +425,68 @@ maw exec default -- just test       # cargo test
 
 **Automated tests**: Run `cargo test` — these use isolated environments automatically.
 
-**Manual testing**: ALWAYS use isolated data directories to avoid polluting actual project data:
+### Testing template changes safely
+
+A change to workflow docs, `agents-managed.md.jinja`, or hook-registration logic is not
+verified until you see it run through a real `init`/`sync`. Doing that carelessly can register
+a live rite hook in the machine's real data dir — see "Hook Announcement and the Live-Hook
+Guard" above; each of those hooks spawns a real agent. Verify without touching it.
+
+**1. Preview.** `edict sync --dry-run` / `edict init --dry-run` render the full plan — files,
+hooks, migrations, the commit — and change nothing (see "Init vs Sync" above). Start here; it
+covers most template changes.
+
+**2. Full run, sandboxed.** When a dry-run is not enough, run `init` and `sync` for real, with
+`RITE_DATA_DIR`, `HOME`, and the `XDG_*` vars all pointed inside a fresh tempdir, and the
+agent-identity env vars unset so nothing spawns or routes as a live agent. Run it with
+`bash` (from any shell): the overrides live only in that child process, so your own shell
+never ends up with a sandboxed `HOME`.
 
 ```bash
-RITE_DATA_DIR=/tmp/test-rite edict init --name test --type cli --tools bones,maw,seal,rite --no-interactive
-RITE_DATA_DIR=/tmp/test-rite rite hooks list
-rm -rf /tmp/test-rite
+bash <<'SANDBOX'
+set -eu
+sandbox=$(mktemp -d)
+export RITE_DATA_DIR="$sandbox/rite"
+export HOME="$sandbox/home"
+export XDG_DATA_HOME="$HOME/.local/share"
+export XDG_CONFIG_HOME="$HOME/.config"
+export XDG_CACHE_HOME="$HOME/.cache"
+export XDG_STATE_HOME="$HOME/.local/state"
+unset AGENT RITE_AGENT BOTBUS_AGENT
+
+mkdir -p "$sandbox/project" && cd "$sandbox/project"
+git init -q && git config user.email test@example.com && git config user.name Test
+git commit -q --allow-empty -m init
+
+edict init --no-interactive --name sandbox-proj --type cli --tools rite --no-commit
+edict sync --no-commit
+rite hooks list   # the hook is here, inside the sandbox
+echo "sandbox: $sandbox (delete it when done)"
+SANDBOX
 ```
 
-**Applies to**: Any manual testing with rite, vessel, seal, maw, or bn commands during development.
+Do not pass `--language` — it triggers a network `.gitignore` fetch, irrelevant here.
+`tests/hermetic_rite_hooks.rs` runs this same recipe automatically; read it for the full
+end-to-end proof, including the assertion that nothing lands outside `$RITE_DATA_DIR`.
+
+**3. Confirm the live hook set is untouched.** From a normal shell, with no `RITE_DATA_DIR`
+override, run this before and after step 2:
+
+```bash
+rite hooks list | wc -l
+```
+
+The count must match. The sandboxed run registers its hook inside `$RITE_DATA_DIR` only, so
+the real data dir never sees it.
+
+**4. If you forget the sandbox.** The live-hook guard refuses to register a hook when the
+project's `--cwd` is under the system temp directory and `RITE_DATA_DIR` is unset — `init`/
+`sync` exit non-zero, naming `RITE_DATA_DIR` and `--allow-live-hooks`. It only catches the
+temp-dir case: a throwaway project rooted elsewhere is not protected. Trust the sandbox
+recipe above, not the guard, to keep a test run isolated.
+
+**Applies to**: Any manual testing with rite, vessel, seal, maw, or bn commands during
+development.
 
 ## Conventions
 

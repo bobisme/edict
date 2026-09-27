@@ -33,6 +33,11 @@ just check               # cargo check
 just install             # cargo install --path .
 ```
 
+Changes to workflow docs, templates, or hook-registration logic: before running `edict init`
+or `edict sync` by hand, read "Testing template changes safely" in AGENTS.md. It covers the
+`--dry-run` preview and the sandboxed recipe that keeps the machine's live rite hooks
+untouched.
+
 ## Questions
 
 For questions about how botbox works or how to use it, open a GitHub issue with the `question` label.

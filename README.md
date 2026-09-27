@@ -188,3 +188,8 @@ maw exec default -- just test       # cargo test
 ```
 
 This project uses Jujutsu (jj) for version control and maw for workspace management. Source files live in `ws/default/`, not at the project root. Run `maw exec default -- <command>` to execute commands in the workspace context.
+
+Testing a change to workflow docs, templates, or hook-registration logic against a real
+`edict init`/`sync` run: see "Testing template changes safely" in AGENTS.md first. It covers
+the `--dry-run` preview and the sandboxed recipe that keeps the machine's live rite hooks
+untouched.
