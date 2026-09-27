@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.31.0] - 2026-09-27
+
+### Added
+
+- `edict sync --dry-run` and `edict init --dry-run` list every file, migration, rite hook, tool init and commit the command would make, then exit 0 without changing anything. Every mutation in init and sync goes through one choke point (`src/effects.rs`), so a new step cannot skip the dry-run by accident. `--check` still only reports stale or not stale.
+- Before registering a rite hook, `edict init`/`sync` print the resolved rite data dir and each hook's name, channel, cwd and command.
+- `edict doctor` runs `pi auth check` for each non-Anthropic provider the project's agents use and reports any login that is not usable.
+- AGENTS.md has a "Testing template changes safely" section: a dry-run preview, then a sandboxed full run with `RITE_DATA_DIR`, `HOME` and `XDG_*` in a tempdir.
+
+### Changed
+
+- `edict init`/`sync` refuse to register a live rite hook for a project under the system temp dir when `RITE_DATA_DIR` is unset. Such a hook spawns real agents against a throwaway directory. `--allow-live-hooks` overrides it. A dry-run shows the refusal instead of failing. `edict init` also skips its `#projects` registration message in that case, and now sends it after hook registration, so a refused init posts nothing.
+- The responder skips the agent run when every message in the spawn batch @mentions only other agents or replies in someone else's thread. Previously each such ping started a full triage run. Plain top-level messages, command prefixes, DMs, @mentions of the responder, and messages it cannot classify still run.
+- Responder triage falls back to the responder's default model when the triage model fails, so one provider outage no longer fails every trigger.
+
+### Fixed
+
+- A failed `edict run agent` child now reports its real reason, for example `claude failed (exit 1): Invalid API key (edict run agent exited with code 4)`, instead of only the exit code. The responder's "Could not answer that" reply carries it.
+- An expired or revoked runner login (pi OAuth refresh, Claude `/login`) fails with a one-line message that says how to sign in again.
+- The responder no longer posts "Could not answer that" into threads addressed to other agents. The failure is still logged and counted (`edict.responder.turn_failures_total`, attribute `addressed`).
+- Every step that re-requests a review after new commits runs `seal reviews retarget <id>` first. `seal reviews request` alone left the review on the old commit, so the reviewer verified stale code. This covers the protocol commands, the dev-loop and worker prompts, and the review docs.
+- `security-review.md`: `rite claims stake --ttl` takes seconds (`--ttl 1200`, not `20m`), and `vessel spawn --cwd` is absolute (`$(maw cd "$ws")`), because vessel resolves a relative path against its server's cwd.
+
 ## [0.30.1] - 2026-09-23
 
 ### Fixed
