@@ -954,9 +954,6 @@ fn discover_sibling_leads(agent: &str) -> anyhow::Result<Vec<SiblingLead>> {
 
 /// Run agent via `edict run agent` (auto-selects runner based on model provider).
 fn run_agent_subprocess(prompt: &str, model: &str, timeout_secs: u64) -> anyhow::Result<String> {
-    use std::io::{BufRead, BufReader};
-    use std::process::{Command, Stdio};
-
     let mut args = vec!["run", "agent", prompt, "--skip-permissions"];
 
     // Pass the full model string (e.g. "anthropic/claude-sonnet-5:medium") — Pi handles :suffix natively
@@ -969,33 +966,11 @@ fn run_agent_subprocess(prompt: &str, model: &str, timeout_secs: u64) -> anyhow:
     args.push("-t");
     args.push(&timeout_str);
 
-    // Spawn the process, streaming stdout through
-    let mut child = Command::new("edict")
-        .args(&args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .context("spawning edict run agent")?;
-
-    let stdout = child.stdout.take().context("capturing stdout")?;
-    let reader = BufReader::new(stdout);
-    let mut output = String::new();
-
-    for line in reader.lines() {
-        let line = line.context("reading stdout line")?;
-        println!("{line}");
-        output.push_str(&line);
-        output.push('\n');
-    }
-
-    let status = child.wait().context("waiting for edict run agent")?;
-    if status.success() {
-        Ok(output)
-    } else {
-        let code = status.code().unwrap_or(-1);
-        anyhow::bail!("edict run agent exited with code {code}")
-    }
+    // Stream stdout through; stderr passes through and its tail feeds the error.
+    crate::commands::agent_subprocess::run_edict_agent(
+        &args,
+        crate::commands::agent_subprocess::EchoTo::Stdout,
+    )
 }
 
 /// Extract iteration summary from Claude output.

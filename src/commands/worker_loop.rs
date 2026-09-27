@@ -771,9 +771,6 @@ fn is_rate_limit_error(err: &str) -> bool {
 /// Supports `provider/model:thinking` syntax for thinking levels.
 /// Echoes output to stderr for visibility in vessel while capturing stdout for parsing.
 fn try_run_agent(prompt: &str, model: &str, timeout: u64) -> anyhow::Result<String> {
-    use std::io::{BufRead, BufReader};
-    use std::process::{Command, Stdio};
-
     let timeout_string = timeout.to_string();
     let mut args = vec![
         "run",
@@ -790,33 +787,12 @@ fn try_run_agent(prompt: &str, model: &str, timeout: u64) -> anyhow::Result<Stri
         args.push(model);
     }
 
-    let mut child = Command::new("edict")
-        .args(&args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .context("spawning edict run agent")?;
-
-    let stdout = child.stdout.take().context("capturing stdout")?;
-    let reader = BufReader::new(stdout);
-
-    let mut output = String::new();
-    for line in reader.lines() {
-        let line = line.context("reading line from edict run agent")?;
-        // Echo to stderr for visibility in vessel
-        eprintln!("{line}");
-        output.push_str(&line);
-        output.push('\n');
-    }
-
-    let status = child.wait().context("waiting for edict run agent")?;
-    if status.success() {
-        Ok(output)
-    } else {
-        let code = status.code().unwrap_or(-1);
-        anyhow::bail!("edict run agent exited with code {code}")
-    }
+    // Echo stdout to stderr for visibility in vessel; stderr passes through
+    // and its tail feeds the error message on failure.
+    crate::commands::agent_subprocess::run_edict_agent(
+        &args,
+        crate::commands::agent_subprocess::EchoTo::Stderr,
+    )
 }
 
 /// Parse completion signal from Claude output.

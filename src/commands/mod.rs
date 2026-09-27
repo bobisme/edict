@@ -1,3 +1,4 @@
+pub mod agent_subprocess;
 pub mod dev_loop;
 pub mod doctor;
 pub mod hooks;
