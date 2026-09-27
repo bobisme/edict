@@ -43,6 +43,14 @@ impl Addressing {
         !matches!(self, Self::NotAddressed)
     }
 
+    /// Whether a spawn batch with this classification should start an agent run.
+    ///
+    /// Only a batch known to be addressed to someone else is skipped.
+    #[must_use]
+    pub const fn warrants_run(self) -> bool {
+        !matches!(self, Self::NotAddressed)
+    }
+
     /// Value for the `addressed` telemetry attribute.
     #[must_use]
     pub const fn as_attr(self) -> &'static str {

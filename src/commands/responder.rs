@@ -5,7 +5,7 @@ use anyhow::{Context, anyhow};
 use regex::Regex;
 use serde::Deserialize;
 
-use super::responder_addressing::Addressing;
+use super::responder_addressing::{Addressing, ThreadMessage};
 
 fn ansi_escape_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
@@ -833,19 +833,57 @@ impl Responder {
 
     /// Whether the messages this turn answers were addressed to the responder.
     fn turn_addressing(&self) -> Addressing {
+        self.turn_addressing_with(|id| self.fetch_thread(id))
+    }
+
+    /// [`Self::turn_addressing`] with the thread fetch as a seam.
+    fn turn_addressing_with(
+        &self,
+        fetch_thread: impl FnMut(&str) -> Option<Vec<ThreadMessage>>,
+    ) -> Addressing {
         crate::commands::responder_addressing::resolve(
             &self.agent,
             &self.channel,
             &self.turn_ids,
-            |id| {
-                let output = Tool::new("rite")
-                    .args(&["history", &self.channel, "--thread", id, "--format", "json"])
-                    .run_ok()
-                    .inspect_err(|e| eprintln!("Warning: could not fetch thread of {id}: {e}"))
-                    .ok()?;
-                crate::commands::responder_addressing::parse_thread(&output.stdout)
-            },
+            fetch_thread,
         )
+    }
+
+    /// The thread containing message `id`, from `rite history --thread`.
+    fn fetch_thread(&self, id: &str) -> Option<Vec<ThreadMessage>> {
+        let output = Tool::new("rite")
+            .args(&["history", &self.channel, "--thread", id, "--format", "json"])
+            .run_ok()
+            .inspect_err(|e| eprintln!("Warning: could not fetch thread of {id}: {e}"))
+            .ok()?;
+        crate::commands::responder_addressing::parse_thread(&output.stdout)
+    }
+
+    /// Whether the spawn batch warrants an agent run.
+    ///
+    /// The router hook wakes the responder for every channel message, including
+    /// traffic between other agents (`@probe-codex ping`). A full triage run on
+    /// each of those is expensive and answers nobody. So when every message in
+    /// the spawn batch is known to be addressed to someone else, skip the run:
+    /// log it, count it, and post nothing. Addressed and Unknown batches run as
+    /// before — fail open toward answering.
+    ///
+    /// Only the spawn trigger is checked. A follow-up inside a conversation the
+    /// responder is already having is answered without this check.
+    fn spawn_warrants_run_with(
+        &self,
+        fetch_thread: impl FnMut(&str) -> Option<Vec<ThreadMessage>>,
+    ) -> bool {
+        let addressing = self.turn_addressing_with(fetch_thread);
+        if addressing.warrants_run() {
+            return true;
+        }
+        eprintln!(
+            "Skipping: message(s) {} addressed only to other agents; no agent run",
+            self.turn_ids.join(",")
+        );
+        crate::telemetry::metrics::counter("edict.responder.skipped_unaddressed_total", 1, &[]);
+        false
     }
 
     // --- Capture agent response from rite history ---
@@ -1823,6 +1861,13 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
             return Ok(());
         }
 
+        // Skip batches addressed only to other agents, before any agent run.
+        // Nothing has been staked beyond what cleanup() releases.
+        if !self.spawn_warrants_run_with(|id| self.fetch_thread(id)) {
+            self.cleanup();
+            return Ok(());
+        }
+
         // Route the message
         let route = route_message(&trigger_message.body);
 
@@ -2235,6 +2280,110 @@ mod tests {
         responder.turn_ids = vec!["01M2KF5Y7GC3YQYXDHF2Y6E94Z".to_string()];
         responder.set_anchor(&test_message(Some("01M2KF5Z4N3E0JN4GGGV2RRVWN")));
         assert_eq!(responder.turn_ids, vec!["01M2KF5Z4N3E0JN4GGGV2RRVWN"]);
+    }
+
+    // --- spawn pre-check: skip batches addressed only to other agents ---
+
+    const TRIGGER: &str = "01M2KF5Y7GC3YQYXDHF2Y6E94Z";
+    const PARENT: &str = "01M2KF5Z4N3E0JN4GGGV2RRVWN";
+
+    fn thread_msg(id: &str, agent: &str, body: &str, reply_to: Option<&str>) -> ThreadMessage {
+        ThreadMessage {
+            id: id.to_string(),
+            agent: agent.to_string(),
+            body: body.to_string(),
+            mentions: Vec::new(),
+            reply_to: reply_to.map(ToString::to_string),
+        }
+    }
+
+    /// Run the spawn pre-check for a one-message batch against a fixed thread.
+    fn spawn_runs_on(channel: &str, thread: &[ThreadMessage]) -> bool {
+        let mut r = test_responder(Some(TRIGGER));
+        r.channel = channel.to_string();
+        r.turn_ids = vec![TRIGGER.to_string()];
+        r.spawn_warrants_run_with(|_| Some(thread.to_vec()))
+    }
+
+    #[test]
+    fn spawn_skips_a_ping_for_another_agent() {
+        let thread = [thread_msg(
+            TRIGGER,
+            "probe-claude",
+            "@probe-codex ping 1",
+            None,
+        )];
+        assert!(!spawn_runs_on("rite", &thread));
+    }
+
+    #[test]
+    fn spawn_skips_a_reply_in_someone_elses_thread() {
+        let thread = [
+            thread_msg(PARENT, "probe-claude", "@probe-codex ping", None),
+            thread_msg(TRIGGER, "probe-codex", "pong", Some(PARENT)),
+        ];
+        assert!(!spawn_runs_on("rite", &thread));
+    }
+
+    #[test]
+    fn spawn_runs_on_plain_channel_traffic() {
+        let thread = [thread_msg(TRIGGER, "bob", "how does sync work?", None)];
+        assert!(spawn_runs_on("rite", &thread));
+    }
+
+    #[test]
+    fn spawn_runs_on_a_command_prefix_that_mentions_others() {
+        let thread = [thread_msg(
+            TRIGGER,
+            "bob",
+            "!q what did @alice change?",
+            None,
+        )];
+        assert!(spawn_runs_on("rite", &thread));
+    }
+
+    #[test]
+    fn spawn_runs_on_a_mention_of_the_responder() {
+        let thread = [thread_msg(
+            TRIGGER,
+            "bob",
+            "@alice @testproject-dev can you look?",
+            None,
+        )];
+        assert!(spawn_runs_on("rite", &thread));
+    }
+
+    #[test]
+    fn spawn_runs_on_a_dm_without_fetching() {
+        let mut r = test_responder(Some(TRIGGER));
+        r.channel = "_dm_bob_testproject-dev".to_string();
+        r.turn_ids = vec![TRIGGER.to_string()];
+        assert!(r.spawn_warrants_run_with(|_| panic!("a DM must not need a fetch")));
+    }
+
+    #[test]
+    fn spawn_runs_when_the_thread_cannot_be_fetched() {
+        let mut r = test_responder(Some(TRIGGER));
+        r.turn_ids = vec![TRIGGER.to_string()];
+        assert!(r.spawn_warrants_run_with(|_| None));
+    }
+
+    #[test]
+    fn spawn_runs_without_any_message_ids() {
+        let r = test_responder(None);
+        assert!(r.spawn_warrants_run_with(|_| panic!("nothing to fetch")));
+    }
+
+    #[test]
+    fn spawn_runs_when_any_batch_message_is_addressed() {
+        let thread = vec![
+            thread_msg(PARENT, "probe-claude", "@probe-codex ping", None),
+            thread_msg(TRIGGER, "bob", "@testproject-dev you there?", None),
+        ];
+        let mut r = test_responder(Some(TRIGGER));
+        r.channel = "rite".to_string();
+        r.turn_ids = vec![PARENT.to_string(), TRIGGER.to_string()];
+        assert!(r.spawn_warrants_run_with(|_| Some(thread.clone())));
     }
 
     // --- reply anchor tests ---
