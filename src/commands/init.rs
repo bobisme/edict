@@ -9,6 +9,7 @@ use crate::config::{
     self, AgentsConfig, Config, DevAgentConfig, MissionsConfig, ModelsConfig, ProjectConfig,
     ReviewConfig, ToolsConfig, WorkerAgentConfig,
 };
+use crate::effects::Effects;
 use crate::error::ExitError;
 use crate::layout::Layout;
 use crate::subprocess::{Tool, run_command};
@@ -108,6 +109,12 @@ pub struct InitArgs {
     /// Project root directory
     #[arg(long)]
     pub project_root: Option<PathBuf>,
+    /// Preview: list the files, global agent hooks, tool inits (bn/maw/seal),
+    /// rite hooks, seed bones and commit init would make, then exit 0 without
+    /// changing anything. Prompts still run in interactive mode (they only
+    /// gather choices); pair with --no-interactive for a scripted preview.
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 /// Collected user choices for init
@@ -134,6 +141,9 @@ impl InitArgs {
     /// # Panics
     ///
     /// Panics if the current working directory cannot be determined.
+    ///
+    /// With `--dry-run`, every change is recorded by [`Effects`] instead of
+    /// performed, and the plan is printed.
     pub fn execute(&self) -> Result<()> {
         let project_dir = self
             .project_root
@@ -143,13 +153,32 @@ impl InitArgs {
         // Canonicalize project root and verify it contains config or is a new init target
         let project_dir = project_dir.canonicalize().unwrap_or(project_dir);
 
+        let effects = if self.dry_run {
+            Effects::record()
+        } else {
+            Effects::apply()
+        };
+
         // Detect maw v2 bare repo
         let ws_default = project_dir.join("ws/default");
         if config::find_config(&ws_default).is_some()
             || (ws_default.exists() && !project_dir.join(".agents/edict").exists())
         {
-            return self.handle_bare_repo(&project_dir);
+            return self.handle_bare_repo(&effects, &project_dir);
         }
+
+        self.init_project(&effects, &project_dir)?;
+        if effects.is_recording() {
+            print!("{}", effects.render_plan(&project_dir));
+        } else {
+            println!("Done.");
+        }
+        Ok(())
+    }
+
+    /// Initialize one (non-bare) project, performing or recording each change via `fx`.
+    fn init_project(&self, fx: &Effects, project_dir: &Path) -> Result<()> {
+        let project_dir = project_dir.to_path_buf();
 
         let agents_dir = project_dir.join(".agents/edict");
         let agents_md_path = project_dir.join("AGENTS.md");
@@ -172,8 +201,8 @@ impl InitArgs {
         let choices = self.gather_choices(interactive, &detected)?;
 
         // Create .agents/edict/
-        fs::create_dir_all(&agents_dir)?;
-        println!("Created .agents/edict/");
+        fx.create_dir_all(&agents_dir)?;
+        fx.report("Created .agents/edict/");
 
         // Run sync to copy workflow docs, design docs, hooks
         // We create config first so sync can read it
@@ -183,24 +212,22 @@ impl InitArgs {
         let config_path = project_dir.join(config::CONFIG_TOML);
         if !config_path.exists() || self.force {
             let toml_str = config.to_toml()?;
-            fs::write(&config_path, &toml_str)?;
-            println!("Generated {}", config::CONFIG_TOML);
+            fx.write(&config_path, &toml_str)?;
+            fx.report(format!("Generated {}", config::CONFIG_TOML));
         }
 
         // Copy workflow docs (reuse sync logic)
-        sync_workflow_docs(&agents_dir, layout)?;
-        println!("Copied workflow docs");
+        sync_workflow_docs(fx, &agents_dir, layout)?;
+        fx.report("Copied workflow docs");
 
         // Copy design docs
-        sync_design_docs(&agents_dir)?;
-        println!("Copied design docs");
+        sync_design_docs(fx, &agents_dir)?;
+        fx.report("Copied design docs");
 
-        // Install global agent hooks (idempotent)
-        crate::commands::hooks::HooksCommand::Install {
-            project_root: Some(project_dir.clone()),
-        }
-        .execute()
-        .unwrap_or_else(|e| eprintln!("Warning: failed to install global hooks: {e}"));
+        // Install global agent hooks (idempotent). The project's rite router
+        // hook is registered below by register_spawn_hooks.
+        crate::commands::hooks::install_global_hooks(fx)
+            .unwrap_or_else(|e| eprintln!("Warning: failed to install global hooks: {e}"));
 
         // Generate AGENTS.md
         if agents_md_path.exists() && !self.force {
@@ -209,14 +236,14 @@ impl InitArgs {
             );
         } else {
             let content = render_agents_md(&config, layout)?;
-            fs::write(&agents_md_path, content)?;
-            println!("Generated AGENTS.md");
+            fx.write(&agents_md_path, content)?;
+            fx.report("Generated AGENTS.md");
         }
 
         // Initialize bones
         if choices.init_bones && choices.tools.contains(&"bones".to_string()) {
-            if run_command("bn", &["init"], Some(&project_dir)).is_ok() {
-                println!("Initialized bones");
+            if fx.run_command("bn", &["init"], Some(&project_dir)).is_ok() {
+                fx.report("Initialized bones");
             } else {
                 tracing::warn!("bn init failed (is bones installed?)");
             }
@@ -224,8 +251,8 @@ impl InitArgs {
 
         // Initialize maw
         if choices.tools.contains(&"maw".to_string()) {
-            if run_command("maw", &["init"], Some(&project_dir)).is_ok() {
-                println!("Initialized maw");
+            if fx.run_command("maw", &["init"], Some(&project_dir)).is_ok() {
+                fx.report("Initialized maw");
             } else {
                 tracing::warn!("maw init failed (is maw installed?)");
             }
@@ -233,43 +260,42 @@ impl InitArgs {
 
         // Initialize seal
         if choices.tools.contains(&"seal".to_string()) {
-            init_seal(&project_dir)?;
+            init_seal(fx, &project_dir)?;
         }
 
         // Register project on #projects channel (skip on re-init)
         if choices.tools.contains(&"rite".to_string()) && !is_reinit {
-            register_project_channel(&project_dir, &choices);
+            register_project_channel(fx, &project_dir, &choices);
         }
 
         // Seed initial work bones
         if choices.seed_work && choices.tools.contains(&"bones".to_string()) {
-            let count = seed_initial_bones(&project_dir, &choices.name, &choices.types);
+            let count = seed_initial_bones(fx, &project_dir, &choices.name, &choices.types);
             if count > 0 {
                 let suffix = if count > 1 { "s" } else { "" };
-                println!("Created {count} seed bone{suffix}");
+                fx.report(format!("Created {count} seed bone{suffix}"));
             }
         }
 
         // Register rite hooks
         if choices.tools.contains(&"rite".to_string()) {
-            register_spawn_hooks(&project_dir, &choices.name, &config);
+            register_spawn_hooks(fx, &project_dir, &choices.name, &config);
         }
 
         // Generate .gitignore
         if !choices.languages.is_empty() {
-            generate_gitignore(&project_dir, &choices.languages)?;
+            generate_gitignore(fx, &project_dir, &choices.languages);
         }
 
         // Auto-commit
         if !is_reinit && !self.no_commit {
-            auto_commit(&project_dir, &config);
+            auto_commit(fx, &project_dir, &config);
         }
 
-        println!("Done.");
         Ok(())
     }
 
-    fn handle_bare_repo(&self, project_dir: &Path) -> Result<()> {
+    fn handle_bare_repo(&self, fx: &Effects, project_dir: &Path) -> Result<()> {
         let project_dir = project_dir
             .canonicalize()
             .context("canonicalizing project root")?;
@@ -331,16 +357,25 @@ impl InitArgs {
         if !choices.seed_work {
             args.push("--no-seed-work".into());
         }
+        if self.dry_run {
+            args.push("--dry-run".into());
+        }
 
+        // Not an effect: the inner init applies or records by the same flags.
         let arg_refs: Vec<&str> = args.iter().map(std::string::String::as_str).collect();
-        run_command("maw", &arg_refs, Some(&project_dir))?;
+        let inner = run_command("maw", &arg_refs, Some(&project_dir))?;
+        if fx.is_recording() {
+            println!("ws/default:");
+            print!("{inner}");
+            println!("\nBare repo root:");
+        }
 
         // Create bare root stubs
         let stub_content = "**Do not edit the root AGENTS.md for memories or instructions. Use the AGENTS.md in ws/default/.**\n@ws/default/AGENTS.md\n";
         let stub_agents = project_dir.join("AGENTS.md");
         if !stub_agents.exists() {
-            fs::write(&stub_agents, stub_content)?;
-            println!("Created bare-root AGENTS.md stub");
+            fx.write(&stub_agents, stub_content)?;
+            fx.report("Created bare-root AGENTS.md stub");
         }
 
         // Symlink .claude → ws/default/.claude
@@ -350,17 +385,8 @@ impl InitArgs {
             let needs_symlink = fs::read_link(&root_claude_dir)
                 .map_or(true, |target| target != Path::new("ws/default/.claude"));
             if needs_symlink {
-                let tmp_link = project_dir.join(".claude.tmp");
-                let _ = fs::remove_file(&tmp_link);
-                #[cfg(unix)]
-                std::os::unix::fs::symlink("ws/default/.claude", &tmp_link)?;
-                #[cfg(windows)]
-                std::os::windows::fs::symlink_dir("ws/default/.claude", &tmp_link)?;
-                if let Err(e) = fs::rename(&tmp_link, &root_claude_dir) {
-                    let _ = fs::remove_file(&tmp_link);
-                    return Err(e).context("creating .claude symlink");
-                }
-                println!("Symlinked .claude → ws/default/.claude");
+                fx.symlink_replace("ws/default/.claude", &root_claude_dir)?;
+                fx.report("Symlinked .claude → ws/default/.claude");
             }
         }
 
@@ -371,20 +397,14 @@ impl InitArgs {
             let needs_symlink = fs::read_link(&root_pi_dir)
                 .map_or(true, |target| target != Path::new("ws/default/.pi"));
             if needs_symlink {
-                let tmp_link = project_dir.join(".pi.tmp");
-                let _ = fs::remove_file(&tmp_link);
-                #[cfg(unix)]
-                std::os::unix::fs::symlink("ws/default/.pi", &tmp_link)?;
-                #[cfg(windows)]
-                std::os::windows::fs::symlink_dir("ws/default/.pi", &tmp_link)?;
-                if let Err(e) = fs::rename(&tmp_link, &root_pi_dir) {
-                    let _ = fs::remove_file(&tmp_link);
-                    return Err(e).context("creating .pi symlink");
-                }
-                println!("Symlinked .pi → ws/default/.pi");
+                fx.symlink_replace("ws/default/.pi", &root_pi_dir)?;
+                fx.report("Symlinked .pi → ws/default/.pi");
             }
         }
 
+        if fx.is_recording() {
+            print!("{}", fx.render_plan(&project_dir));
+        }
         Ok(())
     }
 
@@ -575,17 +595,17 @@ impl InitArgs {
 }
 
 /// Initialize seal and write the `.sealignore` file.
-fn init_seal(project_dir: &Path) -> Result<()> {
-    if run_command("seal", &["init"], Some(project_dir)).is_ok() {
-        println!("Initialized seal");
+fn init_seal(fx: &Effects, project_dir: &Path) -> Result<()> {
+    if fx.run_command("seal", &["init"], Some(project_dir)).is_ok() {
+        fx.report("Initialized seal");
     } else {
         tracing::warn!("seal init failed (is seal installed?)");
     }
 
     // Create .sealignore
     let sealignore_path = project_dir.join(".sealignore");
-    if !sealignore_path.exists() {
-        fs::write(
+    if !fx.exists(&sealignore_path) {
+        fx.write(
             &sealignore_path,
             "# Ignore edict-managed files (prompts, scripts, hooks, journals)\n\
              .agents/edict/\n\
@@ -598,13 +618,13 @@ fn init_seal(project_dir: &Path) -> Result<()> {
              .claude/\n\
              opencode.json\n",
         )?;
-        println!("Created .sealignore");
+        fx.report("Created .sealignore");
     }
     Ok(())
 }
 
 /// Register the project on the rite #projects channel.
-fn register_project_channel(project_dir: &Path, choices: &InitChoices) {
+fn register_project_channel(fx: &Effects, project_dir: &Path, choices: &InitChoices) {
     let abs_path = project_dir
         .canonicalize()
         .unwrap_or_else(|_| project_dir.to_path_buf());
@@ -617,40 +637,40 @@ fn register_project_channel(project_dir: &Path, choices: &InitChoices) {
         agent,
         tools_list
     );
-    match Tool::new("rite")
-        .args(&[
-            "send",
-            "--agent",
-            &agent,
-            "projects",
-            &msg,
-            "-L",
-            "project-registry",
-        ])
-        .run()
-    {
+    match fx.run(&Tool::new("rite").args(&[
+        "send",
+        "--agent",
+        &agent,
+        "projects",
+        &msg,
+        "-L",
+        "project-registry",
+    ])) {
         Ok(output) if output.success() => {
-            println!("Registered project on #projects channel");
+            fx.report("Registered project on #projects channel");
         }
         _ => tracing::warn!("failed to register on #projects (is rite installed?)"),
     }
 }
 
 /// Generate a `.gitignore` for the selected languages, skipping if one exists.
-fn generate_gitignore(project_dir: &Path, languages: &[String]) -> Result<()> {
+///
+/// The content is fetched over the network, so a dry-run plans the fetch and
+/// write without making the request.
+fn generate_gitignore(fx: &Effects, project_dir: &Path, languages: &[String]) {
     let gitignore_path = project_dir.join(".gitignore");
-    if gitignore_path.exists() {
-        println!(".gitignore already exists, skipping generation");
-    } else {
-        match fetch_gitignore(languages) {
-            Ok(content) => {
-                fs::write(&gitignore_path, content)?;
-                println!("Generated .gitignore for: {}", languages.join(", "));
-            }
-            Err(e) => tracing::warn!("failed to generate .gitignore: {e}"),
-        }
+    if fx.exists(&gitignore_path) {
+        fx.report(".gitignore already exists, skipping generation");
+        return;
     }
-    Ok(())
+    let source = gitignore_url(languages).unwrap_or_else(|_| "gitignore.io".to_string());
+    match fx.write_generated(&gitignore_path, source, || fetch_gitignore(languages)) {
+        Ok(()) => fx.report(format!(
+            "Generated .gitignore for: {}",
+            languages.join(", ")
+        )),
+        Err(e) => tracing::warn!("failed to generate .gitignore: {e}"),
+    }
 }
 
 // --- Interactive prompts using dialoguer ---
@@ -824,30 +844,30 @@ fn build_default_env(languages: &[String]) -> std::collections::HashMap<String, 
 // Re-embed the same workflow docs as sync.rs
 use crate::commands::sync::{DESIGN_DOCS, WORKFLOW_DOCS};
 
-fn sync_workflow_docs(agents_dir: &Path, layout: Layout) -> Result<()> {
+fn sync_workflow_docs(fx: &Effects, agents_dir: &Path, layout: Layout) -> Result<()> {
     for (name, content) in WORKFLOW_DOCS {
         let path = agents_dir.join(name);
         let rendered = crate::template::render_workflow_doc(content, layout)
             .with_context(|| format!("rendering {name}"))?;
-        fs::write(&path, rendered).with_context(|| format!("writing {}", path.display()))?;
+        fx.write(&path, rendered)?;
     }
 
     // Write version marker (layout-aware, matching `edict sync`'s staleness check)
     let version = crate::commands::sync::compute_docs_version(layout);
-    fs::write(agents_dir.join(".version"), version)?;
+    fx.write(&agents_dir.join(".version"), version)?;
 
     Ok(())
 }
 
-fn sync_design_docs(agents_dir: &Path) -> Result<()> {
+fn sync_design_docs(fx: &Effects, agents_dir: &Path) -> Result<()> {
     use sha2::{Digest, Sha256};
 
     let design_dir = agents_dir.join("design");
-    fs::create_dir_all(&design_dir)?;
+    fx.create_dir_all(&design_dir)?;
 
     for (name, content) in DESIGN_DOCS {
         let path = design_dir.join(name);
-        fs::write(&path, content).with_context(|| format!("writing {}", path.display()))?;
+        fx.write(&path, content)?;
     }
 
     let mut hasher = Sha256::new();
@@ -856,7 +876,7 @@ fn sync_design_docs(agents_dir: &Path) -> Result<()> {
         hasher.update(content.as_bytes());
     }
     let version = format!("{:x}", hasher.finalize());
-    fs::write(design_dir.join(".design-docs-version"), &version[..32])?;
+    fx.write(&design_dir.join(".design-docs-version"), &version[..32])?;
 
     Ok(())
 }
@@ -865,7 +885,7 @@ fn sync_design_docs(agents_dir: &Path) -> Result<()> {
 
 // --- Hook registration ---
 
-fn register_spawn_hooks(project_dir: &Path, name: &str, config: &Config) {
+fn register_spawn_hooks(fx: &Effects, project_dir: &Path, name: &str, config: &Config) {
     let abs_path = project_dir
         .canonicalize()
         .unwrap_or_else(|_| project_dir.to_path_buf());
@@ -874,7 +894,7 @@ fn register_spawn_hooks(project_dir: &Path, name: &str, config: &Config) {
     // Detect maw v2 workspace context
     let (hook_cwd, spawn_cwd) = detect_hook_paths(&abs_path);
 
-    // Check if rite supports hooks
+    // Check if rite supports hooks (read-only: runs in a dry-run too)
     if Tool::new("rite").arg("hooks").arg("list").run().is_err() {
         return;
     }
@@ -886,7 +906,7 @@ fn register_spawn_hooks(project_dir: &Path, name: &str, config: &Config) {
         .as_ref()
         .and_then(|r| r.memory_limit.as_deref());
     register_router_hook(
-        &crate::effects::Effects::apply(),
+        fx,
         &hook_cwd,
         &spawn_cwd,
         name,
@@ -912,7 +932,7 @@ fn detect_hook_paths(abs_path: &Path) -> (String, String) {
 /// Register (or converge) the router hook. Its mutating `rite` calls go
 /// through `fx`, so a dry-run records the registration instead.
 pub(super) fn register_router_hook(
-    fx: &crate::effects::Effects,
+    fx: &Effects,
     hook_cwd: &str,
     spawn_cwd: &str,
     name: &str,
@@ -966,20 +986,18 @@ pub(super) fn register_router_hook(
 
 // --- Seed bones ---
 
-fn seed_initial_bones(project_dir: &Path, _name: &str, types: &[String]) -> usize {
+fn seed_initial_bones(fx: &Effects, project_dir: &Path, _name: &str, types: &[String]) -> usize {
     let mut count = 0;
 
     let create_bone = |title: &str, description: &str, urgency: &str| -> bool {
-        Tool::new("bn")
-            .args(&[
-                "create",
-                &format!("--title={title}"),
-                &format!("--description={description}"),
-                "--kind=task",
-                &format!("--urgency={urgency}"),
-            ])
-            .run()
-            .is_ok_and(|o| o.success())
+        fx.run(&Tool::new("bn").args(&[
+            "create",
+            &format!("--title={title}"),
+            &format!("--description={description}"),
+            "--kind=task",
+            &format!("--urgency={urgency}"),
+        ]))
+        .is_ok_and(|o| o.success())
     };
 
     // Scout for spec files
@@ -1038,23 +1056,32 @@ fn seed_initial_bones(project_dir: &Path, _name: &str, types: &[String]) -> usiz
 
 // --- .gitignore ---
 
-fn fetch_gitignore(languages: &[String]) -> Result<String> {
-    // Validate all language names against the allowlist before constructing the URL
-    // to prevent SSRF via crafted language names (e.g., "../admin" or URL fragments)
+/// The gitignore.io URL for `languages`.
+///
+/// Validates all language names against the allowlist before constructing the
+/// URL, to prevent SSRF via crafted language names (e.g., "../admin" or URL
+/// fragments).
+fn gitignore_url(languages: &[String]) -> Result<String> {
     for lang in languages {
         if !LANGUAGES.contains(&lang.as_str()) {
             anyhow::bail!("unknown language for .gitignore: {lang:?}. Valid: {LANGUAGES:?}");
         }
     }
     let langs = languages.join(",");
-    let url = format!("https://www.toptal.com/developers/gitignore/api/{langs}");
+    Ok(format!(
+        "https://www.toptal.com/developers/gitignore/api/{langs}"
+    ))
+}
+
+fn fetch_gitignore(languages: &[String]) -> Result<String> {
+    let url = gitignore_url(languages)?;
     let body = ureq::get(&url).call()?.into_body().read_to_string()?;
     Ok(body)
 }
 
 // --- Auto-commit ---
 
-fn auto_commit(project_dir: &Path, config: &Config) {
+fn auto_commit(fx: &Effects, project_dir: &Path, config: &Config) {
     let message = format!("chore: initialize edict v{}", config.version);
 
     if project_dir.join(".git").exists()
@@ -1062,9 +1089,9 @@ fn auto_commit(project_dir: &Path, config: &Config) {
             .ancestors()
             .any(|p| p.join(".git").exists() || p.join("repo.git").exists())
     {
-        let _ = run_command("git", &["add", "-A"], Some(project_dir));
-        match run_command("git", &["commit", "-m", &message], Some(project_dir)) {
-            Ok(_) => println!("Committed: {message}"),
+        let _ = fx.run_command("git", &["add", "-A"], Some(project_dir));
+        match fx.run_command("git", &["commit", "-m", &message], Some(project_dir)) {
+            Ok(_) => fx.report(format!("Committed: {message}")),
             Err(_) => eprintln!("Warning: Failed to auto-commit (git error)"),
         }
     }

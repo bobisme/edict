@@ -7,6 +7,7 @@ use clap::Subcommand;
 use serde_json::json;
 
 use crate::config::Config;
+use crate::effects::Effects;
 use crate::error::ExitError;
 use crate::hooks::HookRegistry;
 use crate::subprocess::run_command;
@@ -70,16 +71,7 @@ impl HooksCommand {
 ///
 /// If `project_root` is provided, also registers the rite router hook.
 fn install_hooks(project_root: Option<&Path>) -> Result<()> {
-    // Install global Claude Code hooks
-    let home = dirs::home_dir().context("could not determine home directory")?;
-    let settings_path = home.join(".claude/settings.json");
-    install_global_claude_hooks(&settings_path)?;
-    println!("Installed global hooks in {}", settings_path.display());
-
-    // Install Pi extension globally
-    let pi_ext_path = home.join(".pi/agent/extensions/edict-hooks.ts");
-    install_pi_extension(&pi_ext_path)?;
-    println!("Installed Pi extension at {}", pi_ext_path.display());
+    install_global_hooks(&Effects::apply())?;
 
     // If in an Edict project, also register the rite router hook.
     if let Some(root) = project_root {
@@ -93,6 +85,33 @@ fn install_hooks(project_root: Option<&Path>) -> Result<()> {
     }
 
     println!("Hooks installed successfully");
+    Ok(())
+}
+
+/// Install the global (per-user, not per-project) agent hooks.
+///
+/// These are the Claude Code hooks in `~/.claude/settings.json` and the Pi
+/// extension. Every write goes through `fx`, so `edict init --dry-run` plans
+/// them instead.
+///
+/// # Errors
+///
+/// Returns `Err` if the home directory is unknown or a write fails.
+pub fn install_global_hooks(fx: &Effects) -> Result<()> {
+    let home = dirs::home_dir().context("could not determine home directory")?;
+    let settings_path = home.join(".claude/settings.json");
+    install_global_claude_hooks(fx, &settings_path)?;
+    fx.report(format!(
+        "Installed global hooks in {}",
+        settings_path.display()
+    ));
+
+    let pi_ext_path = home.join(".pi/agent/extensions/edict-hooks.ts");
+    install_pi_extension(fx, &pi_ext_path)?;
+    fx.report(format!(
+        "Installed Pi extension at {}",
+        pi_ext_path.display()
+    ));
     Ok(())
 }
 
@@ -282,7 +301,7 @@ fn load_config(root: &Path) -> Result<Config> {
 }
 
 /// Install global Claude Code hooks into ~/.claude/settings.json
-fn install_global_claude_hooks(settings_path: &Path) -> Result<()> {
+fn install_global_claude_hooks(fx: &Effects, settings_path: &Path) -> Result<()> {
     let hooks = HookRegistry::all();
 
     let mut hooks_config: HashMap<String, Vec<serde_json::Value>> = HashMap::new();
@@ -303,8 +322,9 @@ fn install_global_claude_hooks(settings_path: &Path) -> Result<()> {
     }
 
     // Load existing settings or create new
-    let mut settings = if settings_path.exists() {
-        let content = fs::read_to_string(settings_path)
+    let mut settings = if fx.exists(settings_path) {
+        let content = fx
+            .read_to_string(settings_path)
             .with_context(|| format!("reading {}", settings_path.display()))?;
         serde_json::from_str::<serde_json::Value>(&content).unwrap_or_else(|_| json!({}))
     } else {
@@ -335,22 +355,19 @@ fn install_global_claude_hooks(settings_path: &Path) -> Result<()> {
     settings["hooks"] = serde_json::Value::Object(merged_hooks);
 
     if let Some(parent) = settings_path.parent() {
-        fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+        fx.create_dir_all(parent)?;
     }
 
-    fs::write(settings_path, serde_json::to_string_pretty(&settings)?)
-        .with_context(|| format!("writing {}", settings_path.display()))?;
+    fx.write(settings_path, serde_json::to_string_pretty(&settings)?)?;
 
     Ok(())
 }
 
-fn install_pi_extension(path: &Path) -> Result<()> {
+fn install_pi_extension(fx: &Effects, path: &Path) -> Result<()> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+        fx.create_dir_all(parent)?;
     }
-    fs::write(path, PI_EDICT_HOOKS_EXTENSION)
-        .with_context(|| format!("writing {}", path.display()))?;
-    Ok(())
+    fx.write(path, PI_EDICT_HOOKS_EXTENSION)
 }
 
 /// Check if a hook entry is edict-managed (current or legacy botbox)

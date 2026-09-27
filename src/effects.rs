@@ -1,7 +1,7 @@
 //! The single choke point for side effects of project-mutating commands.
 //!
-//! `edict sync` (and, later, `edict init`) change a project in two ways: they
-//! write files and they run subprocesses that mutate state outside the tree —
+//! `edict sync` and `edict init` change a project in two ways: they write
+//! files and they run subprocesses that mutate state outside the tree —
 //! `rite hooks add`, `git commit`, `bn init`. Every such change goes through an
 //! [`Effects`] value passed down the call chain. It runs in one of two modes:
 //!
@@ -43,6 +43,9 @@ pub enum Planned {
         added: usize,
         removed: usize,
     },
+    /// A file would be written with content produced at apply time (e.g.
+    /// fetched over the network), which a dry-run does not produce.
+    GenerateFile { path: PathBuf, source: String },
     /// A file would be deleted.
     RemoveFile { path: PathBuf },
     /// A directory (and, for `remove_dir_all`, its contents) would be deleted.
@@ -122,6 +125,15 @@ impl Effects {
         }
     }
 
+    /// Report the outcome of an effect already in the plan ("Generated
+    /// AGENTS.md"). Apply mode prints it; record mode drops it, since the
+    /// recorded effect already says the same thing.
+    pub fn report(&self, message: impl AsRef<str>) {
+        if self.recorder.is_none() {
+            println!("{}", message.as_ref());
+        }
+    }
+
     /// Read a file, seeing any content a recorded write would have left.
     ///
     /// # Errors
@@ -188,6 +200,38 @@ impl Effects {
         if let Some(item) = item {
             rec.planned.push(item);
         }
+        Ok(())
+    }
+
+    /// Write `path` with content from `produce`, which may be expensive or
+    /// reach outside the machine (a network fetch).
+    ///
+    /// Apply mode calls `produce` and writes its result. Record mode calls
+    /// nothing and lists the write with `source` (where the content would
+    /// come from). The overlay does not learn the content, so later
+    /// [`Effects::read_to_string`] calls still see the file as it is on disk.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if `produce` or the write fails (apply mode only).
+    pub fn write_generated(
+        &self,
+        path: &Path,
+        source: impl Into<String>,
+        produce: impl FnOnce() -> Result<String>,
+    ) -> Result<()> {
+        let Some(r) = &self.recorder else {
+            let contents = produce()?;
+            return fs::write(path, contents)
+                .with_context(|| format!("Failed to write {}", path.display()));
+        };
+        push(
+            r,
+            Planned::GenerateFile {
+                path: path.to_path_buf(),
+                source: source.into(),
+            },
+        );
         Ok(())
     }
 
@@ -424,6 +468,9 @@ impl Effects {
                     added,
                     removed,
                 } => writeln!(out, "  update   {} (+{added} -{removed} lines)", rel(path)),
+                Planned::GenerateFile { path, source } => {
+                    writeln!(out, "  create   {} (from {source})", rel(path))
+                }
                 Planned::RemoveFile { path } => writeln!(out, "  remove   {}", rel(path)),
                 Planned::RemoveDir { path } => writeln!(out, "  remove   {}/", rel(path)),
                 Planned::CreateDir { path } => writeln!(out, "  mkdir    {}/", rel(path)),
@@ -609,6 +656,36 @@ mod tests {
             if program == "touch" && intent.as_deref() == Some("create")));
         assert!(matches!(&planned[4], Planned::Run { program, .. } if program == "touch"));
         assert_eq!(planned.len(), 5);
+    }
+
+    #[test]
+    fn write_generated_defers_the_producer_to_apply_mode() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let file = dir.path().join(".gitignore");
+
+        let fx = Effects::record();
+        fx.write_generated(&file, "https://example.invalid", || {
+            panic!("record mode must not produce content")
+        })
+        .expect("record");
+        assert!(!file.exists());
+        fx.report("not printed in record mode");
+        assert_eq!(
+            fx.planned(),
+            vec![Planned::GenerateFile {
+                path: file.clone(),
+                source: "https://example.invalid".to_string()
+            }]
+        );
+        assert!(
+            fx.render_plan(dir.path())
+                .contains("create   .gitignore (from https://example.invalid)")
+        );
+
+        Effects::apply()
+            .write_generated(&file, "x", || Ok("target/\n".to_string()))
+            .expect("apply");
+        assert_eq!(fs::read_to_string(&file).expect("read"), "target/\n");
     }
 
     #[test]
