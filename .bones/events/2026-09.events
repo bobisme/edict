@@ -84,3 +84,42 @@
 1790470573527385	edict-12wg8u	itc:AQ		item.link	bn-31k2	{"link_type":"blocks","target":"bn-in11"}	blake3:yshg0uPkcWo5zjepkIr4Xv_DfhemVEOUfk2WkPuI0Vk
 1790470573557462	edict-12wg8u	itc:AQ		item.link	bn-31k2	{"link_type":"blocks","target":"bn-lq0r"}	blake3:wXrWI5HPJXR2rbfoFinMnhUl29ZdWhwftbGt0_8fcxg
 1790470573578933	edict-12wg8u	itc:AQ		item.update	bn-lq0r	{"field":"title","value":"Announce rite data dir and each hook before registering; refuse live hooks for temp-dir projects"}	blake3:OCXMKSc5_YqKwiRk2h4Bl7ntFj2M7mfe0hiTnakEjsk
+1790471362372346	edict-12wg8u	itc:AQ		item.move	bn-2c38	{"state":"doing"}	blake3:Nuq7DHaWsV-XxVzQ7s-P2QRPRN1OhBs-5xRVSQtAO3I
+1790471362379252	edict-12wg8u	itc:AQ		item.assign	bn-2c38	{"action":"assign","agent":"edict-12wg8u"}	blake3:1W7cYvkG6MseB3NnMm_EmLLtbs8TNvRRoIUnGsyi2zc
+1790471362493716	edict-12wg8u	itc:AQ		item.move	bn-2kgk	{"state":"doing"}	blake3:XJShFG4wnm-2QCgJMy_dtE4NiQcfje0x0KQpcerih7M
+1790471362499804	edict-12wg8u	itc:AQ		item.assign	bn-2kgk	{"action":"assign","agent":"edict-12wg8u"}	blake3:dqtViIw6MqxrFSzxSmci4GXGfFagXSZhbYzHgtnHyz8
+1790471362620517	edict-12wg8u	itc:AQ		item.move	bn-qfr6	{"state":"doing"}	blake3:t-pnck-kAw2TusRpEgjfybfxc1AUcjtVavA4R5czc3E
+1790471362628321	edict-12wg8u	itc:AQ		item.assign	bn-qfr6	{"action":"assign","agent":"edict-12wg8u"}	blake3:F-HEyVxwB_zHKaEqPIrou9it5onShRua6N29izq8yEU
+1790471362752149	edict-12wg8u	itc:AQ		item.move	bn-in11	{"state":"doing"}	blake3:dEdYihYyL_pn5C5xqid78VmySFxO4to1jTrhigzHk78
+1790471362758085	edict-12wg8u	itc:AQ		item.assign	bn-in11	{"action":"assign","agent":"edict-12wg8u"}	blake3:_JmQld8YgsoBJPHjrKdHFk_72yjDv-ix0_YoN71Pots
+1790471617378877	edict-12wg8u	itc:AQ		item.move	bn-2kgk	{"reason":"Merged: inner agent failure reason now leads the error text (shared agent_subprocess helper)","state":"done"}	blake3:KaAy9R70cE2PX7SbXMc_JcZSCD_VcqYobkqyxQ-wA6w
+1790471628866940	edict-12wg8u	itc:AQ		item.move	bn-2d57	{"state":"doing"}	blake3:BKf1FPk7826WZpjB0Adoda8CTgHMl0OmpxNaxTKPkuY
+1790471628874050	edict-12wg8u	itc:AQ		item.assign	bn-2d57	{"action":"assign","agent":"edict-12wg8u"}	blake3:o_PaincreAkvf0sVsHQRdE79mX5AhXhbwostrB_HDY0
+1790471720581101	edict-12wg8u	itc:AQ		item.move	bn-qfr6	{"reason":"Merged. Plain top-level messages still count as addressed (router triage); only other-agent mentions / others' threads are quiet.","state":"done"}	blake3:HSZwqg5Bs0ldeD6MtI3HGlvoT5HTHEOJWckoysc7jcE
+1790471755123583	edict-12wg8u	itc:AQ		item.create	bn-2adz	{"description":"Follow-up from bn-qfr6. The router hook wakes the responder on every channel message, so @probe-codex pings on #rite each started a full triage agent run. src/commands/responder_addressing.rs classify() already knows when a message is NotAddressed. Add a cheap pre-check in Responder::run() that exits quietly (no agent run, no post) when the trigger batch is NotAddressed, keeping Unknown/Addressed behavior unchanged. Consider whether a rite hook --mention/filter is the better fix instead. Tests: pre-check skips on other-agent-only mentions, runs on plain traffic, commands, DMs, and on Unknown. Update AGENTS.md responder section.","kind":"task","size":"s","title":"Responder: skip the agent run for messages that only @mention other agents"}	blake3:Ios-E0wyah958LU8dLU0SOMQq6ZoeVnb9baHK8DI9Nk
+1790471797513443	edict-12wg8u	itc:AQ		item.move	bn-2c38	{"reason":"Merged; --cwd uses $(maw cd \"$ws\") (layout-agnostic)","state":"done"}	blake3:nfLKNmbPGVJg5YOt4nZhvbW_qg9rVYaI2XecDIKvS4w
+1790471801414867	edict-12wg8u	itc:AQ		item.move	bn-w912	{"state":"doing"}	blake3:setjV4FNcDCuOPZqHflOH9kgnPqgHJuIhIGXnzgH7Ew
+1790471801425782	edict-12wg8u	itc:AQ		item.assign	bn-w912	{"action":"assign","agent":"edict-12wg8u"}	blake3:jY1NUqalwG4H6230a5PM8HLMuPRmmMM4Txi-nn2BkGQ
+1790471959980710	edict-12wg8u	itc:AQ		item.comment	bn-2d57	{"body":"Root cause: pi's openai-codex OAuth refresh token was revoked ('invalid_refresh_token'). Responder triage used hardcoded openai-codex/gpt-5.6-luna:high with no fallback -> pi fails in <1s -> ToolFailed exit 4. Reproduced 2026-09-26 from /home/bob/src/rite (exit 4 in 0.49s). Fix cad89670: triage falls back to the default model, auth failures get an actionable one-line error, edict doctor checks pi auth per provider. Still needed: re-login pi to openai-codex (run pi, /login)."}	blake3:urYW0sjWYKFpzqbqtFdtiGOV68rRHe8_q5GQ9u7gvTE
+1790471960008292	edict-12wg8u	itc:AQ		item.move	bn-2d57	{"reason":"Merged cad89670","state":"done"}	blake3:S82v4gRWvgHxZLd_S3IQ8J0OVCZBTjFRA1wa8cWeUZ8
+1790472030227493	edict-12wg8u	itc:AQ		item.move	bn-in11	{"reason":"Merged; audit found no env scrubbing, RITE_DATA_DIR propagates to all subprocesses","state":"done"}	blake3:XvN7i5w5iiZS5PI6VQV7WC7VpiQL9oqDXKksKLzbQhY
+1790472037004483	edict-12wg8u	itc:AQ		item.move	bn-1lgf	{"state":"doing"}	blake3:mhUILr6GmI6slx7J0_vjB8z9nlj4iWC0IEKXLBG6ZXI
+1790472037014948	edict-12wg8u	itc:AQ		item.assign	bn-1lgf	{"action":"assign","agent":"edict-12wg8u"}	blake3:08j4KCXoDJ8qdcRD9f5pNUCMFNoYXRoCmGSjyEqgdQU
+1790472037137738	edict-12wg8u	itc:AQ		item.move	bn-lq0r	{"state":"doing"}	blake3:IDgFbL7CNJHtuh2ri8GqOTwGSWBh-qvk4jcF-H3aveE
+1790472037146546	edict-12wg8u	itc:AQ		item.assign	bn-lq0r	{"action":"assign","agent":"edict-12wg8u"}	blake3:ftigqd1A7q5-m7IpPlFGCoVsJqOq4Y7lX15bPtg6pMg
+1790472547197937	edict-12wg8u	itc:AQ		item.move	bn-1lgf	{"reason":"Merged; Effects choke point in src/effects.rs","state":"done"}	blake3:yPhG9S3C8rJv4_dm6GoS_JmPnjI-nN-XivqEp1nm8L4
+1790472564609375	edict-12wg8u	itc:AQ		item.move	bn-3n53	{"state":"doing"}	blake3:Bb_h_xjsV2K7KlVPzQQCJl3Nvm4qfcEzDjgeXDfdkOk
+1790472564618064	edict-12wg8u	itc:AQ		item.assign	bn-3n53	{"action":"assign","agent":"edict-12wg8u"}	blake3:t7Qh90CbLW_-W2XWGtRPwahjq32c4nJY7CKndbjPJz0
+1790472825450932	edict-12wg8u	itc:AQ		item.move	bn-w912	{"reason":"Merged; retarget added to protocol guidance, loop prompts, reply recipe, docs; regression test in template.rs","state":"done"}	blake3:gNGRn9jMSEeXr4hXdj4w01IE1xyFlDN09xG_QTNzdcY
+1790472974034017	edict-12wg8u	itc:AQ		item.move	bn-3n53	{"reason":"Merged","state":"done"}	blake3:dU1PtQtoBy8jeJ5uMoQgYDeX9IAPpK1-4uohWdokv1A
+1790473054700552	edict-12wg8u	itc:AQ		item.create	bn-3t3i	{"description":"bn-lq0r refuses rite hook registration for temp-dir projects when RITE_DATA_DIR is unset, but edict init also runs 'rite send' to #projects to register the project. That still writes into the live rite data dir from a throwaway project. Apply the same guard decision (rite_hook_guard::decide) to that send (skip with a note, honoring --allow-live-hooks), and cover it in tests/rite_hook_guard_refuses_live_hooks.rs by asserting no #projects message in the sentinel data dir.","kind":"task","labels":["rite"],"parent":"bn-3cud","size":"xs","title":"Extend the temp-dir guard to init's #projects registration send"}	blake3:xuyoAGM7ycrJ_wMa4q573vPcXfH6_hc4Dsr_xMWnqPQ
+1790473882289455	edict-12wg8u	itc:AQ		item.move	bn-lq0r	{"reason":"Merged; guard integrates with Effects dry-run (records 'would be REFUSED')","state":"done"}	blake3:J0TFlnR5WK3qPtX0zLEy9BpT4_go9amPJW8vO9FbjfE
+1790473922157822	edict-12wg8u	itc:AQ		item.move	bn-3t3i	{"state":"doing"}	blake3:KbbKaotZilrk58nsh2wMwgzW1Q9z0NnqYpwO2PLKiAM
+1790473922165523	edict-12wg8u	itc:AQ		item.assign	bn-3t3i	{"action":"assign","agent":"edict-12wg8u"}	blake3:EXQM9XwydayKDAzwP2siKBnlTABCx-KpEm-n0nghlgs
+1790473922311133	edict-12wg8u	itc:AQ		item.move	bn-2adz	{"state":"doing"}	blake3:ugWpD-ehhEElwUgdZa1TTfsV_fyDAq8A71pVqiiw88s
+1790473922325742	edict-12wg8u	itc:AQ		item.assign	bn-2adz	{"action":"assign","agent":"edict-12wg8u"}	blake3:lRfzJR23zprktN5CzOX5nfIIb_anMwhbnI24o8sXuu0
+1790473922492848	edict-12wg8u	itc:AQ		item.move	bn-31k2	{"state":"doing"}	blake3:9s-tmnAwrCk-aMB1VYgG21fCNx02p9HtEF7NoPd1BKg
+1790473922501365	edict-12wg8u	itc:AQ		item.assign	bn-31k2	{"action":"assign","agent":"edict-12wg8u"}	blake3:AtXo0ndTqCvUZhiBELp7jWO8zghPa3norU3KefTI8pA
+1790474088560046	edict-12wg8u	itc:AQ		item.move	bn-2adz	{"reason":"Merged; in-process pre-check (rite --mention filter would drop router traffic)","state":"done"}	blake3:ZeV4YkcPGtkVNlfKlqa60f3ve0H9eQEnZcL9wEe_oEI
+1790474280408719	edict-12wg8u	itc:AQ		item.move	bn-31k2	{"reason":"Merged; recipe verified end to end, live hooks unchanged","state":"done"}	blake3:oHZI2kTF3uMP1QXiNUQx-qSFNVc60FiWWKR464qCaSA
+1790474386392655	edict-12wg8u	itc:AQ		item.move	bn-3t3i	{"reason":"Merged; send moved after hook registration and guarded","state":"done"}	blake3:F9rCwjLb1vWgr3KBtG2zDdizvJuiZMoaheS6Uw46ICM
