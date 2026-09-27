@@ -505,6 +505,20 @@ const SKIP_LABELS: &[&str] = &[
 // Responder state
 // ---------------------------------------------------------------------------
 
+/// Model used to triage ordinary (non-routed) messages.
+pub const TRIAGE_MODEL: &str = "openai-codex/gpt-5.6-luna:high";
+
+/// Append `fallback` models to `primary`, skipping any already present.
+fn with_fallback(primary: Vec<String>, fallback: Vec<String>) -> Vec<String> {
+    let mut pool = primary;
+    for model in fallback {
+        if !pool.contains(&model) {
+            pool.push(model);
+        }
+    }
+    pool
+}
+
 struct Responder {
     project: String,
     agent: String,
@@ -768,13 +782,31 @@ impl Responder {
 
     // --- Run agent ---
 
+    /// The models triage tries, in order: the triage model, then the
+    /// responder's default model as a fallback.
+    ///
+    /// Triage runs on every ordinary message, so a single-model pool turns one
+    /// provider outage (for example an expired `openai-codex` login in pi) into
+    /// a failure on every trigger (bn-2d57). Falling back to the default model,
+    /// usually served by a different runner, keeps the responder answering.
+    fn triage_pool(&self) -> Vec<String> {
+        let primary = self.model_pool(&self.resolve_model(TRIAGE_MODEL));
+        let fallback = self.model_pool(&self.default_model);
+        with_fallback(primary, fallback)
+    }
+
     /// Run one agent turn, trying each model in the pool before giving up.
     fn run_agent(&self, prompt: &str, model: &str) -> anyhow::Result<String> {
         let pool = self.model_pool(model);
+        self.run_agent_pool(prompt, &pool, model)
+    }
+
+    /// Run one agent turn over an explicit model pool.
+    fn run_agent_pool(&self, prompt: &str, pool: &[String], model: &str) -> anyhow::Result<String> {
         eprintln!("Running agent (model: {})...", pool.join(", "));
         let start = crate::telemetry::metrics::time_start();
         let output =
-            super::worker_loop::run_agent_with_fallback(prompt, &pool, self.claude_timeout)?;
+            super::worker_loop::run_agent_with_fallback(prompt, pool, self.claude_timeout)?;
         crate::telemetry::metrics::time_record(
             "edict.responder.agent_run_duration_seconds",
             start,
@@ -1402,9 +1434,9 @@ After posting your response, output: <promise>RESPONDED</promise>"#,
         eprintln!("Triage: classifying message...");
         self.transcript.add("user", &message.agent, &message.body);
 
-        let triage_model = self.resolve_model("openai-codex/gpt-5.6-luna:high");
+        let triage_pool = self.triage_pool();
         let prompt = self.build_triage_prompt(message);
-        match self.run_agent(&prompt, &triage_model) {
+        match self.run_agent_pool(&prompt, &triage_pool, TRIAGE_MODEL) {
             Ok(output) => {
                 if let Some(response) = self.capture_agent_response() {
                     self.transcript.add("assistant", &self.agent, &response);
@@ -2287,6 +2319,52 @@ fast = ["anthropic/claude-haiku-4-5:low", "openai-codex/gpt-5.6-luna"]
             r.model_pool("openai-codex/gpt-5.6-sol"),
             vec!["openai-codex/gpt-5.6-sol"]
         );
+    }
+
+    /// bn-2d57: rite's config has no `[agents.responder]`, so every ordinary
+    /// message was triaged on the single model `openai-codex/gpt-5.6-luna:high`.
+    /// With pi's openai-codex login expired, that model failed in under a
+    /// second on every trigger and the responder posted "exited with code 4".
+    /// Triage must fall back to the default model instead.
+    #[test]
+    fn triage_falls_back_to_the_default_model() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".edict.toml");
+        std::fs::write(
+            &path,
+            r#"version = "1.0.15"
+[project]
+name = "rite"
+default_agent = "rite-dev"
+channel = "rite"
+
+[agents.dev]
+model = "opus"
+"#,
+        )
+        .unwrap();
+        let config = Config::load(&path).unwrap();
+        assert!(config.agents.responder.is_none());
+
+        let mut r = test_responder(None);
+        r.default_model = config.resolve_model("sonnet");
+        r.config = Some(config);
+
+        assert_eq!(
+            r.triage_pool(),
+            vec![
+                TRIAGE_MODEL.to_string(),
+                "anthropic/claude-sonnet-5:medium".to_string(),
+            ],
+            "triage must not depend on a single provider"
+        );
+    }
+
+    #[test]
+    fn triage_pool_does_not_repeat_the_default_model() {
+        let mut r = test_responder(None);
+        r.default_model = TRIAGE_MODEL.to_string();
+        assert_eq!(r.triage_pool(), vec![TRIAGE_MODEL.to_string()]);
     }
 
     #[test]

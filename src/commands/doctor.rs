@@ -105,6 +105,7 @@ impl DoctorArgs {
         };
 
         Self::check_tools(&mut report, &config);
+        Self::check_pi_auth(&mut report, &config);
         Self::check_project_files(&mut report, &project_root);
 
         // Strict mode: version compatibility check (simplified)
@@ -200,6 +201,36 @@ impl DoctorArgs {
                     version: None,
                     present: false,
                 });
+            }
+        }
+    }
+
+    /// Verify pi has usable credentials for every provider the project's
+    /// agents run through pi.
+    ///
+    /// An expired pi login fails every agent turn on that provider in under a
+    /// second (bn-2d57: the responder's triage model on `openai-codex`), so
+    /// surface it here rather than on the channel. Uses `pi auth check`, which
+    /// attempts a token refresh, so a revoked refresh token is caught too.
+    fn check_pi_auth(report: &mut DoctorReport, config: &Config) {
+        if !report
+            .tools
+            .iter()
+            .any(|t| t.name.starts_with("pi ") && t.present)
+        {
+            return;
+        }
+        for provider in pi_providers_in_use(config) {
+            let output = Tool::new("pi")
+                .args(&["auth", "check", "--provider", &provider, "--json"])
+                .timeout(std::time::Duration::from_secs(30))
+                .run();
+            let issue = match output {
+                Ok(output) => pi_auth_issue(&provider, &output.stdout),
+                Err(e) => Some(format!("pi auth check for {provider} failed to run: {e}")),
+            };
+            if let Some(issue) = issue {
+                report.issues.push(issue);
             }
         }
     }
@@ -323,5 +354,129 @@ impl DoctorArgs {
                 println!("issue  {issue}");
             }
         }
+    }
+}
+
+/// Providers the project's agents reach through the pi runner (anything that
+/// is not `anthropic/...`, which runs on Claude Code), sorted and deduplicated.
+fn pi_providers_in_use(config: &Config) -> Vec<String> {
+    let mut models: Vec<String> = Vec::new();
+    let responder_model = config
+        .agents
+        .responder
+        .as_ref()
+        .map_or("sonnet", |r| r.model.as_str());
+    models.extend(config.resolve_model_pool(responder_model));
+    if config.tools.rite {
+        models.push(crate::commands::responder::TRIAGE_MODEL.to_string());
+    }
+    if let Some(dev) = &config.agents.dev {
+        models.extend(config.resolve_model_pool(&dev.model));
+    }
+    if let Some(worker) = &config.agents.worker {
+        models.extend(config.resolve_model_pool(&worker.model));
+    }
+
+    let mut providers: Vec<String> = models
+        .iter()
+        .filter_map(|m| m.split_once('/').map(|(provider, _)| provider))
+        .filter(|provider| *provider != "anthropic")
+        .map(str::to_string)
+        .collect();
+    providers.sort();
+    providers.dedup();
+    providers
+}
+
+/// Turn `pi auth check --json` output into a doctor issue, or `None` when the
+/// provider is ready.
+fn pi_auth_issue(provider: &str, stdout: &str) -> Option<String> {
+    let parsed: Option<serde_json::Value> = serde_json::from_str(stdout.trim()).ok();
+    let status = parsed
+        .as_ref()
+        .and_then(|v| v.get("status"))
+        .and_then(serde_json::Value::as_str);
+    if status == Some("ready") {
+        return None;
+    }
+    let reason = parsed
+        .as_ref()
+        .and_then(|v| v.get("reason"))
+        .and_then(serde_json::Value::as_str)
+        .or(status)
+        .unwrap_or("unrecognised output");
+    Some(format!(
+        "pi credentials for {provider} are not usable ({reason}): run `pi` and use /login to sign in to {provider}, then check with `pi auth check --provider {provider}`"
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config(toml: &str) -> Config {
+        Config::parse_toml(toml).unwrap()
+    }
+
+    /// bn-2d57: rite's config. Its dev agent and responder run on Claude Code,
+    /// but triage runs on openai-codex through pi, so doctor must check it.
+    #[test]
+    fn rite_config_needs_openai_codex_through_pi() {
+        let c = config(
+            r#"version = "1.0.15"
+[project]
+name = "rite"
+[tools]
+rite = true
+[agents.dev]
+model = "opus"
+"#,
+        );
+        assert_eq!(pi_providers_in_use(&c), vec!["openai-codex".to_string()]);
+    }
+
+    #[test]
+    fn anthropic_only_project_without_rite_needs_no_pi_auth() {
+        let c = config(
+            r#"version = "1.0.15"
+[project]
+name = "x"
+[tools]
+rite = false
+[agents.dev]
+model = "opus"
+"#,
+        );
+        assert!(pi_providers_in_use(&c).is_empty());
+    }
+
+    #[test]
+    fn revoked_login_is_an_issue() {
+        // Exact output of `pi auth check --provider openai-codex --json` with a
+        // revoked refresh token.
+        let issue = pi_auth_issue(
+            "openai-codex",
+            r#"{"status":"invalid","provider":"openai-codex","reason":"invalid_state"}"#,
+        )
+        .unwrap();
+        assert!(issue.contains("openai-codex"));
+        assert!(issue.contains("invalid_state"));
+        assert!(issue.contains("/login"));
+    }
+
+    #[test]
+    fn ready_provider_is_not_an_issue() {
+        assert!(
+            pi_auth_issue(
+                "openai-codex",
+                r#"{"status":"ready","provider":"openai-codex","authType":"oauth"}"#
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn unparseable_output_is_an_issue() {
+        assert!(pi_auth_issue("openai-codex", "").is_some());
     }
 }

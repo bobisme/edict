@@ -226,7 +226,74 @@ pub fn run_agent(
     let _ = child.kill();
     let _ = child.wait();
 
-    result
+    result.map_err(|e| with_auth_hint(e, effective_runner, model))
+}
+
+/// Substrings (lowercase) that mark a provider authentication failure in the
+/// runner's error, as opposed to a model or network error.
+const AUTH_FAILURE_MARKERS: &[&str] = &[
+    "oauth refresh failed",
+    "oauth auth derivation failed",
+    "invalid_refresh_token",
+    "try signing in again",
+    "api key auth failed",
+    "credentials_not_configured",
+    "invalid api key",
+    "please run /login",
+];
+
+/// Maximum length of the runner's original error kept after the hint.
+const AUTH_DETAIL_MAX_CHARS: usize = 240;
+
+/// Rewrite a `ToolFailed` caused by expired or missing provider credentials
+/// into a single-line, actionable message.
+///
+/// Without this the responder relays the runner's raw error — for pi an
+/// `OAuth refresh failed ... {` line whose remedy sits in a JSON body the
+/// one-line reply cuts off (bn-2d57). The fix instruction goes first so it
+/// survives truncation.
+fn with_auth_hint(error: anyhow::Error, runner: &str, model: Option<&str>) -> anyhow::Error {
+    match error.downcast::<ExitError>() {
+        Ok(ExitError::ToolFailed {
+            tool,
+            code,
+            message,
+        }) => {
+            let message = auth_failure_hint(runner, model, &message).unwrap_or(message);
+            ExitError::ToolFailed {
+                tool,
+                code,
+                message,
+            }
+            .into()
+        }
+        Ok(other) => other.into(),
+        Err(error) => error,
+    }
+}
+
+/// Build the actionable auth-failure message, or `None` when `message` is not
+/// an authentication failure.
+fn auth_failure_hint(runner: &str, model: Option<&str>, message: &str) -> Option<String> {
+    let lower = message.to_ascii_lowercase();
+    if !AUTH_FAILURE_MARKERS.iter().any(|m| lower.contains(m)) {
+        return None;
+    }
+    let provider = model
+        .and_then(|m| m.split_once('/'))
+        .map_or("the model provider", |(provider, _)| provider);
+    let fix = if runner == "claude" {
+        "run `claude` and use /login to sign in again".to_string()
+    } else {
+        format!(
+            "run `pi` and use /login to sign in to {provider} again, then check with `pi auth check --provider {provider}`"
+        )
+    };
+    let detail: String = message.split_whitespace().collect::<Vec<_>>().join(" ");
+    let detail: String = detail.chars().take(AUTH_DETAIL_MAX_CHARS).collect();
+    Some(format!(
+        "{provider} credentials are expired or invalid; {fix} [{detail}]"
+    ))
 }
 
 /// Spawn Claude Code with stream-JSON output.
@@ -1117,6 +1184,78 @@ mod tests {
         assert_eq!(
             detect_terminal_event_error(&event).as_deref(),
             Some("The model is not supported for this account.")
+        );
+    }
+
+    /// bn-2d57: the exact error pi reports when its openai-codex refresh token
+    /// has been revoked. This is what made every rite responder trigger fail.
+    const PI_OAUTH_REFRESH_FAILURE: &str = r#"OAuth refresh failed for openai-codex: OpenAI Codex token refresh failed (401): {
+  "error": {
+    "message": "Could not validate your refresh token. Please try signing in again.",
+    "type": "invalid_request_error",
+    "param": null,
+    "code": "invalid_refresh_token"
+  }
+}"#;
+
+    #[test]
+    fn pi_expired_login_becomes_an_actionable_single_line() {
+        let err: anyhow::Error = ExitError::ToolFailed {
+            tool: "pi".to_string(),
+            code: 0,
+            message: PI_OAUTH_REFRESH_FAILURE.to_string(),
+        }
+        .into();
+
+        let err = with_auth_hint(err, "pi", Some("openai-codex/gpt-5.6-luna:high"));
+        let text = err.to_string();
+
+        assert_eq!(text.lines().count(), 1, "must fit a one-line reply: {text}");
+        assert!(
+            text.starts_with("pi failed (exit 0): openai-codex credentials are expired or invalid; run `pi` and use /login"),
+            "fix must come first: {text}"
+        );
+        assert!(text.contains("pi auth check --provider openai-codex"));
+        assert!(
+            text.contains("Could not validate your refresh token"),
+            "keeps detail: {text}"
+        );
+        // Still a ToolFailed, so `edict run agent` keeps exit code 4.
+        assert!(matches!(
+            err.downcast_ref::<ExitError>(),
+            Some(ExitError::ToolFailed { .. })
+        ));
+    }
+
+    #[test]
+    fn claude_login_failure_points_at_claude() {
+        let hint = auth_failure_hint(
+            "claude",
+            Some("anthropic/claude-sonnet-5:medium"),
+            "Invalid API key · Please run /login",
+        )
+        .unwrap();
+        assert!(hint.starts_with("anthropic credentials are expired or invalid; run `claude`"));
+    }
+
+    #[test]
+    fn non_auth_failures_are_left_alone() {
+        assert!(
+            auth_failure_hint(
+                "pi",
+                Some("openai-codex/gpt-5.6-sol"),
+                "The model is not supported for this account."
+            )
+            .is_none()
+        );
+        let err: anyhow::Error = ExitError::Timeout {
+            tool: "pi".to_string(),
+            timeout_secs: 5,
+        }
+        .into();
+        assert_eq!(
+            with_auth_hint(err, "pi", None).to_string(),
+            "pi timed out after 5s"
         );
     }
 
