@@ -269,11 +269,6 @@ impl InitArgs {
             init_seal(fx, &project_dir)?;
         }
 
-        // Register project on #projects channel (skip on re-init)
-        if choices.tools.contains(&"rite".to_string()) && !is_reinit {
-            register_project_channel(fx, &project_dir, &choices);
-        }
-
         // Seed initial work bones
         if choices.seed_work && choices.tools.contains(&"bones".to_string()) {
             let count = seed_initial_bones(fx, &project_dir, &choices.name, &choices.types);
@@ -283,7 +278,12 @@ impl InitArgs {
             }
         }
 
-        // Register rite hooks
+        // Register rite hooks. This runs before the #projects registration
+        // send below: in apply mode a refused hook registration aborts init
+        // with `Err` (see `rite_hook_guard::guard`), and a throwaway project
+        // that isn't allowed to register a live hook shouldn't have already
+        // posted itself to the live #projects channel by the time that
+        // happens.
         if choices.tools.contains(&"rite".to_string()) {
             register_spawn_hooks(
                 fx,
@@ -292,6 +292,14 @@ impl InitArgs {
                 &config,
                 self.allow_live_hooks,
             )?;
+        }
+
+        // Register project on #projects channel (skip on re-init). Guarded
+        // the same way as the rite hooks above (see
+        // `rite_hook_guard::guard_channel_send`) — a refusal here only skips
+        // the send rather than failing init.
+        if choices.tools.contains(&"rite".to_string()) && !is_reinit {
+            register_project_channel(fx, &project_dir, &choices, self.allow_live_hooks);
         }
 
         // Generate .gitignore
@@ -644,10 +652,31 @@ fn init_seal(fx: &Effects, project_dir: &Path) -> Result<()> {
 }
 
 /// Register the project on the rite #projects channel.
-fn register_project_channel(fx: &Effects, project_dir: &Path, choices: &InitChoices) {
+///
+/// Guarded the same way as a live rite hook registration (see
+/// `rite_hook_guard::guard_channel_send`): a project rooted under the
+/// system temp directory with no `RITE_DATA_DIR` and no `--allow-live-hooks`
+/// skips this send rather than posting into the machine's real rite data
+/// directory. Unlike the hook guard, a refusal here never fails `init`.
+fn register_project_channel(
+    fx: &Effects,
+    project_dir: &Path,
+    choices: &InitChoices,
+    allow_live_hooks: bool,
+) {
     let abs_path = project_dir
         .canonicalize()
         .unwrap_or_else(|_| project_dir.to_path_buf());
+
+    if !crate::rite_hook_guard::guard_channel_send(
+        fx,
+        "project registration on #projects",
+        &abs_path,
+        allow_live_hooks,
+    ) {
+        return;
+    }
+
     let tools_list = choices.tools.join(", ");
     let agent = format!("{}-dev", choices.name);
     let msg = format!(

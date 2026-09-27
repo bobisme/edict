@@ -20,6 +20,12 @@
 //! `Err`; record mode instead feeds `fx`, so the data-dir line, the hook
 //! line, and — on refusal — a "would be REFUSED" note all show up in the
 //! rendered plan, and the dry-run finishes rather than aborting.
+//!
+//! [`guard_channel_send`] applies the same [`decide`] rule to a different
+//! live mutation: `edict init`'s `rite send ... projects ...`, which
+//! registers the project on the shared `#projects` channel. Unlike
+//! [`guard`], a refusal there never fails `init` — it only skips that one
+//! announcement.
 
 use std::path::{Path, PathBuf};
 use std::sync::Once;
@@ -217,6 +223,66 @@ pub fn guard(
     }
 }
 
+/// Guard a live-data mutation that is not a hook registration.
+///
+/// Specifically, this covers `edict init`'s `rite send ... projects ...`,
+/// which announces a new project on the shared `#projects` channel (see
+/// `register_project_channel` in `src/commands/init.rs`). That send writes
+/// into the same live rite data directory `guard` protects, so a throwaway
+/// project rooted under the system temp directory must not post to it
+/// either.
+///
+/// Reuses [`decide`] with the project's own `cwd` (rather than one pulled
+/// out of `rite hooks add` args), so this applies the identical rule as the
+/// hook guard: refuse when `cwd` is under a system temp root and neither
+/// `RITE_DATA_DIR` nor `--allow-live-hooks` was given.
+///
+/// Unlike [`guard`], a refusal here never fails the command — `init` already
+/// fails apply-mode on a refused hook registration, and this send is a
+/// secondary announcement, not something worth aborting init over. So this
+/// returns a plain `bool` rather than `anyhow::Result<bool>`: `true` when
+/// the send should proceed, `false` when it was refused. Apply mode prints a
+/// clear skip message to stderr naming `RITE_DATA_DIR`/`--allow-live-hooks`;
+/// record mode (`--dry-run`) instead records a "would be skipped" note via
+/// `fx.announce`, so it shows up in the rendered plan.
+#[must_use]
+pub fn guard_channel_send(
+    fx: &Effects,
+    description: &str,
+    cwd: &Path,
+    allow_live_hooks: bool,
+) -> bool {
+    let canon_cwd = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
+    let roots = default_temp_roots();
+    let decision = decide(&canon_cwd, &roots, rite_data_dir_is_set(), allow_live_hooks);
+    channel_send_outcome(decision, fx, description)
+}
+
+/// The decision-to-outcome half of [`guard_channel_send`], factored out so
+/// it can be unit tested directly against a given [`Decision`] rather than
+/// through the process-global state (`RITE_DATA_DIR`, `std::env::temp_dir()`)
+/// that [`guard_channel_send`] resolves that decision from.
+fn channel_send_outcome(decision: Decision, fx: &Effects, description: &str) -> bool {
+    match decision {
+        Decision::Allow => true,
+        Decision::Refuse if fx.is_recording() => {
+            fx.announce(format!(
+                "{description} would be skipped: project is under a temp dir and \
+                 RITE_DATA_DIR is unset (pass --allow-live-hooks or set RITE_DATA_DIR)"
+            ));
+            false
+        }
+        Decision::Refuse => {
+            eprintln!(
+                "Skipping {description}: project is under a temp dir and RITE_DATA_DIR is \
+                 unset (pass --allow-live-hooks to send anyway, or set RITE_DATA_DIR to a \
+                 sandbox directory)"
+            );
+            false
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -297,5 +363,45 @@ mod tests {
     fn extract_command_empty_without_separator() {
         let args = ["--cwd", "/x"];
         assert_eq!(extract_command(&args), &[] as &[&str]);
+    }
+
+    #[test]
+    fn channel_send_allows_when_decision_is_allow() {
+        let fx = crate::effects::Effects::record();
+        assert!(channel_send_outcome(
+            Decision::Allow,
+            &fx,
+            "project registration"
+        ));
+        assert!(fx.planned().is_empty());
+    }
+
+    #[test]
+    fn channel_send_records_would_be_skipped_note_when_refused_in_record_mode() {
+        let fx = crate::effects::Effects::record();
+        assert!(!channel_send_outcome(
+            Decision::Refuse,
+            &fx,
+            "project registration"
+        ));
+        let planned = fx.planned();
+        assert!(
+            planned.iter().any(|item| matches!(
+                item,
+                crate::effects::Planned::Step(s)
+                    if s.contains("would be skipped") && s.contains("RITE_DATA_DIR")
+            )),
+            "expected a skip note mentioning RITE_DATA_DIR, got: {planned:?}"
+        );
+    }
+
+    #[test]
+    fn channel_send_refuses_in_apply_mode_without_panicking() {
+        let fx = crate::effects::Effects::apply();
+        assert!(!channel_send_outcome(
+            Decision::Refuse,
+            &fx,
+            "project registration"
+        ));
     }
 }
