@@ -490,7 +490,7 @@ At the end of your work, output exactly one of these completion signals:
    - Task request (-L task-request or asks for work): create a bone with maw exec default -- bn create.
    - Status check or question: reply on rite, do NOT create a bone.
    - Feedback (-L feedback): if it contains a bug report, feature request, or actionable work — create a bone. Evaluate critically: is this a real issue? Is it well-scoped? Set priority accordingly. Then acknowledge on rite.
-   - Announcements from other agents ("Working on...", "Completed...", "online"): ignore, no action.
+   - Announcements from other agents (task-claim, "Completed...", "online"): ignore, no action.
    - Duplicate of existing bone: do NOT create another bone, note it covers the request.
 
 2. TRIAGE: Check maw exec default -- bn next. If no ready bones and inbox created none, say "NO_WORK_AVAILABLE" and stop.
@@ -549,7 +549,7 @@ At the end of your work, output exactly one of these completion signals:
      rite claims stake --agent {agent} "workspace://{project}/$WS" -m "<id>".
      maw exec default -- bn bone comment add <id> "Started in workspace $WS ($WS_PATH)".
      rite statuses set --agent {agent} "Working: <id>" --ttl 30m.
-     Announce: rite send --agent {agent} {project} "Working on <id>: <title>" -L task-claim.
+     Announce: rite send --agent {agent} {project} "<id>: <title>" -L task-claim.
 
 4. WORK: maw exec default -- bn show <id>, then implement the task in the workspace.
    If this bone is part of a mission, check rite for sibling updates BEFORE starting implementation:

@@ -131,76 +131,74 @@ impl TemplateContext {
     }
 }
 
+/// One-line descriptions for the workflow-doc index in the managed section.
+/// Every entry must name a doc in `WORKFLOW_DOCS` (a test checks this).
+const WORKFLOW_DOC_DESCRIPTIONS: &[(&str, &str)] = &[
+    (
+        "worker-loop.md",
+        "Full worker cycle: resume, triage, start, work, review, finish",
+    ),
+    (
+        "triage.md",
+        "Find one actionable bone and groom along the way",
+    ),
+    ("start.md", "Claim a bone, create its workspace, announce"),
+    ("update.md", "Change a bone's state and announce it"),
+    (
+        "review-request.md",
+        "Request a review: commit first, review range, retarget before re-request",
+    ),
+    (
+        "review-response.md",
+        "Handle reviewer feedback; no code after the LGTM",
+    ),
+    (
+        "security-review.md",
+        "Launch one dedicated security review; who sends what",
+    ),
+    (
+        "finish.md",
+        "Close the bone, merge or hand off, release claims; conflict recovery",
+    ),
+    (
+        "merge-check.md",
+        "Merge a workspace: review log, clean check, merge gates, conflicts",
+    ),
+    (
+        "cross-channel.md",
+        "Rite threads, ask-and-wait, message shape, cross-project asks",
+    ),
+    ("report-issue.md", "Superseded by cross-channel.md"),
+    ("planning.md", "Turn a spec or PRD into actionable bones"),
+    ("scout.md", "Explore unfamiliar code before planning"),
+    (
+        "proposal.md",
+        "Propose and validate a significant change before building it",
+    ),
+    ("groom.md", "Groom ready bones to improve backlog quality"),
+    (
+        "mission.md",
+        "Missions: split a parent bone across parallel workers",
+    ),
+    (
+        "coordination.md",
+        "Coordinate with sibling workers inside a mission",
+    ),
+    (
+        "preflight.md",
+        "Validate toolchain health before multi-agent work",
+    ),
+];
+
 /// List all workflow docs with descriptions
 fn list_workflow_docs() -> Vec<DocEntry> {
-    vec![
-        DocEntry {
-            name: "triage.md".to_string(),
-            description: "Find work from inbox and bones".to_string(),
-        },
-        DocEntry {
-            name: "start.md".to_string(),
-            description: "Claim bone, create workspace, announce".to_string(),
-        },
-        DocEntry {
-            name: "update.md".to_string(),
-            description: "Change bone state (open/doing/done)".to_string(),
-        },
-        DocEntry {
-            name: "finish.md".to_string(),
-            description: "Close bone, merge workspace, release claims".to_string(),
-        },
-        DocEntry {
-            name: "worker-loop.md".to_string(),
-            description: "Full triage-work-finish lifecycle".to_string(),
-        },
-        DocEntry {
-            name: "planning.md".to_string(),
-            description: "Turn specs/PRDs into actionable bones".to_string(),
-        },
-        DocEntry {
-            name: "scout.md".to_string(),
-            description: "Explore unfamiliar code before planning".to_string(),
-        },
-        DocEntry {
-            name: "proposal.md".to_string(),
-            description: "Create and validate proposals before implementation".to_string(),
-        },
-        DocEntry {
-            name: "review-request.md".to_string(),
-            description: "Request a review".to_string(),
-        },
-        DocEntry {
-            name: "review-response.md".to_string(),
-            description: "Handle reviewer feedback (fix/address/defer)".to_string(),
-        },
-        DocEntry {
-            name: "security-review.md".to_string(),
-            description: "Launch one exact Daybreak security review".to_string(),
-        },
-        DocEntry {
-            name: "merge-check.md".to_string(),
-            description: "Merge a worker workspace (protocol merge + conflict recovery)"
-                .to_string(),
-        },
-        DocEntry {
-            name: "preflight.md".to_string(),
-            description: "Validate toolchain health".to_string(),
-        },
-        DocEntry {
-            name: "cross-channel.md".to_string(),
-            description: "Ask questions, report bugs, and track responses across projects"
-                .to_string(),
-        },
-        DocEntry {
-            name: "report-issue.md".to_string(),
-            description: "Report bugs/features to other projects".to_string(),
-        },
-        DocEntry {
-            name: "groom.md".to_string(),
-            description: "groom".to_string(),
-        },
-    ]
+    WORKFLOW_DOC_DESCRIPTIONS
+        .iter()
+        .map(|(name, description)| DocEntry {
+            name: (*name).to_string(),
+            description: (*description).to_string(),
+        })
+        .collect()
 }
 
 /// List design docs filtered by project types
@@ -619,12 +617,8 @@ mod tests {
         );
     }
 
-    /// The bare-layout managed section must still contain the bare-only
-    /// conventions (the trunk lives at `ws/default/`, bones go through
-    /// `maw exec default --`), while the root rendering must not.
-    #[test]
-    fn managed_section_respects_layout() {
-        let config = Config {
+    fn demo_config(tools: ToolsConfig, review_enabled: bool) -> Config {
+        Config {
             version: "1.0.0".into(),
             project: crate::config::ProjectConfig {
                 name: "demo".into(),
@@ -637,36 +631,265 @@ mod tests {
                 languages: vec![],
                 critical_approvers: None,
             },
-            tools: ToolsConfig {
-                bones: true,
-                maw: true,
-                seal: true,
-                rite: true,
-                vessel: true,
-            },
+            tools,
             review: ReviewConfig {
-                enabled: false,
+                enabled: review_enabled,
                 reviewers: vec![],
             },
             push_main: false,
             agents: crate::config::AgentsConfig::default(),
             models: crate::config::ModelsConfig::default(),
             env: std::collections::HashMap::default(),
-        };
+        }
+    }
 
-        let bare =
-            render_managed_section(&TemplateContext::from_config(&config, Layout::Bare)).unwrap();
+    fn all_tools() -> ToolsConfig {
+        ToolsConfig {
+            bones: true,
+            maw: true,
+            seal: true,
+            rite: true,
+            vessel: true,
+        }
+    }
+
+    fn managed(config: &Config, layout: Layout) -> String {
+        render_managed_section(&TemplateContext::from_config(config, layout)).unwrap()
+    }
+
+    /// The bare-layout managed section must still carry the bare-only
+    /// conventions (the trunk lives at `ws/default/`, bones go through
+    /// `maw exec default --`), while the root rendering must not.
+    #[test]
+    fn managed_section_respects_layout() {
+        let config = demo_config(all_tools(), true);
+
+        let bare = managed(&config, Layout::Bare);
         assert!(bare.contains("bare repo"));
-        assert!(bare.contains("maw exec default -- bn triage"));
-        assert!(bare.contains("never in `ws/default/`"));
+        assert!(bare.contains("Run bones through `maw exec default -- bn`"));
+        assert!(bare.contains("Never edit `ws/default/` directly"));
+        assert!(bare.contains("work in `ws/<bone-id>/`"));
         assert!(!bare.contains(".maw/workspaces"));
 
-        let root =
-            render_managed_section(&TemplateContext::from_config(&config, Layout::Root)).unwrap();
-        assert!(root.contains(".maw/workspaces"));
-        assert!(root.contains("| Triage (scores) | `bn triage` |"));
+        let root = managed(&config, Layout::Root);
+        assert!(root.contains(".maw/workspaces/<bone-id>/"));
+        assert!(root.contains("Run `bn` directly at the repo root"));
+        assert!(root.contains("Never edit the trunk at the repo root directly"));
         assert!(!root.contains("maw exec default -- bn"));
         assert!(!root.contains("bare repo"));
+    }
+
+    /// The managed section is tool pointers plus a short Rules list (bn-21zp).
+    /// The cross-tool policy that no `--help` teaches must stay; the command
+    /// tables and the false maw claims must not come back.
+    #[test]
+    fn managed_section_is_pointers_plus_rules() {
+        let config = demo_config(all_tools(), true);
+        for layout in [Layout::Bare, Layout::Root] {
+            let out = managed(&config, layout);
+            for pointer in [
+                "`bn tldr`",
+                "`maw tldr`",
+                "`maw --help`",
+                "`seal --help`",
+                "`rite tldr`",
+                "`edict protocol --help`",
+                "the Rules win",
+                "`<project>-dev`",
+            ] {
+                assert!(
+                    out.contains(pointer),
+                    "{layout:?}: missing pointer {pointer}"
+                );
+            }
+            for rule in [
+                "### Rules",
+                "**Track all work in a bone.**",
+                "`maw ws create <bone-id> --from main`",
+                "never create git branches",
+                "**Never merge or destroy `default`.**",
+                "**Run the edict protocol at each transition:**",
+                "only through `edict protocol merge <ws> --message",
+                "Commit no code after the LGTM",
+                "`maw ws resolve <ws> --list`",
+                "**Run `maw ws recover` before you conclude work is lost**",
+                "**Seal completion is not approval.**",
+                "never mention `@<project>-security`",
+                "**Answer `$RITE_MESSAGE_ID` with `--reply-to`.**",
+                "`rite wait --reply-to <id> -t 300`",
+                "never re-send",
+                "leads with the bone id",
+                "Workers do not push",
+                "**Confirm before destructive actions**",
+                "### Workflow Docs",
+            ] {
+                assert!(out.contains(rule), "{layout:?}: missing rule text {rule}");
+            }
+            for gone in [
+                "Quick Reference",
+                "| Operation | Command |",
+                "### Bus Communication",
+                "### Claims",
+                "Simplified Technical English",
+                "Replies to a human",
+                "auto-sync",
+                "handles branching",
+                "--check` before `--destroy",
+                "├──",
+            ] {
+                assert!(
+                    !out.contains(gone),
+                    "{layout:?}: dropped text came back: {gone}"
+                );
+            }
+        }
+    }
+
+    /// Each tool toggle removes the bullets and pointers for that tool, and
+    /// every toggle combination renders cleanly in both layouts (bn-21zp).
+    #[test]
+    fn managed_section_gates_bullets_on_tool_toggles() {
+        type Disable = fn(&mut ToolsConfig);
+        let on = managed(&demo_config(all_tools(), true), Layout::Root);
+        let cases: [(&str, Disable, &[&str]); 4] = [
+            (
+                "bones",
+                |t| t.bones = false,
+                &["`bn tldr`", "Track all work in a bone", "Run `bn` directly"],
+            ),
+            (
+                "maw",
+                |t| t.maw = false,
+                &[
+                    "`maw tldr`",
+                    "maw ws create",
+                    "maw ws recover",
+                    "maw ws resolve",
+                    "Never merge or destroy",
+                    "Layout:",
+                ],
+            ),
+            (
+                "seal",
+                |t| t.seal = false,
+                &[
+                    "`seal --help`",
+                    "Seal completion is not approval",
+                    "Commit no code after the LGTM",
+                    "maw exec <ws> -- seal",
+                ],
+            ),
+            (
+                "rite",
+                |t| t.rite = false,
+                &[
+                    "`rite tldr`",
+                    "$RITE_MESSAGE_ID",
+                    "rite wait",
+                    "labelled line",
+                ],
+            ),
+        ];
+        for (tool, disable, texts) in cases {
+            let mut tools = all_tools();
+            disable(&mut tools);
+            let off = managed(&demo_config(tools, true), Layout::Root);
+            for text in texts {
+                assert!(on.contains(text), "all-on render lacks {text}");
+                assert!(
+                    !off.contains(text),
+                    "{tool} disabled but the render still has {text}"
+                );
+            }
+        }
+
+        // Review disabled drops the Seal review bullets even with seal on.
+        let no_review = managed(&demo_config(all_tools(), false), Layout::Root);
+        assert!(!no_review.contains("Seal completion is not approval"));
+        assert!(!no_review.contains("Commit no code after the LGTM"));
+        assert!(no_review.contains("`seal --help`"));
+
+        for bits in 0u8..32 {
+            let tools = ToolsConfig {
+                bones: bits & 1 != 0,
+                maw: bits & 2 != 0,
+                seal: bits & 4 != 0,
+                rite: bits & 8 != 0,
+                vessel: bits & 16 != 0,
+            };
+            for (review, extras) in [(false, false), (true, false), (false, true), (true, true)] {
+                let mut config = demo_config(tools.clone(), review);
+                if extras {
+                    config.project.check_command = Some("just check".into());
+                    config.project.install_command = Some("just install".into());
+                    config.project.release_instructions = Some("1. Tag\n2. Push".into());
+                }
+                for layout in [Layout::Bare, Layout::Root] {
+                    let out = managed(&config, layout);
+                    let what = format!("{tools:?} review={review} extras={extras} {layout:?}");
+                    assert!(
+                        !out.contains("{{") && !out.contains("{%"),
+                        "unresolved jinja: {what}"
+                    );
+                    assert!(out.starts_with("## Edict Workflow\n"), "{what}");
+                    assert!(out.contains("\n### Rules\n\n- "), "{what}");
+                    assert!(!out.contains("\n\n\n"), "blank-line run: {what}");
+                }
+            }
+        }
+    }
+
+    /// Every `.agents/edict/*.md` link in the managed section names a doc that
+    /// `edict sync` ships, every `#anchor` is a heading in that doc, and every
+    /// shipped doc is in the Workflow Docs index.
+    #[test]
+    fn managed_section_has_no_dangling_links() {
+        let link_re =
+            regex::Regex::new(r"\(\.agents/edict/([a-z-]+\.md)(?:#([a-z0-9-]+))?\)").unwrap();
+        let slug = |heading: &str| -> String {
+            heading
+                .trim_start_matches('#')
+                .trim()
+                .to_lowercase()
+                .chars()
+                .filter_map(|c| match c {
+                    'a'..='z' | '0'..='9' | '-' => Some(c),
+                    ' ' => Some('-'),
+                    _ => None,
+                })
+                .collect()
+        };
+        for layout in [Layout::Bare, Layout::Root] {
+            let out = managed(&demo_config(all_tools(), true), layout);
+            let mut linked = std::collections::HashSet::new();
+            for cap in link_re.captures_iter(&out) {
+                let name = &cap[1];
+                linked.insert(name.to_string());
+                let doc = WORKFLOW_DOCS
+                    .iter()
+                    .find_map(|(n, c)| (*n == name).then_some(*c))
+                    .unwrap_or_else(|| panic!("managed section links a missing doc: {name}"));
+                if let Some(anchor) = cap.get(2) {
+                    let rendered = render_workflow_doc(doc, layout).unwrap();
+                    let found = markdown_sections(&rendered)
+                        .iter()
+                        .filter_map(|s| s.lines().next())
+                        .filter(|l| l.starts_with('#'))
+                        .any(|l| slug(l) == anchor.as_str());
+                    assert!(
+                        found,
+                        "{name}#{} is not a heading in {name}",
+                        anchor.as_str()
+                    );
+                }
+            }
+            for (name, _) in WORKFLOW_DOCS {
+                assert!(
+                    linked.contains(*name),
+                    "{name} is missing from the Workflow Docs index"
+                );
+            }
+        }
     }
 
     #[test]

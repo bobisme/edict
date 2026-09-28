@@ -77,16 +77,15 @@ How the wait matches:
 
 ## Message shape
 
-Keep a channel message to one or two lines. Lead with the subject of the label. The label and
-the bone id already carry the context, so do not add status blocks, numbered steps, or closing
-actions:
+Keep a channel message to one labelled line that leads with the bone id. The label and the bone
+id already carry the context, so do not add status blocks, numbered steps, or closing actions:
 
-- `[task-claim] Working on <bone-id>: <title>`
-- `[review-request] Dedicated security review requested: <review-id> for <bone-id>`
-- `[task-blocked] Blocked on <thing>: <what unblocks it>`
+- `-L task-claim "<bone-id>: <title>"`
+- `-L review-request "<bone-id>: security review <review-id>"`
+- `-L task-blocked "<bone-id>: blocked on <thing>, needs <what unblocks it>"`
 
-The bracket is the label (`-L task-claim`), not text in the body. Anchor an answer with
-`--reply-to` instead of quoting the message you answer.
+A message with no bone, such as a cross-project question, leads with its subject instead.
+Anchor an answer with `--reply-to` instead of quoting the message you answer.
 
 ## Steps: ask another project
 

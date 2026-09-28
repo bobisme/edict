@@ -262,7 +262,7 @@ Process each message:
 - Task requests (-L task-request): create bones with maw exec default -- bn create
 - Feedback (-L feedback): if it contains a bug report, feature request, or actionable work — create a bone. Evaluate critically: is this a real issue? Is it well-scoped? Set priority accordingly. Then acknowledge on rite.
 - Status/questions: reply on rite
-- Announcements ("Working on...", "Completed...", "online"): ignore, no action
+- Announcements (task-claim, "Completed...", "online"): ignore, no action
 - Duplicate requests: note existing bone, don't create another
 
 ## 4. TRIAGE
@@ -315,7 +315,7 @@ If it fails (exit 1 = command unavailable), fall back to manual start:
   4. rite claims stake --agent {agent} "workspace://{project}/$WS" -m "<id>"
   5. maw exec default -- bn bone comment add <id> "Started in workspace $WS ($WS_PATH)"
   6. rite statuses set --agent {agent} "Working: <id>" --ttl 30m
-  7. Announce: rite send --agent {agent} {project} "Working on <id>: <title>" -L task-claim
+  7. Announce: rite send --agent {agent} {project} "<id>: <title>" -L task-claim
 
 WORK:
 8. Implement the task. All file operations use absolute WS_PATH.

@@ -507,7 +507,7 @@ impl ProtocolCommand {
             steps.push(shell::rite_send_cmd(
                 agent,
                 project,
-                &format!("Working on {bone_id}: {bone_title}"),
+                &format!("{bone_id}: {bone_title}"),
                 "task-claim",
             ));
         }

@@ -80,7 +80,7 @@ Before triaging new work, check if you have unfinished work from a previous sess
 - `maw ws create <bone-id> --from main --description "<bone-title>"` — use the bone ID as the workspace name. Store as `$WS`. Use `--change <change-id>` instead of `--from main` when continuing change-bound work.
 - **All file operations must use the workspace path** `.maw/workspaces/$WS/`. Use absolute paths for Read, Write, and Edit (e.g., `$PROJECT_ROOT/.maw/workspaces/$WS/src/file.rs`). For commands: `maw exec $WS -- <command>`.
 - `rite claims stake --agent $AGENT "workspace://$EDICT_PROJECT/$WS" -m "<bone-id>"`
-- `rite send --agent $AGENT $EDICT_PROJECT "Working on <bone-id>: <bone-title>" -L task-claim`
+- `rite send --agent $AGENT $EDICT_PROJECT "<bone-id>: <bone-title>" -L task-claim`
 
 ### 3. Work — implement the task
 
