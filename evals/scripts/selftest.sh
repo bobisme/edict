@@ -14,6 +14,19 @@ SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 source "$SCRIPT_DIR/lib/common.sh"
 
 scenario="${1:?usage: selftest.sh <worker|review-loop|lead-merge>}"
+
+# EDICT_BIN: as in run.sh, put a specific edict binary (e.g. a
+# `cargo build --release` output in some worktree) first on PATH via a
+# symlink, so the sandboxed setup/oracle resolve to it instead of whatever
+# `edict` is on the caller's PATH.
+if [[ -n "${EDICT_BIN:-}" ]]; then
+  [[ -x "$EDICT_BIN" ]] || die "EDICT_BIN not executable: $EDICT_BIN"
+  EDICT_BIN_OVERRIDE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/edict-bin-override-XXXXXX")
+  ln -sf "$(readlink -f "$EDICT_BIN")" "$EDICT_BIN_OVERRIDE_DIR/edict"
+  PATH="$EDICT_BIN_OVERRIDE_DIR:$PATH"
+  log "EDICT_BIN override: $(readlink -f "$EDICT_BIN") ($EDICT_BIN_OVERRIDE_DIR/edict first on PATH)"
+fi
+
 before=$(mktemp "$EVAL_BASE/.live-before-XXXXXX" 2>/dev/null || { mkdir -p "$EVAL_BASE" && mktemp "$EVAL_BASE/.live-before-XXXXXX"; })
 live_snapshot "$before"
 setup_out=$("$SCRIPT_DIR/$scenario-setup.sh" 2>&1) || {
