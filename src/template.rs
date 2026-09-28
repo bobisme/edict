@@ -337,6 +337,63 @@ fn dedent_and_trim(s: &str) -> String {
         .to_string()
 }
 
+/// Heading names dropped by the managed-section rewrite (bn-21zp/bn-3ox9).
+///
+/// Their long-form detail moved into workflow docs — see
+/// `notes/managed-trim-audit.md` §(e). A doc or prompt that still names one
+/// of these ("see ... Bones Quick Reference", a stray "### Bus
+/// Communication" heading) points at a section that no longer exists.
+///
+/// A few names were deliberately *reused* verbatim as the heading of the
+/// content's new home: `Identity` in worker-loop.md, `Threads` in
+/// cross-channel.md, `What a review covers` in review-request.md. Those docs
+/// are exempted for their own heading, so the check flags a stale pointer
+/// elsewhere without flagging the intended outcome.
+#[cfg(test)]
+pub const REMOVED_MANAGED_HEADINGS: &[(&str, &[&str])] = &[
+    ("How to Make Changes", &[]),
+    ("Conflicts Are Data, Not Errors", &[]),
+    ("Directory Structure", &[]),
+    ("Bones Quick Reference", &[]),
+    ("Workspace Quick Reference", &[]),
+    ("Protocol Quick Reference", &[]),
+    ("Bones Conventions", &[]),
+    ("Identity", &["worker-loop.md"]),
+    ("Claims", &[]),
+    ("Reviews", &[]),
+    ("What a review covers", &["review-request.md"]),
+    ("Do not commit code after the LGTM", &[]),
+    ("Bus Communication", &[]),
+    ("Threads", &["cross-channel.md"]),
+    ("Ask and Wait", &[]),
+    ("Cross-Project Communication", &[]),
+    ("Language", &[]),
+    ("Replies to a human", &[]),
+    ("Exceptions", &[]),
+    ("Session Search", &[]),
+];
+
+/// True if `text` references `name` as a stale cross-reference.
+///
+/// A reference looks like a heading line (`# Name`) or a quoted/linked
+/// pointer (`"Name"`, `` `Name` ``, `[Name]`) rather than an ordinary word
+/// inside a sentence. Matching only these shapes keeps ordinary prose (e.g.
+/// "message threads") from tripping the check.
+#[cfg(test)]
+#[must_use]
+pub fn references_removed_heading(text: &str, name: &str) -> bool {
+    if text.contains(&format!("\"{name}\""))
+        || text.contains(&format!("`{name}`"))
+        || text.contains(&format!("[{name}]"))
+    {
+        return true;
+    }
+    text.lines().any(|line| {
+        let trimmed = line.trim_start();
+        trimmed.starts_with('#') && trimmed.trim_start_matches('#').trim() == name
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -407,6 +464,32 @@ mod tests {
                         "{name} ({layout:?}) has a relative vessel --cwd: {value:?}; \
                          it must be absolute (it resolves against the vessel server's cwd, \
                          not the caller's)"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Rendered workflow docs must not still point at a heading the
+    /// managed-section rewrite removed (bn-19jd): its detail moved into a
+    /// workflow doc or a tool's own `--help`, so a leftover "see ... Bones
+    /// Quick Reference" or a stray "### Bus Communication" heading now
+    /// points at nothing.
+    #[test]
+    fn workflow_docs_have_no_removed_heading_references() {
+        for (heading, exempt_docs) in REMOVED_MANAGED_HEADINGS {
+            for (doc_name, content) in WORKFLOW_DOCS {
+                if exempt_docs.contains(doc_name) {
+                    continue;
+                }
+                for layout in [Layout::Bare, Layout::Root] {
+                    let rendered = render_workflow_doc(content, layout).unwrap_or_else(|e| {
+                        panic!("{doc_name} failed to render ({layout:?}): {e}")
+                    });
+                    assert!(
+                        !references_removed_heading(&rendered, heading),
+                        "{doc_name} ({layout:?}) references the removed managed-section \
+                         heading {heading:?}"
                     );
                 }
             }
@@ -742,6 +825,37 @@ mod tests {
                     "{layout:?}: dropped text came back: {gone}"
                 );
             }
+        }
+    }
+
+    /// Word budget for the managed AGENTS.md section at its largest: every
+    /// tool on, review on, `check_command`/`install_command`/
+    /// `release_instructions` all set, in either layout. This section is
+    /// loaded into every agent's context on every turn, in ~19 projects
+    /// (bn-30a0) — raise the budget deliberately, after checking the growth
+    /// against an eval, not by letting it drift back up commit by commit.
+    /// Current size at max is ~696 words (~1,385 tokens); 900 words leaves
+    /// headroom for a rule or two without inviting the old bloat back in.
+    const MANAGED_SECTION_MAX_WORDS: usize = 900;
+
+    #[test]
+    fn managed_section_stays_within_its_word_budget() {
+        let mut config = demo_config(all_tools(), true);
+        config.project.check_command = Some("just check".to_string());
+        config.project.install_command = Some("just install".to_string());
+        config.project.release_instructions =
+            Some("1. Tag and push: `maw release vX.Y.Z`".to_string());
+
+        for layout in [Layout::Bare, Layout::Root] {
+            let out = managed(&config, layout);
+            let words = out.split_whitespace().count();
+            assert!(
+                words <= MANAGED_SECTION_MAX_WORDS,
+                "{layout:?}: managed section is {words} words, over the \
+                 {MANAGED_SECTION_MAX_WORDS}-word budget (bn-30a0). If this growth is \
+                 deliberate — checked against an eval, not drift — raise \
+                 MANAGED_SECTION_MAX_WORDS explicitly."
+            );
         }
     }
 

@@ -976,6 +976,22 @@ mod tests {
         );
     }
 
+    /// The built dev-loop prompt must not still point at a heading the
+    /// managed-section rewrite removed (bn-19jd): its detail moved into a
+    /// workflow doc or a tool's own `--help`, so a leftover reference to it
+    /// (e.g. "Bones Quick Reference") now points at nothing.
+    #[test]
+    fn prompt_has_no_removed_heading_references() {
+        let ctx = test_ctx();
+        let prompt = build(&ctx, None, &[], None);
+        for (heading, _) in crate::template::REMOVED_MANAGED_HEADINGS {
+            assert!(
+                !crate::template::references_removed_heading(&prompt, heading),
+                "dev-loop prompt references the removed managed-section heading {heading:?}"
+            );
+        }
+    }
+
     /// The review flow must explicitly launch and verify the exact reviewer,
     /// rather than post a mention and hope an ambient hook finds the work.
     #[test]

@@ -1027,6 +1027,42 @@ mod tests {
         assert!(prompt.contains("TRIAGE"));
     }
 
+    /// The built worker-loop prompt must not still point at a heading the
+    /// managed-section rewrite removed (bn-19jd): its detail moved into a
+    /// workflow doc or a tool's own `--help`, so a leftover reference to it
+    /// (e.g. "Bones Quick Reference") now points at nothing.
+    #[test]
+    fn build_prompt_has_no_removed_heading_references() {
+        unsafe {
+            std::env::set_var("EDICT_BONE", "");
+            std::env::set_var("EDICT_WORKSPACE", "");
+        }
+
+        let worker = WorkerLoop {
+            project_root: PathBuf::from("/test"),
+            agent: "test-worker".to_string(),
+            project: "testproject".to_string(),
+            model_pool: vec!["haiku".to_string()],
+            timeout: 900,
+            review_enabled: true,
+            critical_approvers: vec![],
+            dispatched_bone: None,
+            dispatched_workspace: None,
+            dispatched_mission: None,
+            dispatched_siblings: None,
+            dispatched_mission_outcome: None,
+            dispatched_file_hints: None,
+        };
+
+        let prompt = worker.build_prompt();
+        for (heading, _) in crate::template::REMOVED_MANAGED_HEADINGS {
+            assert!(
+                !crate::template::references_removed_heading(&prompt, heading),
+                "worker-loop prompt references the removed managed-section heading {heading:?}"
+            );
+        }
+    }
+
     /// The worker must block on the review verdict and escalate on timeout,
     /// instead of re-requesting the review on the next iteration.
     #[test]
