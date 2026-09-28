@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.32.0] - 2026-09-28
+
+### Changed
+
+- The edict-managed AGENTS.md section shrank from about 5,000 to about 1,400 tokens. It now points at each tool's own reference (`bn tldr`, `maw tldr`, `seal --help`, `rite tldr`, `edict protocol --help`) and keeps a short Rules list for the cross-tool policy that no `--help` teaches. The quick-reference tables, the directory tree, and the long review, merge and rite sections are gone; their detail lives in the workflow docs (`merge-check.md`, `review-request.md`, `security-review.md`, `cross-channel.md`), and each rule links to it. Rules are gated on the project's `tools` and `review` settings. A test holds the section under 900 words. An A/B eval (`evals/results/2026-09-27-managed-ab-summary.md`) found no regression.
+- The ASD-STE100 writing rules and the "Replies to a human" style rules are dropped from the managed section. "Confirm before destructive actions" stays as a rule.
+- Task-claim announcements lead with the bone id (`"<bone-id>: <title>" -L task-claim`).
+- `edict init --no-interactive` runs `bn init` when bones is enabled. `--no-init-bones` opts out.
+
+### Fixed
+
+- `edict protocol finish` and `edict protocol merge` treat a code commit made after the LGTM as stale even when Seal reports `approval_stale: false`. Seal 0.30 misses such commits on the detached HEAD of a maw workspace, so unreviewed code could merge. Edict now compares the approved commit with the workspace HEAD; only the review-log commit may differ.
+- `edict protocol review` no longer emits the retired `@<project>-security` mention. It emits the anchored request and the security-review.md launch contract.
+- Protocol output uses the project's layout for `bn` (no `maw exec default --` in the root layout) and the real agent name (no `--agent agent`).
+- Protocol merge guidance no longer claims `maw ws merge` auto-syncs a stale source. It tells the agent to run `maw ws sync` first.
+- Workflow docs and loop prompts agree: run `maw ws recover` before recreating a destroyed workspace; reviewed work merges only through the protocol steps; workers do not push; a subagent review needs the Seal verdict; `maw ws merge` also merges uncommitted changes.
+- The "Testing template changes safely" recipe and the hermetic tests isolate vessel (`VESSEL_SOCKET` and a `systemd-run` shim). vessel ignores `XDG_RUNTIME_DIR`, so a sandboxed hook could reach the real vessel server.
+
+### Added
+
+- A hermetic eval harness (`evals/`, `just eval`) with worker, review-loop and lead-merge scenarios and an AGENTS.md variant switch for A/B runs.
+
 ## [0.31.0] - 2026-09-27
 
 ### Added
