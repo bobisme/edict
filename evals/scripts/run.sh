@@ -18,6 +18,14 @@
 #                         (default: run)
 #   EVAL_WRITE_RESULT     1 (default): write evals/results/<date>-<label>-*.md
 #   EVAL_BASE             where run dirs go (default: /tmp/edict-evals)
+#   EDICT_BIN             path to a specific edict binary to test (e.g. a
+#                         `cargo build --release` output in some worktree).
+#                         Put first on PATH via a symlink so every sandboxed
+#                         tool call under this run resolves to it, instead of
+#                         whatever `edict` is on the caller's PATH. Added for
+#                         the bn-25zp/bn-1kp6 managed-section A/B, which
+#                         needs one fixed binary across baseline and trimmed
+#                         runs; there was no prior knob for this.
 #
 # Exit: 0 run completed (whatever the score), 2 safety check failed,
 #       1 harness error.
@@ -35,6 +43,14 @@ EVAL_BUDGET_USD="${EVAL_BUDGET_USD:-6}"
 EVAL_LABEL="${EVAL_LABEL:-run}"
 if [[ "$EVAL_ENTRY" == worker-loop && "$scenario" == lead-merge ]]; then
   die "EVAL_ENTRY=worker-loop does not apply to lead-merge"
+fi
+
+if [[ -n "${EDICT_BIN:-}" ]]; then
+  [[ -x "$EDICT_BIN" ]] || die "EDICT_BIN not executable: $EDICT_BIN"
+  EDICT_BIN_OVERRIDE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/edict-bin-override-XXXXXX")
+  ln -sf "$(readlink -f "$EDICT_BIN")" "$EDICT_BIN_OVERRIDE_DIR/edict"
+  PATH="$EDICT_BIN_OVERRIDE_DIR:$PATH"
+  log "EDICT_BIN override: $(readlink -f "$EDICT_BIN") ($EDICT_BIN_OVERRIDE_DIR/edict first on PATH)"
 fi
 
 eval_require_tools
