@@ -94,10 +94,16 @@ pub struct InitArgs {
     /// Non-interactive mode
     #[arg(long)]
     pub no_interactive: bool,
-    /// Skip bones initialization
+    /// Skip bones initialization. Bones initializes by default (`bn init`)
+    /// whenever the `bones` tool is enabled — interactively (where the
+    /// prompt defaults to yes) and non-interactively alike; pass this to
+    /// opt out either way. Contrast `--no-seed-work`, which is off by
+    /// default in both modes.
     #[arg(long, alias = "no-init-beads")]
     pub no_init_bones: bool,
-    /// Skip seeding initial work bones
+    /// Skip seeding initial work bones. Off by default even with `bones`
+    /// enabled, interactively (the prompt defaults to no) or not — there is
+    /// no non-interactive opt-in flag, only this opt-out.
     #[arg(long)]
     pub no_seed_work: bool,
     /// Force overwrite existing config
@@ -486,13 +492,19 @@ impl InitArgs {
         // Languages
         let languages = self.gather_languages(interactive)?;
 
-        // Init bones
+        // Init bones. Non-interactive default matches the interactive
+        // prompt's default (yes): a project that enables the `bones` tool
+        // gets `bn init` unless `--no-init-bones` opts out. `seed_work`
+        // below intentionally differs — its non-interactive default matches
+        // its own (no) interactive default instead, since seeding
+        // placeholder work items is something a project should opt into,
+        // not get for free (see --help on both flags).
         let init_bones = if self.no_init_bones {
             false
         } else if interactive {
             prompt_confirm("Initialize bones?", true)?
         } else {
-            false
+            true
         };
 
         // Seed work

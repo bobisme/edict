@@ -21,6 +21,8 @@ use std::process::Command;
 
 use assert_cmd::Command as AssertCommand;
 
+mod common;
+
 /// Report whether the `rite` binary is on `PATH`.
 fn rite_available() -> bool {
     Command::new("rite")
@@ -43,6 +45,7 @@ impl SentinelEnv {
             .env("XDG_CONFIG_HOME", self.home.join(".config"))
             .env("XDG_CACHE_HOME", self.home.join(".cache"))
             .env("XDG_STATE_HOME", self.home.join(".local/state"))
+            .env("VESSEL_SOCKET", common::vessel_socket_path(&self.home))
     }
 
     fn apply_std<'a>(&self, cmd: &'a mut Command) -> &'a mut Command {
@@ -52,6 +55,7 @@ impl SentinelEnv {
             .env("XDG_CONFIG_HOME", self.home.join(".config"))
             .env("XDG_CACHE_HOME", self.home.join(".cache"))
             .env("XDG_STATE_HOME", self.home.join(".local/state"))
+            .env("VESSEL_SOCKET", common::vessel_socket_path(&self.home))
     }
 }
 

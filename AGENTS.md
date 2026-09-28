@@ -437,10 +437,19 @@ hooks, migrations, the commit — and change nothing (see "Init vs Sync" above).
 covers most template changes.
 
 **2. Full run, sandboxed.** When a dry-run is not enough, run `init` and `sync` for real, with
-`RITE_DATA_DIR`, `HOME`, and the `XDG_*` vars all pointed inside a fresh tempdir, and the
-agent-identity env vars unset so nothing spawns or routes as a live agent. Run it with
-`bash` (from any shell): the overrides live only in that child process, so your own shell
-never ends up with a sandboxed `HOME`.
+`RITE_DATA_DIR`, `HOME`, the `XDG_*` vars, and `VESSEL_SOCKET` all pointed inside a fresh
+tempdir, and the agent-identity env vars unset so nothing spawns or routes as a live agent.
+Run it with `bash` (from any shell): the overrides live only in that child process, so your
+own shell never ends up with a sandboxed `HOME`.
+
+`VESSEL_SOCKET` is not optional: vessel ignores `XDG_RUNTIME_DIR` for its socket (it hardcodes
+`/run/user/$UID/vessel.sock` unless `--socket`/`VESSEL_SOCKET` says otherwise) and, when it
+auto-starts a server, that server re-execs itself into the fixed systemd unit
+`vessel-server.scope` — the same unit name the machine's real vessel server already owns. Without
+`VESSEL_SOCKET`, a sandbox rite hook that fires `vessel spawn` reaches the REAL vessel server
+(see bn-61kf); the `systemd-run` shim below forces the re-exec to fail deterministically so
+vessel falls back to a bare, private server bound to the sandboxed socket instead of racing the
+real unit.
 
 ```bash
 bash <<'SANDBOX'
@@ -452,9 +461,23 @@ export XDG_DATA_HOME="$HOME/.local/share"
 export XDG_CONFIG_HOME="$HOME/.config"
 export XDG_CACHE_HOME="$HOME/.cache"
 export XDG_STATE_HOME="$HOME/.local/state"
+export XDG_RUNTIME_DIR="$sandbox/run"
+export VESSEL_SOCKET="$sandbox/run/vessel.sock"
 unset AGENT RITE_AGENT BOTBUS_AGENT
 
-mkdir -p "$sandbox/project" && cd "$sandbox/project"
+mkdir -p "$sandbox/project" "$sandbox/run" "$sandbox/bin"
+# vessel's auto-started server re-execs into the fixed unit `vessel-server.scope`
+# via systemd-run; the real server already owns that unit, so make systemd-run
+# fail here and force the deterministic bare-server fallback (see above).
+cat >"$sandbox/bin/systemd-run" <<'EOF'
+#!/bin/sh
+echo "sandbox: systemd-run disabled" >&2
+exit 1
+EOF
+chmod 755 "$sandbox/bin/systemd-run"
+export PATH="$sandbox/bin:$PATH"
+
+cd "$sandbox/project"
 git init -q && git config user.email test@example.com && git config user.name Test
 git commit -q --allow-empty -m init
 
@@ -469,14 +492,16 @@ Do not pass `--language` — it triggers a network `.gitignore` fetch, irrelevan
 `tests/hermetic_rite_hooks.rs` runs this same recipe automatically; read it for the full
 end-to-end proof, including the assertion that nothing lands outside `$RITE_DATA_DIR`.
 
-**3. Confirm the live hook set is untouched.** From a normal shell, with no `RITE_DATA_DIR`
-override, run this before and after step 2:
+**3. Confirm the live hook set and the live vessel server are untouched.** From a normal shell,
+with no `RITE_DATA_DIR`/`VESSEL_SOCKET` override, run this before and after step 2:
 
 ```bash
 rite hooks list | wc -l
+vessel list --format json
 ```
 
-The count must match. The sandboxed run registers its hook inside `$RITE_DATA_DIR` only, so
+Both must match before/after: the hook count, and the set of real agents (the sandbox recipe
+must never add one). The sandboxed run registers its hook inside `$RITE_DATA_DIR` only, so
 the real data dir never sees it.
 
 **4. If you forget the sandbox.** The live-hook guard refuses to register a hook when the

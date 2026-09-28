@@ -14,17 +14,18 @@ use std::process::Command;
 use assert_cmd::Command as AssertCommand;
 use sha2::{Digest, Sha256};
 
+mod common;
+// rite records a heartbeat for the ambient agent identity on *every*
+// command, read-only ones included. The sandbox runs with no agent identity,
+// so the only way the rite data dir can change is a mutating `rite` call.
+use common::AGENT_IDENTITY_VARS as AGENT_VARS;
+
 fn rite_available() -> bool {
     Command::new("rite")
         .arg("--version")
         .output()
         .is_ok_and(|o| o.status.success())
 }
-
-/// rite records a heartbeat for the ambient agent identity on *every*
-/// command, read-only ones included. The sandbox runs with no agent identity,
-/// so the only way the rite data dir can change is a mutating `rite` call.
-const AGENT_VARS: [&str; 3] = ["AGENT", "RITE_AGENT", "BOTBUS_AGENT"];
 
 struct Sandbox {
     root: PathBuf,
@@ -42,6 +43,7 @@ impl Sandbox {
             ("XDG_CONFIG_HOME", self.home.join(".config")),
             ("XDG_CACHE_HOME", self.home.join(".cache")),
             ("XDG_STATE_HOME", self.home.join(".local/state")),
+            ("VESSEL_SOCKET", common::vessel_socket_path(&self.home)),
         ]
     }
 
