@@ -100,138 +100,63 @@ rite inbox --all               # See unread messages across all channels
 
 ## Companion Tools Deep Dive
 
+Each tool documents its own commands: rite `rite tldr`, maw `maw tldr` (`maw --help`), seal
+`seal --help`, vessel `vessel --help`, bones `bn tldr`. This section covers only what those
+docs (and the managed Rules above) don't: edict-specific behavior, and facts a tool's own
+docs get wrong.
+
 ### rite (`rite`) — Messaging and Coordination
 
-SQLite-backed channel messaging system. Default output is `text` format (concise, token-efficient). Use `--format json` when you need structured data for parsing.
+SQLite-backed channel messaging system. Default output is `text` format (concise,
+token-efficient); pass `--format json` for structured data.
 
-**Core commands:**
-- `rite send [--agent $AGENT] <channel> "message" [-L label]` — Post message to channel. Labels categorize messages (task-request, review-request, task-done, feedback, etc.)
-- `rite inbox [--channels <ch>] [--mentions] [--mark-read]` — Check unread messages. `--mentions` checks all channels for @agent mentions. `--count-only` for just the count.
-- `rite history <channel> [-n count] [--from agent] [--since time]` — Browse message history. Channel can also be passed as `-c/--channel <ch>`. `rite history projects` shows the project registry.
-- `rite search <query> [-c channel]` — Full-text search (FTS5 syntax)
-- `rite wait [-c channel] [--mentions] [--from agent] [-L label] [-t timeout]` — Block until matching message arrives. Used by the responder for follow-up conversations.
-- `rite watch [-c channel] [--all]` — Stream messages in real-time
+Edict builds the per-turn anchor instruction in `src/reply.rs` and appends it to every loop
+prompt (responder, dev, worker, reviewer) on every iteration — an agent told its anchor once
+at spawn drifts within a few turns. The anchoring and threading rules are in
+[cross-channel.md § Threads](.agents/edict/cross-channel.md#threads); ask-and-wait, including
+`rite wait` exit codes, is in [cross-channel.md § Ask and wait](.agents/edict/cross-channel.md#ask-and-wait).
 
-**Threading (rite >= 0.33):**
-- `rite send ... --reply-to <ULID>` — Anchor a message under a parent. No flag means top-level. An unknown parent warns and links up when it syncs in.
-- `rite send ... --format json` — Prints the new message id (`.id`), which is the anchor others wait on.
-- `rite history --thread <ULID>` — Read the whole thread from any message in it; finds the channel itself. `thread.complete:false` means the result is a fragment (`missing_parent`, `self_reference`, `cycle`, `depth_limit`).
-- `rite wait --reply-to <ULID> [-t secs] [--allow-missing-parent]` — Block until someone answers that message. Exit 0 = answered, 1 = timeout (escalate, never re-ask), 2 = not a ULID or unknown to this store. `--reply-to` NARROWS: `--from`, `-c`, `-L` only subtract candidates. No race with send, and your own reply never satisfies your wait.
-
-Edict builds the per-turn anchor instruction in `src/reply.rs` and appends it to every loop prompt (responder, dev, worker, reviewer) on every iteration — an agent told its anchor once at spawn drifts within a few turns.
-
-**Claims (advisory locks):**
-- `rite claims stake --agent $AGENT "<uri>" [-m memo] [--ttl duration]` — Claim a resource
-- `rite claims release --agent $AGENT [--all | "<uri>"]` — Release claims
-- `rite claims list [--mine] [--agent $AGENT]` — List active claims
-- Claim URI patterns: `bone://project/id`, `workspace://project/ws`, `agent://name`, `respond://name`
-
-**Hooks (event triggers):**
-- `rite hooks add --channel <ch> --cwd <dir> [--claim uri] [--mention name] [--ttl secs] <command>` — Register hook. `--cwd` is mandatory.
-- `rite hooks list` — List registered hooks with their conditions
-- `rite hooks remove <id>` — Remove a hook
-- Hook matching: `--claim` fires when claim is available; `--mention` fires on @name in message
-
-**Other:**
-- `rite statuses set/clear/list` — Agent presence and status messages
-- `rite generate-name` — Generate random agent names (used by dev-loop for worker dispatch)
-- `rite whoami [--agent $AGENT]` — Show/verify agent identity
+Claim URI patterns edict stakes: `bone://project/id`, `workspace://project/ws`,
+`agent://name`, `respond://name`.
 
 ### maw — Multi-Agent Workspaces
 
-Creates isolated Git worktrees so multiple agents can edit files concurrently without conflicts.
+Isolated Git worktrees — detached HEAD, not branches — so multiple agents can edit
+concurrently. `maw ws create` does not "handle branching": it never creates a Git branch,
+and maw workspaces replace branches entirely, so never create one by hand.
 
-**Core commands:**
-- `maw ws create <name> --from main --description "..."` — Create a trunk-based workspace. Use the bone ID as the name and bone title as the description. Use `--change <change-id>` instead of `--from main` for change-bound work. Workspace files live at `ws/<name>/`.
-- `maw ws list [--format json]` — List all workspaces with their status
-- `maw ws merge <name> --into default --destroy` — Merge a workspace into `default` and delete it. `--destroy` is required. Swap `default` for a change id when merging tracked change work. **Never use on `default` as the source workspace.**
-- `maw ws destroy <name>` — Delete workspace without merging. **Never use on `default`.**
-- `maw exec <name> -- <command>` — Run any command inside a workspace (e.g., `maw exec myws -- cargo test`)
-- `maw ws status` — Comprehensive view of all workspaces, conflicts, and unmerged work
-- `maw init` — Initialize maw in a project
-- `maw push` — Push changes to remote
-- `maw doctor` — Validate maw configuration
+**Never merge or destroy the `default` workspace.** It is the main working copy; other
+workspaces merge INTO it.
 
-**Critical rules:**
-- **Never merge or destroy the default workspace.** It is the main working copy — other workspaces merge INTO it.
-- Use `maw exec <ws> -- <command>` to run commands in workspace context (bn, seal, cargo, etc.)
-- Use `maw exec default -- bn ...` for bones commands (always in default workspace)
-- Use `maw exec <ws> -- seal ...` for review commands (always in the review's workspace)
-- Workspace files are at `ws/<name>/` — use absolute paths for file operations
-- Never `cd` into a workspace directory and stay there — it breaks cleanup when the workspace is destroyed
-- Do not create git branches manually — `maw ws create` handles branching for you.
+Run commands in workspace context with `maw exec <name> -- <command>` (bn, seal, cargo,
+etc.). Merge preconditions, conflict recovery, and merge gates — including that a stale
+source is refused, not auto-synced, despite what `maw ws merge --help` claims — are in
+[merge-check.md](.agents/edict/merge-check.md).
 
 ### seal (`seal`) — Code Review
 
-Distributed code review system. Reviews are tied to workspace diffs, with file-line-based comment threads and LGTM/BLOCK voting.
+Distributed code review system. Reviews are tied to workspace diffs, with file-line-based
+comment threads and LGTM/BLOCK voting. Always run through `maw exec <ws> -- seal ...`.
 
-**Review lifecycle:**
-```bash
-maw exec $WS -- seal reviews create --agent $AGENT --title "..." --reviewers <name>  # Create review + assign reviewer
-maw exec $WS -- seal reviews retarget <id> --agent $AGENT         # Move target to HEAD, clear votes (after fixes, BEFORE re-request)
-maw exec $WS -- seal reviews request <id> --reviewers <name> --agent $AGENT  # Re-assign reviewer (after fixes)
-maw exec $WS -- seal review <id> [--format json] [--since time]  # Show full review with threads
-maw exec $WS -- seal comment --file <path> --line <n> <review-id> "msg"  # Add line comment
-maw exec $WS -- seal reply <thread-id> "message"                 # Reply to existing thread
-maw exec $WS -- seal lgtm <review-id> [-m "message"]             # Approve
-maw exec $WS -- seal block <review-id> --reason "..."            # Block (request changes)
-maw exec $WS -- git status --porcelain --untracked-files=all      # Must list nothing outside .seal/reviews/<review-id>/
-maw exec $WS -- seal reviews mark-merged <review-id>              # Mark as merged BEFORE maw ws merge, then
-maw exec $WS -- git add .seal/reviews/<review-id>                 #   commit only the review log in $WS so the
-maw exec $WS -- git commit -m "chore: seal review <review-id>" -- .seal/reviews/<review-id>  # merge carries it
-maw exec $WS -- seal inbox --agent $AGENT                        # Show reviews/threads needing attention
-```
-
-**Key details (seal >= 0.28):**
-- A review covers a **commit range**, not one commit. `seal reviews create` discovers the
-  branch/workspace fork point and prints the resolved range plus commit count. `--base <rev>`
-  sets it explicitly; `--base <target>~1` restores tip-only. The base is persisted on the
-  `ReviewCreated` event, so later commits extend the range instead of shifting it.
-- `seal reviews request` re-assigns reviewers on an **existing** review but does not move its
-  target commit. After new commits, run `seal reviews retarget <id>` (seal >= 0.29) first — it
-  moves the review to the workspace's current HEAD and clears votes, requiring fresh approval.
-  Skipping it leaves the dedicated reviewer verifying a stale, pre-fix diff.
-- An approval records the commit it covered. `seal reviews mark-merged` **exits 1** when
-  commits landed after the approval. The fix is `seal reviews retarget` followed by a fresh
-  LGTM; `--allow-stale-approval` is the deliberate override.
-- `seal diff <id> --format json` reports `base_is_persisted`, `approval_stale`,
-  `approved_commit` and `uncovered_commits`. `edict protocol merge` reads `approval_stale`
-  and agrees with seal, falling back to comparing the target commit against the workspace
-  HEAD on older seal (`freshness_from_summary`, `src/commands/protocol/merge.rs`).
-- Always run seal commands via `maw exec <ws> --` in the workspace context
-- Reviewers iterate workspaces via `maw ws list` + `maw exec $WS -- seal inbox` per workspace
-- Agent identity via `--agent` flag or `CRIT_AGENT`/`RITE_AGENT` env vars
-- `--user` flag switches to human identity ($USER) for manual reviews
+Review-range, retarget, and stale-approval semantics are documented in
+[review-request.md](.agents/edict/review-request.md#what-a-review-covers) and
+[review-response.md](.agents/edict/review-response.md#commit-no-code-after-the-lgtm). One
+implementation detail not covered there: `seal diff <id> --format json` reports
+`base_is_persisted`, `approval_stale`, `approved_commit` and `uncovered_commits`. `edict
+protocol merge` reads `approval_stale` and agrees with seal, falling back to comparing the
+target commit against the workspace HEAD on older seal (`freshness_from_summary`,
+`src/commands/protocol/merge.rs`).
 
 ### vessel — Agent Runtime
 
 PTY-based agent spawner and manager. Runs Claude Code sessions in managed PTY processes.
-
-**Core commands:**
-- `vessel spawn [--pass-env] [--model model] [--timeout secs] <name> <command...>` — Spawn agent. `--pass-env` forwards RITE_* env vars to the spawned process.
-- `vessel list [--format json]` — List running agents with PIDs and uptime
-- `vessel tail <name> [--last n] [--follow]` — Stream agent output. **Primary debugging tool.**
-- `vessel kill <name>` — Terminate agent
-- `vessel send <name> "message"` — Send text to agent's PTY stdin
+`vessel tail <name>` is the primary way to see what a spawned agent is doing, whether it's
+stuck, and what it's calling.
 
 ### bones (`bn`) — Issue Tracking
 
-Unified issue tracker. Bones are stored in `.bones/`. Event-sourced, no sync needed.
-
-**Core commands:**
-- `bn create --title "..." [--description "..."] [--kind task|bug|goal]`
-- `bn next` — Next bone to work on (replaces `br ready` and `bv --robot-next`)
-- `bn show <id>` — Full bone details with comments and dependencies
-- `bn do <id>` — Start work on a bone (sets state to doing)
-- `bn done <id> [--reason "..."]` — Close a bone (sets state to done)
-- `bn bone comment add <id> "message"` — Add comment
-- `bn triage dep add <blocker> --blocks <blocked>` — Add dependency
-- `bn triage graph` — Show dependency graph
-- `bn bone tag <id> <tag>` — Add tag
-- `bn triage` — Triage output with scores and recommendations
-- `bn search <query>` — Full-text search
-
-Identity resolved from `$AGENT`/`$RITE_AGENT` env. No `--actor`/`--author` flags needed.
+Unified issue tracker. Bones are stored in `.bones/`. Event-sourced, no sync needed. Identity
+resolves from `$AGENT`/`$RITE_AGENT` env — no `--actor`/`--author` flags.
 
 ## Agent Subcommands
 
@@ -266,7 +191,7 @@ Sequential: one bone per iteration. Triage → start → work → review → fin
 4. Work: implement in workspace using absolute paths
 5. Stuck check: 2 failed attempts = post and move on
 6. Review: create the Seal review, then launch its exact Daybreak reviewer
-7. Finish: close bone, merge workspace (`maw ws merge --into default --destroy`), release claims
+7. Finish: `edict protocol finish <bone-id>` and run its steps (record the review, merge with the clean check, close, release claims). A dispatched worker adds `--no-merge` and leaves the merge to the lead. See [worker-loop.md](.agents/edict/worker-loop.md).
 8. Release check: unreleased feat/fix → bump version
 
 ### Dedicated Daybreak Security Reviewer
