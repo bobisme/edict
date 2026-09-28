@@ -32,6 +32,16 @@ pub enum Layout {
     Root,
 }
 
+impl Default for Layout {
+    /// Root is the modern default (maw >= v1.0.0-pre.2) and the harmless choice
+    /// for callers that never resolved a project root — e.g. a `ProtocolGuidance`
+    /// built directly in a test, which never renders through the CLI's layout
+    /// detection anyway.
+    fn default() -> Self {
+        Self::Root
+    }
+}
+
 impl Layout {
     /// Detect the layout from a project root.
     ///

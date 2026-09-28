@@ -39,13 +39,14 @@ pub fn execute(
     project: &str,
     config: &Config,
     format: OutputFormat,
+    layout: crate::layout::Layout,
 ) -> anyhow::Result<()> {
     let ctx = ProtocolContext::collect(project, agent)?;
 
     let bone_claims = ctx.held_bone_claims();
 
     if bone_claims.is_empty() {
-        return render_fresh(agent, format);
+        return render_fresh(agent, format, layout);
     }
 
     // Assess each held bone
@@ -55,7 +56,7 @@ pub fn execute(
         assessments.push(assessment);
     }
 
-    render_resume(&assessments, agent, project, format)
+    render_resume(&assessments, agent, project, format, layout)
 }
 
 /// Assess a single held bone's state.
@@ -100,8 +101,13 @@ fn assess_bone(ctx: &ProtocolContext, bone_id: &str, config: &Config) -> BoneRes
 }
 
 /// Render guidance when no held claims exist (fresh start).
-fn render_fresh(_agent: &str, format: OutputFormat) -> anyhow::Result<()> {
+fn render_fresh(
+    _agent: &str,
+    format: OutputFormat,
+    layout: crate::layout::Layout,
+) -> anyhow::Result<()> {
     let mut guidance = ProtocolGuidance::new("resume");
+    guidance.set_layout(layout);
     guidance.status = ProtocolStatus::Fresh;
     guidance.set_freshness(300, Some("edict protocol resume".to_string()));
 
@@ -124,8 +130,10 @@ fn render_resume(
     agent: &str,
     project: &str,
     format: OutputFormat,
+    layout: crate::layout::Layout,
 ) -> anyhow::Result<()> {
     let mut guidance = ProtocolGuidance::new("resume");
+    guidance.set_layout(layout);
     guidance.status = ProtocolStatus::Resumable;
     guidance.set_freshness(300, Some("edict protocol resume".to_string()));
 

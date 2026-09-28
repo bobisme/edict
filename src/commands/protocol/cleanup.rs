@@ -29,12 +29,14 @@ pub fn execute(
     agent: &str,
     project: &str,
     format: OutputFormat,
+    layout: crate::layout::Layout,
 ) -> anyhow::Result<()> {
     // Collect state from rite and maw
     let ctx = ProtocolContext::collect(project, agent)?;
 
     // Build guidance
     let mut guidance = ProtocolGuidance::new("cleanup");
+    guidance.set_layout(layout);
     guidance.bone = None;
     guidance.workspace = None;
     guidance.review = None;

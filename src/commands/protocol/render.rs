@@ -53,6 +53,15 @@ pub struct ProtocolGuidance {
     /// Execution report (if --execute was used)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub execution_report: Option<ExecutionReport>,
+    /// The project's on-disk workspace layout, used to adapt trunk-context
+    /// commands (`bn`, `seal`) in the rendered output. Not part of the public
+    /// schema: it is an internal rendering hint the CLI entry point sets from
+    /// the resolved project root (see [`Layout::detect`](crate::layout::Layout::detect)),
+    /// so it is skipped on both serialize and deserialize and defaults to
+    /// [`Layout::Root`](crate::layout::Layout::Root) for callers (mostly tests)
+    /// that never set it.
+    #[serde(skip)]
+    pub layout: crate::layout::Layout,
 }
 
 impl ProtocolGuidance {
@@ -75,6 +84,7 @@ impl ProtocolGuidance {
             advice: None,
             executed: false,
             execution_report: None,
+            layout: crate::layout::Layout::default(),
         }
     }
 
@@ -83,6 +93,16 @@ impl ProtocolGuidance {
     pub fn set_freshness(&mut self, valid_for_sec: u32, revalidate_cmd: Option<String>) {
         self.valid_for_sec = valid_for_sec;
         self.revalidate_cmd = revalidate_cmd;
+    }
+
+    /// Set the project's on-disk layout, so rendered steps use the right
+    /// trunk-context command form (`bn` at the root, or `maw exec default --
+    /// bn` in the bare layout). Command entry points call this right after
+    /// construction, once they have resolved the project root; helper
+    /// functions that build on an existing `&mut ProtocolGuidance` never need
+    /// to call it themselves.
+    pub const fn set_layout(&mut self, layout: crate::layout::Layout) {
+        self.layout = layout;
     }
 
     /// Add a step command.
@@ -390,12 +410,13 @@ pub fn render(guidance: &ProtocolGuidance, format: OutputFormat) -> Result<Strin
     };
 
     // Guidance steps are authored in bare form (`maw exec default -- bn ...`).
-    // Protocol commands run from the project root, so detect the layout from the
-    // cwd and adapt the rendered command strings for the root layout (a no-op for
-    // bare). The lower-level render_* fns are left untouched so golden tests stay
-    // layout-independent.
-    let layout = crate::layout::Layout::detect(&std::env::current_dir().unwrap_or_default());
-    Ok(layout.rewrite_prompt(output))
+    // `guidance.layout` carries the project's actual on-disk layout, set by the
+    // command entry point from the resolved project root (never the process's
+    // cwd, which can be anywhere under the project — e.g. inside a workspace —
+    // and would misdetect the layout). Adapt the rendered command strings for
+    // the root layout (a no-op for bare). The lower-level render_* fns are left
+    // untouched so golden tests stay layout-independent.
+    Ok(guidance.layout.rewrite_prompt(output))
 }
 
 #[cfg(test)]
@@ -1157,5 +1178,57 @@ mod tests {
         let pretty = render_pretty(&g);
         // When executed, should show execution report instead of steps section
         assert!(pretty.contains("Execution:"));
+    }
+
+    // --- Layout-aware rendering (bn-1l2w) ---
+
+    #[test]
+    fn render_root_layout_strips_the_bare_bn_prefix() {
+        let mut g = ProtocolGuidance::new("start");
+        g.set_layout(crate::layout::Layout::Root);
+        g.step("maw exec default -- bn do bd-abc".to_string());
+        g.advise("Check with maw exec default -- bn show bd-abc".to_string());
+
+        let output = render(&g, OutputFormat::Text).unwrap();
+        assert!(!output.contains("maw exec default -- bn"));
+        assert!(output.contains("bn do bd-abc"));
+        assert!(output.contains("bn show bd-abc"));
+    }
+
+    #[test]
+    fn render_bare_layout_keeps_the_bn_prefix() {
+        let mut g = ProtocolGuidance::new("start");
+        g.set_layout(crate::layout::Layout::Bare);
+        g.step("maw exec default -- bn do bd-abc".to_string());
+
+        let output = render(&g, OutputFormat::Text).unwrap();
+        assert!(output.contains("maw exec default -- bn do bd-abc"));
+    }
+
+    #[test]
+    fn render_defaults_to_root_layout_when_unset() {
+        // Guidance built without set_layout (e.g. most tests in this module)
+        // must not silently behave as the bare layout.
+        let mut g = ProtocolGuidance::new("start");
+        g.step("maw exec default -- bn do bd-abc".to_string());
+
+        let output = render(&g, OutputFormat::Text).unwrap();
+        assert!(!output.contains("maw exec default -- bn"));
+    }
+
+    #[test]
+    fn render_json_rewrite_is_layout_aware_too() {
+        let mut bare = ProtocolGuidance::new("finish");
+        bare.set_layout(crate::layout::Layout::Bare);
+        bare.step("maw exec default -- bn done bd-abc".to_string());
+        let bare_json = render(&bare, OutputFormat::Json).unwrap();
+        assert!(bare_json.contains("maw exec default -- bn done bd-abc"));
+
+        let mut root = ProtocolGuidance::new("finish");
+        root.set_layout(crate::layout::Layout::Root);
+        root.step("maw exec default -- bn done bd-abc".to_string());
+        let root_json = render(&root, OutputFormat::Json).unwrap();
+        assert!(!root_json.contains("maw exec default -- bn"));
+        assert!(root_json.contains("bn done bd-abc"));
     }
 }

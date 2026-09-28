@@ -225,6 +225,7 @@ impl ProtocolCommand {
         let project = args.resolve_project(&config);
         let agent = args.resolve_agent(&config);
         let format = args.resolve_format();
+        let layout = crate::layout::Layout::detect(&project_root);
 
         finish::execute(&finish::ExecuteParams {
             bone_id,
@@ -235,6 +236,7 @@ impl ProtocolCommand {
             project: &project,
             config: &config,
             format,
+            layout,
         })
     }
 
@@ -253,6 +255,7 @@ impl ProtocolCommand {
         let agent = args.resolve_agent(&config);
         let project = args.resolve_project(&config);
         let format = args.resolve_format();
+        let layout = crate::layout::Layout::detect(&project_root);
 
         review::execute(&review::ReviewParams {
             bone_id,
@@ -263,6 +266,7 @@ impl ProtocolCommand {
             project: &project,
             config: &config,
             format,
+            layout,
         })
     }
 
@@ -275,7 +279,8 @@ impl ProtocolCommand {
         let agent = args.resolve_agent(&config);
         let project = args.resolve_project(&config);
         let format = args.resolve_format();
-        cleanup::execute(execute, &agent, &project, format)
+        let layout = crate::layout::Layout::detect(&project_root);
+        cleanup::execute(execute, &agent, &project, format, layout)
     }
 
     /// Handle the `Merge` subcommand.
@@ -293,6 +298,7 @@ impl ProtocolCommand {
         let project = args.resolve_project(&config);
         let agent = args.resolve_agent(&config);
         let format = args.resolve_format();
+        let layout = crate::layout::Layout::detect(&project_root);
 
         let resolved_message = merge::resolve_message(message)?;
 
@@ -305,6 +311,7 @@ impl ProtocolCommand {
             &project,
             &config,
             format,
+            layout,
         )
     }
 
@@ -317,7 +324,8 @@ impl ProtocolCommand {
         let agent = args.resolve_agent(&config);
         let project = args.resolve_project(&config);
         let format = args.resolve_format();
-        resume::execute(&agent, &project, &config, format)
+        let layout = crate::layout::Layout::detect(&project_root);
+        resume::execute(&agent, &project, &config, format, layout)
     }
 
     /// Execute the `edict protocol start <bone-id>` command.
@@ -358,6 +366,7 @@ impl ProtocolCommand {
         let project = args.resolve_project(&config);
         let agent = args.resolve_agent(&config);
         let format = args.resolve_format();
+        let layout = crate::layout::Layout::detect(&project_root);
 
         // Collect state from rite and maw
         let ctx = context::ProtocolContext::collect(&project, &agent)?;
@@ -365,6 +374,7 @@ impl ProtocolCommand {
         // Check if bone exists and get its status
         let Ok(bone_info) = ctx.bone_status(bone_id) else {
             let mut guidance = render::ProtocolGuidance::new("start");
+            guidance.set_layout(layout);
             guidance.blocked(format!(
                 "bone {bone_id} not found. Check the ID with: maw exec default -- bn show {bone_id}"
             ));
@@ -372,6 +382,7 @@ impl ProtocolCommand {
         };
 
         let mut guidance = render::ProtocolGuidance::new("start");
+        guidance.set_layout(layout);
         guidance.bone = Some(render::BoneRef {
             id: bone_id.to_string(),
             title: bone_info.title.clone(),

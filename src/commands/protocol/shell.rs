@@ -373,6 +373,62 @@ pub fn review_wait_advice(agent: &str, project: &str) -> String {
     )
 }
 
+/// The canonical dedicated-security-reviewer identity for a project.
+///
+/// Seal and Rite keep this identity stable as an approval-gate principal
+/// (`--reviewers`, vote attribution), but it must never appear as an
+/// `@mention` in a Rite message: the ambient mention hook that used to spawn
+/// a reviewer on sight is retired (see `.agents/edict/security-review.md`).
+#[must_use]
+pub fn security_reviewer_name(project: &str) -> String {
+    format!("{project}-security")
+}
+
+/// Build the anchored Rite announcement for a dedicated security review
+/// request or re-request, capturing the sent message's id into `req` for the
+/// Launch contract's `request_anchor`.
+///
+/// Build: `req=$(rite send --agent <agent> <project> '<message>' -L <label> --format json | jq -r .id)`
+///
+/// This replaces the retired `@<project>-security` mention: the ambient hook
+/// that used to spawn a reviewer on that mention no longer exists, and a
+/// dedicated Vessel session must be launched explicitly instead (see
+/// [`security_launch_contract_step`]).
+///
+/// # Panics
+///
+/// Panics if `agent` is not a valid identifier (see [`rite_send_cmd`]).
+#[must_use]
+pub fn security_review_request_cmd(
+    agent: &str,
+    project: &str,
+    message: &str,
+    label: &str,
+) -> String {
+    let send = rite_send_cmd(agent, project, message, label);
+    format!("req=$({send} --format json | jq -r .id)")
+}
+
+/// Build the explicit pointer to the security-review Launch contract.
+///
+/// Names the variables it needs (`review_id`, `ws`, `bone_id`,
+/// `request_anchor`, `kind`). Rendered as a comment step alongside
+/// [`security_review_request_cmd`] — never an `@mention`.
+#[must_use]
+pub fn security_launch_contract_step(workspace: &str, bone_id: &str, kind: &str) -> String {
+    let workspace_safe = if validate_workspace_name(workspace).is_ok() {
+        safe_ident(workspace)
+    } else {
+        std::borrow::Cow::Owned(shell_escape(workspace))
+    };
+    format!(
+        "# Set review_id=<review-id>, ws={workspace_safe}, bone_id={bone_id}, request_anchor=$req, \
+         kind={kind}. Then follow .agents/edict/security-review.md's Launch contract exactly: it \
+         launches one dedicated Daybreak Vessel session for this exact review. Do not use an \
+         @mention or scan for another pending review."
+    )
+}
+
 /// Build: `maw exec default -- bn do <id>`
 #[allow(dead_code)]
 #[must_use]
@@ -1202,6 +1258,43 @@ mod tests {
             cmd,
             "maw exec frost-castle -- seal reviews retarget cr-123 --agent crimson-storm"
         );
+    }
+
+    // --- Security review launch contract (bn-2cf9) ---
+
+    #[test]
+    fn security_reviewer_name_follows_the_project_pattern() {
+        assert_eq!(security_reviewer_name("edict"), "edict-security");
+    }
+
+    #[test]
+    fn security_review_request_captures_the_sent_message_id() {
+        let cmd = security_review_request_cmd(
+            "crimson-storm",
+            "edict",
+            "Dedicated security review requested: <review-id> for bn-24r in frost-castle",
+            "review-request",
+        );
+        assert_eq!(
+            cmd,
+            "req=$(rite send --agent crimson-storm edict \
+             'Dedicated security review requested: <review-id> for bn-24r in frost-castle' \
+             -L review-request --format json | jq -r .id)"
+        );
+        // Never an @mention: the ambient hook that used to spawn on sight is retired.
+        assert!(!cmd.contains('@'));
+    }
+
+    #[test]
+    fn security_launch_contract_step_names_every_variable_and_never_mentions() {
+        let step = security_launch_contract_step("frost-castle", "bn-24r", "review-request");
+        assert!(step.contains("review_id=<review-id>"));
+        assert!(step.contains("ws=frost-castle"));
+        assert!(step.contains("bone_id=bn-24r"));
+        assert!(step.contains("request_anchor=$req"));
+        assert!(step.contains("kind=review-request"));
+        assert!(step.contains("security-review.md"));
+        assert!(step.contains("Do not use an @mention"));
     }
 
     // --- Deterministic output tests ---

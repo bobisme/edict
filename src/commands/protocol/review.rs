@@ -22,6 +22,7 @@ pub struct ReviewParams<'a> {
     pub project: &'a str,
     pub config: &'a Config,
     pub format: OutputFormat,
+    pub layout: crate::layout::Layout,
 }
 
 /// Execute review protocol: check state and output review guidance.
@@ -44,6 +45,7 @@ pub fn execute(params: &ReviewParams) -> anyhow::Result<()> {
         project,
         config,
         format,
+        layout,
     } = params;
     // Early input validation before any subprocess calls
     if let Err(e) = shell::validate_bone_id(bone_id) {
@@ -53,6 +55,7 @@ pub fn execute(params: &ReviewParams) -> anyhow::Result<()> {
     let ctx = ProtocolContext::collect(project, agent)?;
 
     let mut guidance = ProtocolGuidance::new("review");
+    guidance.set_layout(layout);
     guidance.set_freshness(300, Some(format!("edict protocol review {bone_id}")));
 
     // Fetch bone info
@@ -211,15 +214,41 @@ fn build_new_review_guidance(
         &reviewers_str,
     ));
 
-    // Announce on rite with @mentions for each reviewer
-    let mentions: Vec<String> = reviewer_names.iter().map(|r| format!("@{r}")).collect();
-    let announce_msg = format!("Review requested: {bone_id} {}", mentions.join(" "));
-    steps.push(shell::rite_send_cmd(
-        agent,
-        project,
-        &announce_msg,
-        "review-request",
-    ));
+    // The security reviewer never gets an @mention: the ambient hook that used
+    // to spawn it on sight is retired (security-review.md's Launch contract).
+    // Everyone else still gets announced with an @mention.
+    let security_reviewer = shell::security_reviewer_name(project);
+    let (security, others): (Vec<&String>, Vec<&String>) = reviewer_names
+        .iter()
+        .partition(|r| **r == security_reviewer);
+
+    if !others.is_empty() {
+        let mentions: Vec<String> = others.iter().map(|r| format!("@{r}")).collect();
+        let announce_msg = format!("Review requested: {bone_id} {}", mentions.join(" "));
+        steps.push(shell::rite_send_cmd(
+            agent,
+            project,
+            &announce_msg,
+            "review-request",
+        ));
+    }
+
+    if !security.is_empty() {
+        let announce_msg = format!(
+            "Dedicated security review requested: <review-id> for {bone_id} in {workspace}"
+        );
+        steps.push(shell::security_review_request_cmd(
+            agent,
+            project,
+            &announce_msg,
+            "review-request",
+        ));
+        steps.push(shell::security_launch_contract_step(
+            workspace,
+            bone_id,
+            "review-request",
+        ));
+    }
 
     if execute {
         // Execute the steps
@@ -327,6 +356,7 @@ fn handle_existing_review(
                 review_id,
                 workspace,
                 reviewer_names,
+                bone_id,
                 project,
                 agent,
                 execute,
@@ -334,7 +364,7 @@ fn handle_existing_review(
         }
         ReviewGateStatus::NeedsReview => {
             build_needs_review_guidance(
-                guidance, &decision, review_id, workspace, project, agent, execute,
+                guidance, &decision, review_id, workspace, bone_id, project, agent, execute,
             )?;
         }
     }
@@ -352,6 +382,7 @@ fn build_blocked_guidance(
     review_id: &str,
     workspace: &str,
     reviewer_names: &[String],
+    bone_id: &str,
     project: &str,
     agent: &str,
     execute: bool,
@@ -378,22 +409,43 @@ fn build_blocked_guidance(
         agent,
     ));
 
-    // Step 4: Announce re-request on rite
-    let mentions: Vec<String> = decision
+    // Step 4: Announce re-request on rite. The security reviewer never gets an
+    // @mention — see security-review.md's Launch contract — everyone else does.
+    let security_reviewer = shell::security_reviewer_name(project);
+    let (security, others): (Vec<&String>, Vec<&String>) = decision
         .blocked_by
         .iter()
-        .map(|r| format!("@{r}"))
-        .collect();
-    let announce_msg = format!(
-        "Review updated: {review_id} — addressed feedback, re-requesting {}",
-        mentions.join(" ")
-    );
-    steps.push(shell::rite_send_cmd(
-        agent,
-        project,
-        &announce_msg,
-        "review-request",
-    ));
+        .partition(|r| **r == security_reviewer);
+
+    if !others.is_empty() {
+        let mentions: Vec<String> = others.iter().map(|r| format!("@{r}")).collect();
+        let announce_msg = format!(
+            "Review updated: {review_id} — addressed feedback, re-requesting {}",
+            mentions.join(" ")
+        );
+        steps.push(shell::rite_send_cmd(
+            agent,
+            project,
+            &announce_msg,
+            "review-request",
+        ));
+    }
+
+    if !security.is_empty() {
+        let announce_msg =
+            format!("Dedicated security re-review requested: {review_id} — addressed feedback");
+        steps.push(shell::security_review_request_cmd(
+            agent,
+            project,
+            &announce_msg,
+            "review-response",
+        ));
+        steps.push(shell::security_launch_contract_step(
+            workspace,
+            bone_id,
+            "review-response",
+        ));
+    }
 
     if execute {
         // Execute the steps
@@ -422,11 +474,13 @@ fn build_blocked_guidance(
 }
 
 /// Build guidance for a review still awaiting required approvals.
+#[allow(clippy::too_many_arguments)]
 fn build_needs_review_guidance(
     guidance: &mut ProtocolGuidance,
     decision: &review_gate::ReviewGateDecision,
     review_id: &str,
     workspace: &str,
+    bone_id: &str,
     project: &str,
     agent: &str,
     execute: bool,
@@ -437,7 +491,8 @@ fn build_needs_review_guidance(
     if !decision.missing_approvals.is_empty() {
         let mut steps = Vec::new();
 
-        // Re-request from missing reviewers
+        // Re-request from missing reviewers (a plain Seal metadata call; no
+        // mention hazard regardless of which reviewers are still missing).
         let missing_str = decision.missing_approvals.join(",");
         steps.push(shell::seal_request_cmd(
             workspace,
@@ -446,18 +501,41 @@ fn build_needs_review_guidance(
             agent,
         ));
 
-        let mentions: Vec<String> = decision
+        // Announce on rite. The security reviewer never gets an @mention — see
+        // security-review.md's Launch contract — everyone else does.
+        let security_reviewer = shell::security_reviewer_name(project);
+        let (security, others): (Vec<&String>, Vec<&String>) = decision
             .missing_approvals
             .iter()
-            .map(|r| format!("@{r}"))
-            .collect();
-        let announce_msg = format!("Review requested: {review_id} {}", mentions.join(" "));
-        steps.push(shell::rite_send_cmd(
-            agent,
-            project,
-            &announce_msg,
-            "review-request",
-        ));
+            .partition(|r| **r == security_reviewer);
+
+        if !others.is_empty() {
+            let mentions: Vec<String> = others.iter().map(|r| format!("@{r}")).collect();
+            let announce_msg = format!("Review requested: {review_id} {}", mentions.join(" "));
+            steps.push(shell::rite_send_cmd(
+                agent,
+                project,
+                &announce_msg,
+                "review-request",
+            ));
+        }
+
+        if !security.is_empty() {
+            let announce_msg = format!(
+                "Dedicated security review requested: {review_id} for {bone_id} in {workspace}"
+            );
+            steps.push(shell::security_review_request_cmd(
+                agent,
+                project,
+                &announce_msg,
+                "review-request",
+            ));
+            steps.push(shell::security_launch_contract_step(
+                workspace,
+                bone_id,
+                "review-request",
+            ));
+        }
 
         if execute {
             // Execute the steps
@@ -576,6 +654,112 @@ mod tests {
         assert_eq!(names, vec!["custom-reviewer", "another"]);
     }
 
+    // --- Security review launch contract (bn-2cf9) ---
+    //
+    // The ambient `@<project>-security` mention hook is retired: security
+    // review is a dedicated Daybreak launch per security-review.md's Launch
+    // contract, never an @mention (managed-trim-audit.md R32 / E1).
+
+    #[test]
+    fn new_review_guidance_never_mentions_the_security_reviewer() {
+        let mut guidance = ProtocolGuidance::new("review");
+        build_new_review_guidance(
+            &mut guidance,
+            "frost-castle",
+            &["edict-security".to_string()],
+            "bn-24r",
+            "Add login",
+            "edict",
+            "crimson-storm",
+            false,
+        )
+        .unwrap();
+
+        let joined = guidance.steps.join("\n");
+        assert!(
+            !joined.contains("@edict-security"),
+            "must never emit the retired ambient mention: {joined}"
+        );
+        assert!(joined.contains("security-review.md"));
+        assert!(joined.contains("Launch contract"));
+        assert!(joined.contains("req=$(rite send"));
+    }
+
+    #[test]
+    fn new_review_guidance_still_mentions_non_security_reviewers() {
+        let mut guidance = ProtocolGuidance::new("review");
+        build_new_review_guidance(
+            &mut guidance,
+            "frost-castle",
+            &["edict-perf".to_string()],
+            "bn-24r",
+            "Add login",
+            "edict",
+            "crimson-storm",
+            false,
+        )
+        .unwrap();
+
+        assert!(guidance.steps.iter().any(|s| s.contains("@edict-perf")));
+    }
+
+    #[test]
+    fn blocked_guidance_never_mentions_the_security_reviewer() {
+        let mut guidance = ProtocolGuidance::new("review");
+        let decision = make_blocked_decision(vec!["edict-security"]);
+        let review_detail = make_review_detail(2);
+
+        build_blocked_guidance(
+            &mut guidance,
+            &decision,
+            &review_detail,
+            "cr-123",
+            "frost-castle",
+            &["edict-security".to_string()],
+            "bn-24r",
+            "edict",
+            "crimson-storm",
+            false,
+        )
+        .unwrap();
+
+        let joined = guidance.steps.join("\n");
+        assert!(!joined.contains("@edict-security"));
+        assert!(joined.contains("security-review.md"));
+        assert!(joined.contains("Launch contract"));
+    }
+
+    #[test]
+    fn needs_review_guidance_never_mentions_the_security_reviewer() {
+        let mut guidance = ProtocolGuidance::new("review");
+        let decision = review_gate::ReviewGateDecision {
+            status: ReviewGateStatus::NeedsReview,
+            missing_approvals: vec!["edict-security".to_string()],
+            newer_block_after_lgtm: vec![],
+            total_required: 1,
+            approved_by: vec![],
+            blocked_by: vec![],
+            stale_approval: false,
+        };
+
+        build_needs_review_guidance(
+            &mut guidance,
+            &decision,
+            "cr-123",
+            "frost-castle",
+            "bn-24r",
+            "edict",
+            "crimson-storm",
+            false,
+        )
+        .unwrap();
+
+        let joined = guidance.steps.join("\n");
+        assert!(!joined.contains("@edict-security"));
+        assert!(joined.contains("security-review.md"));
+        assert!(joined.contains("Launch contract"));
+    }
+
     #[test]
     fn resolve_reviewers_override_trims_whitespace() {
         let config = make_config(vec![]);
@@ -638,6 +822,7 @@ mod tests {
             "cr-123",
             "frost-castle",
             &["edict-security".to_string()],
+            "bn-24r",
             "edict",
             "crimson-storm",
             false,

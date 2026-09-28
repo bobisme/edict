@@ -22,6 +22,7 @@ pub struct ExecuteParams<'a> {
     pub project: &'a str,
     pub config: &'a Config,
     pub format: OutputFormat,
+    pub layout: crate::layout::Layout,
 }
 
 /// Execute the finish protocol command.
@@ -30,6 +31,10 @@ pub struct ExecuteParams<'a> {
 ///
 /// Returns an error if rendering or printing guidance fails, or if executing
 /// the finish steps fails when `--execute` is set.
+#[allow(
+    clippy::too_many_lines,
+    reason = "sequential finish-protocol state machine; sub-steps already extracted into helpers"
+)]
 pub fn execute(params: &ExecuteParams) -> anyhow::Result<()> {
     let &ExecuteParams {
         bone_id,
@@ -40,6 +45,7 @@ pub fn execute(params: &ExecuteParams) -> anyhow::Result<()> {
         project,
         config,
         format,
+        layout,
     } = params;
 
     // Collect state from rite and maw
@@ -47,6 +53,7 @@ pub fn execute(params: &ExecuteParams) -> anyhow::Result<()> {
         Ok(ctx) => ctx,
         Err(e) => {
             let mut guidance = ProtocolGuidance::new("finish");
+            guidance.set_layout(layout);
             guidance.blocked(format!("failed to collect state: {e}"));
             print_guidance(&guidance, format)?;
             return Ok(());
@@ -56,6 +63,7 @@ pub fn execute(params: &ExecuteParams) -> anyhow::Result<()> {
     // Fetch bone info
     let Ok(bone_info) = ctx.bone_status(bone_id) else {
         let mut guidance = ProtocolGuidance::new("finish");
+        guidance.set_layout(layout);
         guidance.blocked(format!(
             "bone {bone_id} not found. Check the ID with: maw exec default -- bn show {bone_id}"
         ));
@@ -64,6 +72,7 @@ pub fn execute(params: &ExecuteParams) -> anyhow::Result<()> {
     };
 
     let mut guidance = ProtocolGuidance::new("finish");
+    guidance.set_layout(layout);
     guidance.bone = Some(BoneRef {
         id: bone_id.to_string(),
         title: bone_info.title.clone(),

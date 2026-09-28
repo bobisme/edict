@@ -145,6 +145,10 @@ impl MergeCheckResult {
     clippy::too_many_arguments,
     reason = "CLI command entry point: each arg is a distinct user-facing option"
 )]
+#[allow(
+    clippy::too_many_lines,
+    reason = "sequential merge-protocol state machine; sub-steps already extracted into helpers"
+)]
 pub fn execute(
     workspace: &str,
     message: &str,
@@ -154,10 +158,12 @@ pub fn execute(
     project: &str,
     config: &Config,
     format: OutputFormat,
+    layout: crate::layout::Layout,
 ) -> anyhow::Result<()> {
     // Reject merging default workspace
     if workspace == "default" {
         let mut guidance = ProtocolGuidance::new("merge");
+        guidance.set_layout(layout);
         guidance.blocked(
             "cannot merge the default workspace. \
              Default is the merge TARGET — other workspaces merge INTO it."
@@ -172,6 +178,7 @@ pub fn execute(
         Ok(ctx) => ctx,
         Err(e) => {
             let mut guidance = ProtocolGuidance::new("merge");
+            guidance.set_layout(layout);
             guidance.blocked(format!("failed to collect state: {e}"));
             print_guidance(&guidance, format)?;
             return Ok(());
@@ -179,6 +186,7 @@ pub fn execute(
     };
 
     let mut guidance = ProtocolGuidance::new("merge");
+    guidance.set_layout(layout);
     guidance.workspace = Some(workspace.to_string());
     guidance.set_freshness(120, Some(format!("edict protocol merge {workspace}")));
     let mut merge_target = ctx
@@ -667,12 +675,11 @@ fn check_conflict_gate(
                     ));
                 }
                 if check.stale {
-                    guidance.diagnostic(
-                        "Workspace is stale. `maw ws merge` auto-syncs stale sources before \
-                         merging, so this alone does not block the merge — a manual `maw ws sync` \
-                         is only needed if the auto-sync itself reported conflicts."
-                            .to_string(),
-                    );
+                    guidance.diagnostic(format!(
+                        "Workspace {workspace} is stale. `maw ws merge` refuses a stale source \
+                         instead of syncing it — run `maw ws sync {workspace}` first, then retry \
+                         the merge."
+                    ));
                 }
                 if let Some(message) = check.message.as_deref() {
                     guidance.diagnostic(message.to_string());
@@ -811,8 +818,9 @@ fn add_conflict_recovery_guidance(
     let check_cmd = shell::ws_merge_check_cmd(workspace, target);
     guidance.diagnostic(format!(
         "Conflict recovery — workspace is preserved (not destroyed). Conflicts are data, not \
-         failure: merge auto-syncs stale sources, so a bare staleness report is not a blocker. \
-         Steps:\n\
+         failure. A stale source is different: `maw ws merge` refuses it outright rather than \
+         syncing it, so if `--check` reports staleness, run `maw ws sync {workspace}` first, \
+         then retry the merge. Steps:\n\
          \n\
          1. Inspect conflicts:\n\
          \n\
@@ -976,6 +984,7 @@ fn execute_and_render(
 
     if merge_had_conflicts {
         let mut conflict_guidance = ProtocolGuidance::new("merge");
+        conflict_guidance.set_layout(guidance.layout);
         conflict_guidance.workspace = Some(workspace.to_string());
         conflict_guidance.status = ProtocolStatus::Blocked;
         conflict_guidance.diagnostic(format!(
@@ -1042,6 +1051,26 @@ mod tests {
         assert!(
             retarget_pos < request_pos,
             "retarget must come before re-request: {steps:?}"
+        );
+    }
+
+    /// `maw ws merge` refuses a stale source outright (maw 1.0.0-pre.16
+    /// `merge.rs` ~L1555: "Workspace '<ws>' is stale … To fix: maw ws sync
+    /// <ws>"), it does not auto-sync it. The conflict-recovery diagnostic must
+    /// say so and point at `maw ws sync`, not claim staleness is harmless.
+    #[test]
+    fn conflict_recovery_guidance_tells_the_truth_about_stale_sources() {
+        let mut guidance = ProtocolGuidance::new("merge");
+        add_conflict_recovery_guidance(&mut guidance, "frost-castle", None, "feat: x", None);
+
+        let diag = guidance.diagnostics.join("\n");
+        assert!(
+            diag.contains("maw ws sync frost-castle"),
+            "must point at `maw ws sync` for a stale source: {diag}"
+        );
+        assert!(
+            !diag.contains("auto-syncs stale sources"),
+            "must not repeat the false auto-sync claim: {diag}"
         );
     }
 
