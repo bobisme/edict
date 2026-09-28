@@ -17,9 +17,9 @@ Do not create git branches manually — `maw ws create` handles branching for yo
 `maw ws sync` rebases committed-ahead workspaces onto the latest epoch by default. On conflict it does not abort — it commits labeled conflict markers and leaves the workspace `lifecycle:conflicted` (visible in `maw ws list`). Treat a conflicted workspace as a normal state, not a failure.
 
 - `maw ws resolve <ws> --list` shows conflicts; `--keep epoch|<ws>|both|union` (or `--keep PATH=NAME`) resolves them.
-- `maw ws merge` auto-syncs stale sources and accepts `--resolve cf-id=<ws>` / `--resolve-all=<ws>` to resolve inline.
+- `maw ws merge` refuses a stale source (run `maw ws sync <ws>` first) and accepts `--resolve cf-id=<ws>` / `--resolve-all=<ws>` to resolve inline.
 - `maw ws conflicts <ws>` inspects conflict details.
-- The one hard gate: merge refuses a source whose HEAD still has unresolved conflict markers (bypass with `--force` only for legitimate marker-like content).
+- Merge refuses a source with recorded conflicts or conflict placeholders in HEAD. `--force` bypasses only a wrong conflict record, never placeholders. See [merge-check.md](.agents/edict/merge-check.md#merge-gates).
 
 ### Directory Structure
 {% if is_root_layout %}
@@ -190,9 +190,10 @@ req=$(rite send --agent $AGENT $PROJECT "Dedicated security re-review requested:
   `task-blocked` message, release the review claim, and stop. Do not retry by
   mention or scan another review.
 
-**Dedicated reviewers** reply to the supplied request anchor with
-`--reply-to "$request_anchor"` and `-L review-done`. A top-level verdict is not
-an anchored result.
+**The author**, not the dedicated reviewer, replies to the request anchor with
+`--reply-to "$request_anchor"` and `-L review-done`, after it verifies the Seal
+vote. The dedicated reviewer sends no Rite messages. See
+[security-review.md](.agents/edict/security-review.md#who-sends-what).
 
 #### What a review covers
 

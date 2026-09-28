@@ -98,9 +98,9 @@ You are stuck if: you attempted the same approach twice without progress, you ca
 If stuck:
 - Add a detailed comment with what you tried and where you got blocked: `bn bone comment add <bone-id> "Blocked: ..."`
 - Post in the project channel: `rite send --agent $AGENT $EDICT_PROJECT "Stuck on <bone-id>: <summary>" -L task-blocked`
-- **If a tool behaved unexpectedly**, ask the responsible project for help (see [cross-channel](cross-channel.md)):
-  1. Post to their channel: `rite send --agent $AGENT <tool-project> "Getting <error> when running <command>. Context: <details>. @<project>-dev" -L feedback`
-  2. Create a local tracking bone: `bn create --title "[tracking] Asked #<project> about <issue>" --tag tracking --kind task`
+- **If a tool behaved unexpectedly**, ask the responsible project and wait for the answer, as [cross-channel](cross-channel.md#steps-ask-another-project) describes:
+  1. Ask with an anchor: `id=$(rite send --agent $AGENT <tool-project> "Getting <error> when running <command>. Context: <details>. @<project>-dev" -L feedback --format json | jq -r .id)`, then `rite wait --agent $AGENT --reply-to "$id" -t 300 --format json`. Never re-send the question.
+  2. On exit 1 (no answer), create a local tracking bone that records the anchor: `bn create --title "[tracking] Asked #<project> about <issue>" --tag tracking --kind task --description "Anchor: <id>. Read with: rite history --thread <id>"`
 - Move on to triage again (go to step 1).
 
 **Tip**: Before declaring stuck, try `cass search "your error or problem"` to find how similar issues were solved in past sessions.
@@ -131,9 +131,8 @@ After completing the implementation:
   - Running via `maw exec $WS --` ensures seal knows which workspace contains the changes
   - Always include the bone ID in the description so reviewers have context
   - Explain what changed and why, not just a summary
-  - seal reviews the whole feature: it finds your workspace fork point and covers every
-    commit on it. Check the printed commit count. Pass `--base <rev>` to set the range
-    yourself, or `--base <target>~1` for the tip commit only
+  - seal reviews the whole feature from your workspace's fork point. Check the printed
+    range and commit count (see [review-request](review-request.md#what-a-review-covers))
 - Add a comment to the bone: `bn bone comment add <bone-id> "Review requested: <review-id>, workspace: $WS (.maw/workspaces/$WS/)"`
 - **If requesting the security reviewer**:
   - Create a Rite request anchor without an @mention, then immediately follow

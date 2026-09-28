@@ -30,10 +30,10 @@ All steps below are required — they clean up resources, prevent workspace leak
    - **Dispatched worker** (the lead assigned the bone and workspace): `edict protocol finish <bone-id> --agent $AGENT --no-merge`. The lead's `edict protocol merge` records the review and merges.
    - **risk:low with no review**: add `--force`, since no review exists to gate.
    - The protocol checks the Seal verdict before it prints any merge step. With a review, a standalone worker's steps are:
-     - Record the review (Seal keeps it as an event log under `.seal/reviews/<review-id>/` in this workspace, and the merge destroys the workspace). A clean check refuses anything uncommitted outside `.seal/reviews/<review-id>/`: `maw ws merge` also merges uncommitted edits, deletions and untracked files, but the approval covers only a commit. Commit anything else and get a fresh LGTM. Then `seal reviews mark-merged <review-id>` runs while HEAD is still the approved commit. It exits 1 when code was committed after the LGTM: get a fresh LGTM instead of forcing it (see [review-response.md](review-response.md)). Last, it commits only `.seal/reviews/<review-id>`. That is the one commit allowed after the LGTM.
+     - Record the review: a clean check that refuses anything uncommitted outside `.seal/reviews/<review-id>/`, then `seal reviews mark-merged <review-id>` while HEAD is still the approved commit, then a commit of only `.seal/reviews/<review-id>`. That is the one commit allowed after the LGTM. If `mark-merged` exits 1, code was committed after the LGTM: get a fresh LGTM instead of forcing it (see [review-response.md](review-response.md#commit-no-code-after-the-lgtm)).
      - Merge and destroy the workspace, with the clean check repeated in the same command, so nothing lands between the check and the merge.
      - Close the bone, announce, and release your claims.
-   - Never run `mark-merged` after the merge: the workspace no longer exists. Never move or delete `.seal/reviews/` to satisfy `maw ws sync` or `maw ws clean`. Commit it as above instead.
+   - Why the steps run in this order, and the rules around the review log (never `mark-merged` after the merge, never move or delete `.seal/reviews/`): see [merge-check.md](merge-check.md#the-review-log-and-the-clean-check).
    - If the status is not Ready (NeedsReview, Blocked), follow its diagnostics. Do not merge.
    - **Never merge or destroy the default workspace.** Default is where other workspaces merge into.
    - If the merge step reports conflicts, do NOT destroy. Instead add a comment: `bn bone comment add <bone-id> "Merge conflict — workspace preserved for manual resolution"` and announce the conflict in the project channel. See [Merge Conflict Recovery](#merge-conflict-recovery) below — lead with `maw ws resolve`.
@@ -118,9 +118,9 @@ maw ws clean $WS --dry-run   # preview what would be removed
 maw ws clean $WS             # remove untracked files (recovery snapshot pinned first)
 ```
 
-The one hard gate: merge refuses a *source* workspace whose HEAD still contains unresolved
-textual conflict markers from a prior rebase. Bypass with `--force` only when the "markers" are
-legitimate content (e.g. test fixtures).
+If the merge is refused (a stale source, recorded conflicts, or conflict placeholders in HEAD),
+see [Merge gates](merge-check.md#merge-gates) for what each refusal means and which one
+`--force` can bypass.
 
 ### If the merge attempt itself is stuck
 
