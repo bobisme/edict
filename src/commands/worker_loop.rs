@@ -265,7 +265,9 @@ Workspace path: {ws_path}
 
 Go directly to:
 1. Verify your bone: maw exec default -- bn show {bone}
-2. Verify your workspace: maw ws list (confirm {ws} exists)
+2. Verify your workspace: maw ws list (confirm {ws} exists). If it is missing, run
+   maw ws recover {ws} and restore a listed snapshot with maw ws recover {ws} --to <new-name>.
+   Only if nothing is recoverable, report it to the lead instead of starting over.
 3. Your bone is already doing and claimed. Proceed to step 4 (WORK).
    Use absolute workspace path: {ws_path}
    For commands in workspace: maw exec {ws} -- <command>
@@ -376,7 +378,7 @@ Go directly to:
    If it fails (exit 1 = command unavailable), fall back to manual finish:
      If a review was conducted, record it in the workspace. Do not commit code after the LGTM:
        maw exec $WS -- git status --porcelain --untracked-files=all
-       Must list nothing outside .seal/reviews/<review-id>/ (the merge takes uncommitted files too).
+       Must list nothing outside .seal/reviews/<review-id>/ (maw ws merge silently merges uncommitted edits, deletions and untracked files).
        If anything else is listed, it was never reviewed: commit it and get a fresh LGTM.
        maw exec $WS -- seal reviews mark-merged <review-id> --agent {agent}
        Exits 1 if code was committed after the LGTM ("the approval does not cover the current
@@ -470,10 +472,14 @@ At the end of your work, output exactly one of these completion signals:
          5. Announce and wait for the re-review:
 {review_update_recipe}
        * If PENDING (no votes yet): STOP this iteration. Wait for the reviewer.
-       * If review not found: DO NOT merge or create a new review. Inspect the recorded dedicated-review session and its Agentbus result. STOP. Only create a new review if the workspace was destroyed AND 3+ iterations have passed since the review comment.
+       * If review not found: DO NOT merge or create a new review. Inspect the recorded dedicated-review session and its Agentbus result. STOP. Only create a new review if the workspace was destroyed, maw ws recover $WS finds no snapshot to restore, AND 3+ iterations have passed since the review comment.
      - If no review comment (work was in progress when session ended):
        * Read the workspace code to see what's already done.
        * Complete the remaining work in the EXISTING workspace — do NOT create a new one.
+       * If the workspace is missing or was destroyed (maw ws list): run maw ws recover $WS first.
+         maw keeps a snapshot of every destroyed workspace. If it lists one, restore it with
+         maw ws recover $WS --to <new-name> and resume there. Only when maw ws recover finds
+         nothing, create a new workspace and resume from scratch.
        * After completing: maw exec default -- bn bone comment add <id> "Resumed and completed: <what you finished>".
        * Then proceed to step 6 (REVIEW REQUEST) or step 7 (FINISH).
      If no active claims: proceed to step 1 (INBOX).
@@ -1293,5 +1299,54 @@ mod tests {
         let config_env = std::collections::HashMap::new();
         // All vars unset + empty config = should emit warnings without panic
         emit_build_env_diagnostic(&config_env);
+    }
+
+    fn recover_test_worker(dispatched: bool) -> WorkerLoop {
+        WorkerLoop {
+            project_root: PathBuf::from("/test"),
+            agent: "test-worker".to_string(),
+            project: "testproject".to_string(),
+            model_pool: vec!["haiku".to_string()],
+            timeout: 900,
+            review_enabled: true,
+            critical_approvers: vec![],
+            dispatched_bone: dispatched.then(|| "bd-test".to_string()),
+            dispatched_workspace: dispatched.then(|| "test-ws".to_string()),
+            dispatched_mission: None,
+            dispatched_siblings: None,
+            dispatched_mission_outcome: None,
+            dispatched_file_hints: None,
+        }
+    }
+
+    /// Every place the worker prompt handles a missing or destroyed workspace
+    /// must check `maw ws recover` before starting over (bn-30vn).
+    #[test]
+    fn build_prompt_missing_workspace_runs_maw_ws_recover_first() {
+        for dispatched in [false, true] {
+            let prompt = recover_test_worker(dispatched).build_prompt();
+            let lines: Vec<&str> = prompt.lines().collect();
+            let mut found = 0;
+            for (i, line) in lines.iter().enumerate() {
+                let lower = line.to_lowercase();
+                if lower.contains("workspace was destroyed")
+                    || lower.contains("workspace is missing")
+                    || lower.contains("if it is missing")
+                {
+                    found += 1;
+                    let window = lines[i..lines.len().min(i + 3)].join("\n");
+                    assert!(
+                        window.contains("maw ws recover"),
+                        "missing-workspace path does not run `maw ws recover` first \
+                         (dispatched={dispatched}):\n{window}"
+                    );
+                }
+            }
+            assert!(
+                found >= 2,
+                "expected >= 2 missing-workspace paths, found {found}"
+            );
+            assert!(prompt.contains("--to <new-name>"));
+        }
     }
 }

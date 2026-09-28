@@ -33,15 +33,15 @@ Before triaging new work, check if you have unfinished work from a previous sess
   2. Check if you still hold claims: `rite claims list --agent $AGENT --mine`
   3. Determine the state:
      - **If "Review requested: <review-id>" comment exists:**
-       - Check review status: `maw exec $WS -- seal review <review-id>`
-       - **LGTM (approved)**: Follow [merge-check](merge-check.md), then go to step 6 (Finish)
+       - Check the Seal verdict: `maw exec $WS -- seal review <review-id> --format json`
+       - **LGTM (approved)**: Go to step 6 (Finish). Its protocol steps record the review and, for a standalone worker, merge it.
        - **Blocked (changes requested)**: Follow [review-response](review-response.md) to fix issues and re-request review. Then STOP this iteration.
        - **Pending (no new activity)**: STOP this iteration. The reviewer has not responded yet.
      - **If workspace comment exists but no review comment** (work was interrupted mid-implementation):
        - Extract workspace name and path from the "Started in workspace" comment
        - Verify workspace still exists: `maw ws list`
        - If workspace exists: Resume work in that workspace — read the code to see what's done, complete remaining work, then proceed to step 5 (Review request) or step 6 (Finish)
-       - If workspace was destroyed: Create a new workspace and resume from scratch (check comments for context on what was attempted)
+       - If the workspace is missing or was destroyed: run `maw ws recover <workspace>` first. maw keeps a snapshot of every destroyed workspace. If it lists one, restore it with `maw ws recover <workspace> --to <new-name>`, use `<new-name>` as `$WS`, and resume there. Only when `maw ws recover` finds nothing, create a new workspace and resume from scratch (check comments for context on what was attempted)
      - **If no workspace comment** (bone was just marked doing before crash):
        - This bone was claimed but work never started
        - Proceed to step 2 (Start) to create a workspace and begin implementation
@@ -142,6 +142,7 @@ After completing the implementation:
 - **If requesting a general code review**:
   - Spawn a subagent to perform the review
   - Announce: `rite send --agent $AGENT $EDICT_PROJECT "Review requested: <review-id> for <bone-id>, spawned subagent for review" -L review-request`
+  - The subagent's completion or its report is not approval. Before you treat the review as approved, confirm the Seal verdict: `maw exec $WS -- seal review <review-id> --format json` must show an LGTM and no blocks.
 - **STOP this iteration.** Do NOT close the bone, merge the workspace, or release claims. The reviewer will process the review, and you will resume in the next iteration via step 0.
 
 **risk:high** — Security review with failure-mode checklist:
@@ -163,26 +164,17 @@ See [review-request](review-request.md) for full details.
 
 ### 6. Finish — mandatory teardown (never skip)
 
-If a review was conducted, record it in the workspace before the merge destroys it:
-- Verify approval: `maw exec $WS -- seal review <review-id>` — confirm LGTM, no blocks
-- Check for unreviewed changes: `maw exec $WS -- git status --porcelain --untracked-files=all` must list nothing outside
-  `.seal/reviews/<review-id>/`. The merge also takes uncommitted files, which no reviewer saw.
-- Mark review as merged: `maw exec $WS -- seal reviews mark-merged <review-id> --agent $AGENT`
-  - Exits 1 if you committed code after the LGTM. Ask for a fresh LGTM instead of
-    forcing the merge — see [review-response.md](review-response.md).
-- Commit the review log: `maw exec $WS -- git add .seal/reviews/<review-id>` then
-  `maw exec $WS -- git commit -m "chore: seal review <review-id>" -- .seal/reviews/<review-id>`.
-  This is the only commit allowed after the LGTM. The merge carries it to `default`.
+Reviewed work merges only through the protocol. Do not run `maw ws merge` by hand on reviewed work, and do not push: the lead merges and pushes.
 
-Then proceed with teardown:
-- `bn bone comment add <bone-id> "Completed by $AGENT"`
-- `bn done <bone-id> --reason "Completed"`
-- Merge. With a review, the merge command carries the clean check, so nothing lands between the
-  check and the merge: `{ out=$(maw exec $WS -- git status --porcelain --untracked-files=all -- . ':(exclude).seal/reviews/<review-id>') && test -z "$out" || { echo "unreviewed changes: stop" >&2; false; }; } && maw ws merge $WS --into default --destroy --message "feat: <bone-title>"`.
-  Without a review: `maw ws merge $WS --into default --destroy --message "feat: <bone-title>"` (use a conventional commit prefix: `feat:`, `fix:`, `chore:`, etc.; swap `default` for a change id when the workspace is change-bound; if merge conflict, preserve workspace and announce)
-- `maw push` (if pushMain enabled in `.edict.toml`; pushes the configured branch. Use `maw push --advance` after direct commits.)
-- `rite claims release --agent $AGENT --all`
-- `rite send --agent $AGENT $EDICT_PROJECT "Completed <bone-id>: <bone-title>" -L task-done`
+- Add a completion comment: `bn bone comment add <bone-id> "Completed by $AGENT"`. Do not run `bn done` yourself first: protocol finish refuses a bone that is already done, and its steps close the bone.
+- **risk:critical**: verify the human approval first (see [finish](finish.md) step 4). Protocol finish does not merge a `risk:critical` bone, so run it with `--no-merge` below and tell the lead the approved work is ready for its manual merge.
+- Run the finish protocol and run the steps it prints, in order:
+  - **Standalone worker**: `edict protocol finish <bone-id> --agent $AGENT`. It checks the Seal verdict. With a review, its steps record the review in the workspace (clean check, `seal reviews mark-merged`, commit of `.seal/reviews/<review-id>`) before the merge destroys the workspace, then merge with the clean check in the same command, close the bone, announce, and release your claims.
+  - **Dispatched worker** (the lead assigned you the bone and workspace): `edict protocol finish <bone-id> --agent $AGENT --no-merge`. It closes the bone, announces, and releases your claims. The review stays open for the lead's `edict protocol merge`, which records it and merges.
+  - With `risk:low` and no review, add `--force`: no review exists to gate.
+- If the status is not Ready (NeedsReview, Blocked), follow its diagnostics. Do not merge.
+- If `edict protocol finish` is unavailable (exit 1), follow [finish](finish.md). It never has a worker merge reviewed work by hand.
+- If the merge step reports conflicts, the workspace stays; see [finish](finish.md#merge-conflict-recovery).
 
 ### 7. Release check — lead responsibility
 

@@ -202,14 +202,18 @@ For EACH unfinished bone:
        6. Announce and wait for the re-review:
 {review_update_recipe}
      * If PENDING (no votes yet): STOP this iteration — wait for reviewer
-     * If review not found: DO NOT merge or create a new review. The reviewer may still be starting up (hooks have latency). STOP this iteration and wait. Only create a new review if the workspace was destroyed AND 3+ iterations have passed since the review comment.
+     * If review not found: DO NOT merge or create a new review. The reviewer may still be starting up (hooks have latency). STOP this iteration and wait. Only create a new review if the workspace was destroyed, maw ws recover <ws> finds no snapshot to restore, AND 3+ iterations have passed since the review comment.
    - If workspace comment exists but no review comment (work was in progress when session died):
      * Extract workspace name from comments
      * Verify workspace still exists: maw ws list
      * If workspace exists: Resume work in that workspace, complete the task, then proceed to review/finish
-     * If workspace was destroyed: Re-create workspace and resume from scratch (check comments for what was done)
+     * If the workspace is missing or was destroyed: run maw ws recover <ws> first. maw keeps a
+       snapshot of every destroyed workspace. If it lists one, restore it with
+       maw ws recover <ws> --to <new-name> and resume there. Only when maw ws recover finds
+       nothing, re-create the workspace and resume from scratch (check comments for what was done)
    - If no workspace comment (bone was just started):
-     * Re-create workspace and start fresh
+     * Run maw ws recover <id> in case a workspace for it was destroyed; restore it with
+       maw ws recover <id> --to <new-name> if it lists one. Otherwise create the workspace and start fresh
 
 After handling all unfinished bones, proceed to step 2 (RESUME CHECK).
 
@@ -454,7 +458,8 @@ For each dispatched bone where the worker is NOT in vessel list but the bone is 
 1. Check bone comments for a "RETRY:1" marker (from a previous crash recovery attempt).
 2. If NO retry marker — first failure, reassign once:
    - maw exec default -- bn bone comment add <id> "Worker <worker-name> died. RETRY:1 — reassigning."
-   - Check if workspace still exists (maw ws list). If destroyed, create a new one.
+   - Check if workspace still exists (maw ws list). If it is missing, run maw ws recover <ws> first and
+     restore any snapshot with maw ws recover <ws> --to <new-name>. Create a new one only if nothing is recoverable.
    - Re-dispatch following step 5b (new worker name, same or new workspace).
 3. If "RETRY:1" marker already exists — second failure, block the bone:
    - maw exec default -- bn bone comment add <id> "Worker died again after retry. Blocking bone."
@@ -490,8 +495,10 @@ Every merge into default MUST follow this protocol to prevent concurrent merge c
   a0. COMMIT WORKER FILES (unreviewed workspaces only — workers may have uncommitted changes):
       Workers may edit files without committing. Ensure changes are committed before merge:
         maw exec $WS -- git add -A && maw exec $WS -- git commit -m "<id>: worker changes" --allow-empty
-      If you skip this step, maw ws merge may miss uncommitted worker changes.
-      Reviewed workspace: do NOT run this. The review covers only committed code. If
+      This does not change what lands: maw ws merge silently merges uncommitted edits, deletions
+      and untracked files too. It gives the worker's changes a commit of their own.
+      Reviewed workspace: do NOT run this. The review covers only committed code, and that silent
+      merge of uncommitted files is why the protocol merge step runs a clean check. If
       maw exec $WS -- git status --porcelain lists anything outside .seal/, those changes were
       never reviewed: retarget the review to the current commit (seal reviews retarget
       <review-id> --agent {agent}), then re-request instead of merging.
@@ -520,8 +527,10 @@ Every merge into default MUST follow this protocol to prevent concurrent merge c
 
   c2. RECORD REVIEW (reviewed workspaces only — the LAST step before the merge):
      maw exec $WS -- git status --porcelain --untracked-files=all
-       Must list nothing outside .seal/reviews/<review-id>/. maw ws merge also merges
-       uncommitted files, which no reviewer saw: if anything else is listed, do not merge.
+       Must list nothing outside .seal/reviews/<review-id>/. maw ws merge silently merges
+       uncommitted edits, deletions and untracked files, which no reviewer saw: if anything else
+       is listed, do not merge. This is the clean check edict protocol merge prints; step d
+       repeats it in the same command as the merge.
      maw exec $WS -- seal reviews mark-merged <review-id> --agent {agent}
      maw exec $WS -- git add .seal/reviews/<review-id>
      maw exec $WS -- git commit -m "chore: seal review <review-id>" -- .seal/reviews/<review-id>
@@ -1054,5 +1063,52 @@ mod tests {
                 "dev-loop prompt must reference '{protocol_cmd}' in {step_name} step"
             );
         }
+    }
+
+    /// Every place the prompt handles a missing or destroyed workspace must
+    /// check `maw ws recover` before starting over (bn-30vn).
+    #[test]
+    fn missing_workspace_paths_run_maw_ws_recover_first() {
+        let ctx = test_ctx();
+        let prompt = build(&ctx, None, &[], None);
+        let lines: Vec<&str> = prompt.lines().collect();
+        let mut found = 0;
+        for (i, line) in lines.iter().enumerate() {
+            let lower = line.to_lowercase();
+            if lower.contains("workspace was destroyed")
+                || lower.contains("workspace is missing")
+                || lower.contains("if it is missing")
+            {
+                found += 1;
+                let window = lines[i..lines.len().min(i + 3)].join("\n");
+                assert!(
+                    window.contains("maw ws recover"),
+                    "missing-workspace path does not run `maw ws recover` first:\n{window}"
+                );
+            }
+        }
+        assert!(
+            found >= 3,
+            "expected >= 3 missing-workspace paths, found {found}"
+        );
+        assert!(prompt.contains("maw ws recover <ws> --to <new-name>"));
+    }
+
+    /// `maw ws merge` silently merges uncommitted edits, deletions and
+    /// untracked files. The prompt must not claim it may miss them (bn-14gy),
+    /// and must point at the clean check the protocol merge step runs.
+    #[test]
+    fn prompt_says_merge_takes_uncommitted_changes() {
+        let ctx = test_ctx();
+        let prompt = build(&ctx, None, &[], None);
+        let flat = prompt.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(!flat.contains("may miss uncommitted"));
+        assert!(
+            flat.matches("silently merges uncommitted edits, deletions and untracked files")
+                .count()
+                >= 2,
+            "both merge passages must say maw ws merge takes uncommitted changes"
+        );
+        assert!(flat.contains("clean check edict protocol merge prints"));
     }
 }

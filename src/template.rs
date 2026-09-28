@@ -464,6 +464,96 @@ mod tests {
         }
     }
 
+    fn rendered_doc(name: &str, layout: Layout) -> String {
+        let content = WORKFLOW_DOCS
+            .iter()
+            .find_map(|(n, content)| (*n == name).then_some(*content))
+            .unwrap_or_else(|| panic!("{name} is embedded"));
+        render_workflow_doc(content, layout).unwrap()
+    }
+
+    /// worker-loop.md must run `maw ws recover` before it recreates a missing
+    /// or destroyed workspace (bn-30vn).
+    #[test]
+    fn worker_loop_doc_recovers_missing_workspace_first() {
+        for layout in [Layout::Bare, Layout::Root] {
+            let rendered = rendered_doc("worker-loop.md", layout);
+            let mut found = 0;
+            for line in rendered.lines() {
+                let lower = line.to_lowercase();
+                if lower.contains("workspace was destroyed")
+                    || lower.contains("workspace is missing")
+                {
+                    found += 1;
+                    assert!(
+                        line.contains("maw ws recover <workspace>")
+                            && line.contains("--to <new-name>"),
+                        "worker-loop.md ({layout:?}) handles a missing workspace without \
+                         `maw ws recover`:\n{line}"
+                    );
+                    let recover = line.find("maw ws recover").unwrap();
+                    let scratch = line.find("from scratch").unwrap_or(usize::MAX);
+                    assert!(recover < scratch, "recover must come before starting over");
+                }
+            }
+            assert!(
+                found >= 1,
+                "worker-loop.md ({layout:?}) lost its missing-workspace path"
+            );
+        }
+    }
+
+    /// A worker merges reviewed work only through the protocol steps, and
+    /// never pushes (bn-285u). The only hand-run `maw ws merge $WS ... --destroy`
+    /// left in worker-loop.md and finish.md is the no-review fallback.
+    #[test]
+    fn worker_docs_route_reviewed_merge_through_protocol_and_never_push() {
+        for name in ["worker-loop.md", "finish.md"] {
+            for layout in [Layout::Bare, Layout::Root] {
+                let rendered = rendered_doc(name, layout);
+                assert!(
+                    rendered.contains("edict protocol finish <bone-id> --agent $AGENT"),
+                    "{name} ({layout:?}) must route the finish through edict protocol finish"
+                );
+                assert!(
+                    rendered.contains("--no-merge"),
+                    "{name} ({layout:?}) must keep the dispatched-worker --no-merge path"
+                );
+                for line in rendered.lines() {
+                    if line.contains("maw ws merge $WS") && line.contains("--destroy") {
+                        assert!(
+                            line.contains("Without a review"),
+                            "{name} ({layout:?}) has a hand-run merge outside the no-review \
+                             fallback:\n{line}"
+                        );
+                        assert!(
+                            !line.contains("unreviewed changes: stop"),
+                            "{name} ({layout:?}) spells out the reviewed merge step instead \
+                             of running the one the protocol prints:\n{line}"
+                        );
+                    }
+                    assert!(
+                        !line.contains("maw push"),
+                        "{name} ({layout:?}) tells the worker to push:\n{line}"
+                    );
+                }
+            }
+        }
+        let worker_loop = rendered_doc("worker-loop.md", Layout::Root);
+        assert!(worker_loop.contains("seal review <review-id> --format json"));
+        let subagent = worker_loop
+            .find("Spawn a subagent to perform the review")
+            .expect("subagent review path");
+        let section_end = worker_loop[subagent..]
+            .find("**STOP this iteration.**")
+            .expect("subagent review path stops");
+        assert!(
+            worker_loop[subagent..subagent + section_end]
+                .contains("seal review <review-id> --format json"),
+            "the subagent review must be confirmed through the Seal verdict"
+        );
+    }
+
     #[test]
     fn security_review_contract_terminates_its_exact_vessel_session() {
         let content = WORKFLOW_DOCS
