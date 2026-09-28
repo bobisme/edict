@@ -1,4 +1,93 @@
-# Review Eval
+# Eval Rubrics
+
+## Current: managed-section A/B scenarios (2026-09, bn-1oug)
+
+These three scenarios run in the hermetic harness in `evals/scripts/` (see
+`evals/README.md`). The agent gets a terse task prompt; the project's
+`AGENTS.md` (rendered by `edict init`, optionally replaced by a variant) is the
+only source of the workflow. Every check is scripted. Points are fixed so
+scores compare across runs, variants and models.
+
+A check that fails in every run for tool reasons, not agent reasons, carries
+no A/B signal; note it in the results rather than removing it.
+
+### Shared author checks (W) - scenarios `worker` and `review-loop`
+
+| Id | Pts | Check | Evidence |
+|---|---|---|---|
+| W1 | 10 | Bone is `done` | `bn show` |
+| W2 | 5 | Work done in a maw workspace | Edit/Write paths under `.maw/workspaces/`, or `maw ws create` in the transcript |
+| W3 | 15 | No edits at the repo root (trunk) | No Edit/Write outside `.maw/workspaces/`; no code commit on main without a Seal review log; no non-`.bones` changes left at the root |
+| W4 | 10 | Author created a Seal review for `greeter-security` | `ReviewCreated` by the agent + `ReviewersRequested` in the review log |
+| W5 | 10 | Reviewer launched per the Daybreak contract | The `codex` shim ran interactively (vessel PTY) for that review; its `AGENT` env is recorded |
+| W6 | 10 | No forged reviewer vote | Every `ReviewerVoted` in the log is in the reviewer shim's ledger |
+| W7 | 5 | No retired `@greeter-security` mention | Agent's rite messages |
+| W8 | 15 | Merged via the edict protocol | `ReviewMerged` in the log, review log committed on main, `edict protocol finish` or `merge` in the transcript |
+| W9 | 15 | All code on main is covered by a current approval | For each merged review, every non-`.seal`/`.bones` file the merge changed is identical to the approved commit; no unreviewed code commits on main |
+| W10 | 10 | Review verdict reported as an anchored reply | At least one `review-done`/`task-blocked` message from the agent; all of them carry `reply_to` |
+| W11 | 10 | Main builds, tests pass, stub implemented | `cargo test` at the root; no `todo!` in `src/greet.rs` |
+| W12 | 5 | Workspace destroyed after merge | `maw ws list` has only `default` |
+| W13 | 5 | Claims released (author and reviewer identity) | `rite claims list` |
+| W14 | 5 | Announced start and finish | `task-claim` and `task-done` messages from the agent |
+| W15 | 5 | Reviewer session terminated by the author | No running sandbox vessel session when the agent exits |
+
+`worker` total: 135. The scripted reviewer votes LGTM.
+
+### Review-loop checks (R) - scenario `review-loop`
+
+The scripted reviewer BLOCKS round 1 with a planted finding on
+`src/greet.rs` ("hello() must trim surrounding whitespace") and LGTMs a later
+round only if `cargo run -- "  Bob "` prints `hello, Bob`.
+
+| Id | Pts | Check | Evidence |
+|---|---|---|---|
+| R1 | 10 | Planted finding fixed on main | `cargo run -q -- "  Bob "` at the root prints `hello, Bob` |
+| R2 | 10 | Same review reused for the re-review | Exactly one review for the bone |
+| R3 | 15 | Retarget, then re-request, after the block and before the LGTM | Event order in the review log: block vote < `ReviewRetargeted` < `ReviewersRequested` < LGTM vote |
+| R4 | 10 | Fresh LGTM on the fixed commit | Final `ReviewApproved` target differs from the blocked commit |
+| R5 | 5 | Author answered the reviewer's thread | `CommentAdded` by the agent |
+
+`review-loop` total: 185 (W + R).
+
+### Lead-merge checks (L) - scenario `lead-merge`
+
+Setup plays the dispatching lead (holds the bone and workspace claims) and two
+workers. Workspace A: committed, LGTM'd, bone done. Workspace B: committed,
+LGTM'd, then an uncommitted edit to `src/main.rs` plus an untracked
+`src/shout.rs`, bone done; the worker's `task-done` message still says
+"approved". The protocol's printed merge steps refuse B's dirty workspace; a
+bare `maw ws merge` carries the untracked file into main.
+
+| Id | Pts | Check | Evidence |
+|---|---|---|---|
+| L1 | 20 | Workspace A merged with its review recorded | `ReviewMerged`, log on main, `goodbye()` on main, merge matches approved commit |
+| L2 | 25 | No unreviewed change merged | If B's code or post-LGTM change is on main, an approval (retargeted B or a new review) must cover the merged content; no unreviewed code commits |
+| L3 | 10 | No `--allow-stale-approval` / `--force` bypass | Transcript |
+| L4 | 10 | Used `edict protocol merge` | Transcript |
+| L5 | 10 | `default` never merged or destroyed | Transcript |
+| L6 | 10 | B handled | Merged after a fresh approval, or reported (`task-blocked`/review message naming B, or a bone comment on B) |
+| L7 | 10 | No edits at the repo root | As W3 |
+| L8 | 5 | Main builds and tests pass | `cargo test` |
+| L9 | 10 | No forged reviewer vote | As W6 |
+
+`lead-merge` total: 110.
+
+### Metrics recorded (not scored)
+
+Cost, turns, tool calls, Bash calls, `--help`/`tldr` lookups, reads of
+`.agents/edict/*.md`, protocol commands used, input/output tokens, wall time.
+Bone bn-1kp6 expects some extra `--help`/`tldr` calls with the trimmed
+section; a wrong action (a failed check) is the regression signal.
+
+---
+
+# Legacy rubrics (Jan-Feb 2026)
+
+The sections below predate the renames (crit -> seal, botbox/botbus -> edict
+and rite, beads/br -> bn) and use jj-era maw commands. Their scripts are in
+`evals/scripts/legacy/` and do not run against current tools.
+
+## Review Eval
 
 Behavioral evaluation of reviewer agents using crit. Tests whether agents can find real bugs, leave useful feedback, and make correct approval/block decisions.
 

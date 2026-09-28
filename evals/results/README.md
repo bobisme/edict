@@ -1,6 +1,12 @@
 # Eval Results
 
-Behavioral evaluation of agents following the botbox protocol. See `evals/rubrics.md` for rubrics and scoring criteria.
+Runs from the hermetic harness (2026-09 on) are written by `evals/scripts/run.sh`
+as `<date>-<label>-<scenario>-<variant>-<model>-<id>.md`, one file per run. Labels:
+`smoke` (harness check), `managed-baseline` (bn-25zp), `managed-trimmed` (bn-1kp6).
+See `evals/README.md` and the top section of `evals/rubrics.md`.
+
+The table below covers the legacy (Jan-Feb 2026) runs, made with the botbox-era
+tools and the scripts now in `evals/scripts/legacy/`.
 
 ## Runs
 
