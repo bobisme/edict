@@ -46,7 +46,7 @@ pub enum ReviewGateStatus {
 /// Binds the review→commit axis of the gate (the review→bone axis alone
 /// only proves *some* version of this bone's work was approved, not that
 /// the version being merged is the one reviewers saw).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CommitFreshness {
     /// The review's last-known target commit matches the workspace HEAD
     /// being merged — the approval covers the code being merged.
@@ -58,6 +58,7 @@ pub enum CommitFreshness {
     /// One or both commits could not be determined (subprocess failure,
     /// missing field). Fail closed: treated the same as `Stale` — an
     /// approval whose scope can't be confirmed does not satisfy the gate.
+    #[default]
     Unknown,
 }
 
@@ -187,9 +188,10 @@ pub fn evaluate_review_gate(
 /// untouched: those are already correct for their own reasons and
 /// shouldn't be relabeled by an unrelated commit-freshness concern.
 ///
-/// Only merge-gating callers need this — commands that merely report review
-/// state (status/resume/review/finish) evaluate votes on their own via
-/// [`evaluate_review_gate`].
+/// Only merge-gating callers need this (`protocol merge`, and `protocol
+/// finish`, whose steps merge) — commands that merely report review state
+/// (status/resume/review) evaluate votes on their own via
+/// [`evaluate_review_gate`]. Get the freshness from [`approval_freshness`].
 #[must_use]
 pub fn bind_to_commit(
     mut decision: ReviewGateDecision,
@@ -200,6 +202,109 @@ pub fn bind_to_commit(
         decision.stale_approval = true;
     }
     decision
+}
+
+/// Whether an approval covers the workspace HEAD, and why edict thinks so.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct FreshnessCheck {
+    pub freshness: CommitFreshness,
+    /// Paths that changed after the approved commit, outside the review log.
+    /// Set only when edict's own cross-check overrode seal's `approval_stale:false`.
+    pub uncovered_paths: Vec<String>,
+    /// A diagnostic the caller surfaces (for example, seal gave no
+    /// `approved_commit`, so edict could not cross-check).
+    pub note: Option<String>,
+}
+
+impl FreshnessCheck {
+    const fn of(freshness: CommitFreshness) -> Self {
+        Self {
+            freshness,
+            uncovered_paths: Vec::new(),
+            note: None,
+        }
+    }
+}
+
+/// Whether every path is inside the review log `.seal/reviews/<review_id>/`.
+///
+/// The review-log commit (`chore: seal review <id>`) is the one commit that is
+/// allowed after the LGTM, so a HEAD that differs from the approved commit by
+/// that log alone is still covered by the approval.
+#[must_use]
+pub fn only_review_log_changed(paths: &[String], review_id: &str) -> bool {
+    let prefix = format!(".seal/reviews/{review_id}/");
+    paths.iter().all(|p| p.starts_with(&prefix))
+}
+
+/// Decide whether a review's approval covers the workspace HEAD.
+///
+/// `summary` is `seal diff <id> --format json` (`None` when it failed),
+/// `workspace_head` is `git rev-parse HEAD` in the workspace, and
+/// `changed_paths(approved_commit, head)` lists the paths changed between the
+/// two (`None` when that lookup failed). It is only called when the two
+/// commits differ.
+///
+/// Rules:
+/// - seal says `approval_stale: true` → stale.
+/// - seal says `approval_stale: false` → do not trust it alone (seal 0.30 misses
+///   post-LGTM commits on a detached HEAD, seal bn-2ypz). If `approved_commit`
+///   equals HEAD → fresh. If it differs and anything outside
+///   `.seal/reviews/<id>/` changed → stale. If only the review log changed →
+///   fresh. If HEAD or the changed paths are unknown → unknown (fails closed).
+///   If seal gives no `approved_commit` → fresh as before, with a diagnostic.
+/// - older seal (no `approval_stale`) → compare `target_commit` with HEAD.
+pub fn approval_freshness(
+    summary: Option<&super::adapters::ReviewDiffSummary>,
+    workspace_head: Option<&str>,
+    review_id: &str,
+    changed_paths: impl FnOnce(&str, &str) -> Option<Vec<String>>,
+) -> FreshnessCheck {
+    let Some(summary) = summary else {
+        return FreshnessCheck::of(CommitFreshness::Unknown);
+    };
+    match summary.approval_stale {
+        Some(true) => FreshnessCheck::of(CommitFreshness::Stale),
+        Some(false) => {
+            let Some(approved) = summary.approved_commit.as_deref() else {
+                let mut check = FreshnessCheck::of(CommitFreshness::Fresh);
+                check.note = Some(format!(
+                    "seal diff {review_id} reported approval_stale:false without an \
+                     approved_commit, so edict could not confirm that the approval covers \
+                     the workspace HEAD. Trusting seal."
+                ));
+                return check;
+            };
+            let Some(head) = workspace_head else {
+                return FreshnessCheck::of(CommitFreshness::Unknown);
+            };
+            if approved == head {
+                return FreshnessCheck::of(CommitFreshness::Fresh);
+            }
+            match changed_paths(approved, head) {
+                None => FreshnessCheck::of(CommitFreshness::Unknown),
+                Some(paths) if only_review_log_changed(&paths, review_id) => {
+                    FreshnessCheck::of(CommitFreshness::Fresh)
+                }
+                Some(paths) => {
+                    let uncovered_paths = paths
+                        .into_iter()
+                        .filter(|p| !only_review_log_changed(std::slice::from_ref(p), review_id))
+                        .collect();
+                    FreshnessCheck {
+                        freshness: CommitFreshness::Stale,
+                        uncovered_paths,
+                        note: None,
+                    }
+                }
+            }
+        }
+        None => FreshnessCheck::of(match (summary.target_commit.as_deref(), workspace_head) {
+            (Some(target), Some(head)) if target == head => CommitFreshness::Fresh,
+            (Some(_), Some(_)) => CommitFreshness::Stale,
+            _ => CommitFreshness::Unknown,
+        }),
+    }
 }
 
 fn implicit_status_lgtm(review: &ReviewDetail, reviewer: &str) -> bool {
@@ -221,6 +326,131 @@ fn implicit_lgtm_is_latest(review: &ReviewDetail, vote: &ReviewVote, implicit_lg
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::protocol::adapters::ReviewDiffSummary;
+
+    // --- approval_freshness (bn-2cyu) ---
+
+    const APPROVED: &str = "c658bbf939ffae9f5594c7b69b880c209e57b721";
+    const HEAD: &str = "cb3bbc3445b4a88fabc99f24bbbef77557137900";
+
+    /// What seal 0.30 reports after a post-LGTM commit on a detached HEAD:
+    /// `approval_stale:false`, `uncovered_commits:0`, and `approved_commit` /
+    /// `target_commit` still at the LGTM'd commit.
+    fn seal_030(approved: Option<&str>) -> ReviewDiffSummary {
+        ReviewDiffSummary {
+            target_commit: Some(APPROVED.into()),
+            approval_stale: Some(false),
+            approved_commit: approved.map(Into::into),
+            uncovered_commits: Some(0),
+        }
+    }
+
+    #[allow(
+        clippy::unnecessary_wraps,
+        reason = "stands in for the fallible changed-paths lookup"
+    )]
+    fn paths(p: &[&str]) -> Option<Vec<String>> {
+        Some(p.iter().map(ToString::to_string).collect())
+    }
+
+    #[test]
+    fn post_lgtm_code_commit_is_stale_even_when_seal_says_fresh() {
+        let check = approval_freshness(
+            Some(&seal_030(Some(APPROVED))),
+            Some(HEAD),
+            "cr-1",
+            |a, h| {
+                assert_eq!((a, h), (APPROVED, HEAD));
+                paths(&["src/main.rs", ".seal/reviews/cr-1/events.jsonl"])
+            },
+        );
+        assert_eq!(check.freshness, CommitFreshness::Stale);
+        assert_eq!(check.uncovered_paths, vec!["src/main.rs".to_string()]);
+    }
+
+    #[test]
+    fn review_log_commit_alone_is_not_stale() {
+        let check = approval_freshness(
+            Some(&seal_030(Some(APPROVED))),
+            Some(HEAD),
+            "cr-1",
+            |_, _| paths(&[".seal/reviews/cr-1/events.jsonl"]),
+        );
+        assert_eq!(check.freshness, CommitFreshness::Fresh);
+        assert!(check.note.is_none());
+    }
+
+    #[test]
+    fn another_reviews_log_is_not_the_allowed_commit() {
+        let check = approval_freshness(
+            Some(&seal_030(Some(APPROVED))),
+            Some(HEAD),
+            "cr-1",
+            |_, _| paths(&[".seal/reviews/cr-10/events.jsonl"]),
+        );
+        assert_eq!(check.freshness, CommitFreshness::Stale);
+    }
+
+    #[test]
+    fn approved_commit_equal_to_head_is_fresh_without_a_diff() {
+        let check = approval_freshness(
+            Some(&seal_030(Some(APPROVED))),
+            Some(APPROVED),
+            "cr-1",
+            |_, _| panic!("no diff needed when the commits match"),
+        );
+        assert_eq!(check.freshness, CommitFreshness::Fresh);
+    }
+
+    #[test]
+    fn missing_approved_commit_trusts_seal_with_a_diagnostic() {
+        let check = approval_freshness(Some(&seal_030(None)), Some(HEAD), "cr-1", |_, _| {
+            panic!("no approved commit to diff from")
+        });
+        assert_eq!(check.freshness, CommitFreshness::Fresh);
+        assert!(
+            check
+                .note
+                .as_deref()
+                .is_some_and(|n| n.contains("approved_commit"))
+        );
+    }
+
+    #[test]
+    fn unknown_head_or_failed_diff_fails_closed() {
+        let s = seal_030(Some(APPROVED));
+        assert_eq!(
+            approval_freshness(Some(&s), None, "cr-1", |_, _| None).freshness,
+            CommitFreshness::Unknown
+        );
+        assert_eq!(
+            approval_freshness(Some(&s), Some(HEAD), "cr-1", |_, _| None).freshness,
+            CommitFreshness::Unknown
+        );
+    }
+
+    #[test]
+    fn seal_stale_wins_and_older_seal_compares_target() {
+        let mut s = seal_030(Some(APPROVED));
+        s.approval_stale = Some(true);
+        assert_eq!(
+            approval_freshness(Some(&s), Some(APPROVED), "cr-1", |_, _| None).freshness,
+            CommitFreshness::Stale
+        );
+        s.approval_stale = None;
+        assert_eq!(
+            approval_freshness(Some(&s), Some(APPROVED), "cr-1", |_, _| None).freshness,
+            CommitFreshness::Fresh
+        );
+        assert_eq!(
+            approval_freshness(Some(&s), Some(HEAD), "cr-1", |_, _| None).freshness,
+            CommitFreshness::Stale
+        );
+        assert_eq!(
+            approval_freshness(None, Some(HEAD), "cr-1", |_, _| None).freshness,
+            CommitFreshness::Unknown
+        );
+    }
 
     fn make_vote(reviewer: &str, vote: &str, voted_at: &str) -> ReviewVote {
         ReviewVote {

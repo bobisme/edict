@@ -61,14 +61,14 @@ pub fn execute(
 
     // Step 1: Post agent idle message
     steps.push(shell::rite_send_cmd(
-        "agent",
+        agent,
         project,
         "Agent idle",
         "agent-idle",
     ));
 
     // Step 2: Clear statuses
-    steps.push(shell::rite_statuses_clear_cmd("agent"));
+    steps.push(shell::rite_statuses_clear_cmd(agent));
 
     // Step 3: Release claims (but warn if bone claims are active)
     if !bone_claims.is_empty() {
@@ -82,7 +82,7 @@ pub fn execute(
             "WARNING: Active bone claim(s) held: {bone_list}. Releasing these marks them as unowned in doing state."
         ));
     }
-    steps.push(shell::claims_release_all_cmd("agent"));
+    steps.push(shell::claims_release_all_cmd(agent));
 
     guidance.steps(steps);
 

@@ -515,3 +515,36 @@ impl ProtocolCommand {
         steps
     }
 }
+
+#[cfg(test)]
+mod agent_placeholder_tests {
+    /// bn-25cq: protocol commands once printed `--agent agent` because the
+    /// shell builders were passed the literal `"agent"` instead of the resolved
+    /// agent name. Guard every protocol source file (outside its tests).
+    #[test]
+    fn protocol_sources_never_pass_the_literal_agent_placeholder() {
+        let sources = [
+            ("cleanup.rs", include_str!("cleanup.rs")),
+            ("finish.rs", include_str!("finish.rs")),
+            ("merge.rs", include_str!("merge.rs")),
+            ("resume.rs", include_str!("resume.rs")),
+            ("review.rs", include_str!("review.rs")),
+            ("review_select.rs", include_str!("review_select.rs")),
+            ("render.rs", include_str!("render.rs")),
+            ("exit_policy.rs", include_str!("exit_policy.rs")),
+        ];
+        for (name, src) in sources {
+            let code = src.split("#[cfg(test)]").next().unwrap_or(src);
+            for (i, line) in code.lines().enumerate() {
+                let t = line.trim();
+                assert!(
+                    t != "\"agent\","
+                        && !t.contains("_cmd(\"agent\"")
+                        && !t.contains("--agent agent"),
+                    "{name}:{}: placeholder agent in protocol output: {t}",
+                    i + 1
+                );
+            }
+        }
+    }
+}

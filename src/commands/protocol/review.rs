@@ -80,7 +80,7 @@ pub fn execute(params: &ReviewParams) -> anyhow::Result<()> {
         guidance.blocked(format!(
             "agent {agent} does not hold claim for bone {bone_id}. \
              Stake a claim first with: {}",
-            shell::claims_stake_cmd("agent", &format!("bone://{project}/{bone_id}"), bone_id,)
+            shell::claims_stake_cmd(agent, &format!("bone://{project}/{bone_id}"), bone_id,)
         ));
         print_guidance(&guidance, format)?;
         return Ok(());

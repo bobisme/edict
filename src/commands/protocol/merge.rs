@@ -262,6 +262,7 @@ pub fn execute(
             bone_id: bone_id.as_deref(),
             review_id: review_id.as_deref(),
             push_main: config.push_main,
+            agent: ctx.agent(),
         },
     );
 
@@ -408,44 +409,83 @@ fn block_force_without_labels(guidance: &mut ProtocolGuidance, reason: &str) {
     );
 }
 
-/// Classify whether the review's approved commit still matches the
-/// workspace HEAD about to be merged. `None` in either position (the
-/// subprocess failed, or the review has no recorded target commit yet)
-/// fails closed as `Unknown` rather than assuming freshness.
-fn classify_commit_freshness(
-    approved_commit: Option<String>,
-    workspace_head: Option<String>,
-) -> review_gate::CommitFreshness {
-    match (approved_commit, workspace_head) {
-        (Some(approved), Some(head)) if approved == head => review_gate::CommitFreshness::Fresh,
-        (Some(_), Some(_)) => review_gate::CommitFreshness::Stale,
-        _ => review_gate::CommitFreshness::Unknown,
-    }
+/// Check whether the review's approval covers the workspace HEAD.
+///
+/// Reads `seal diff <id> --format json` and the workspace HEAD, and when seal
+/// says the approval is current but its `approved_commit` is not HEAD, lists
+/// what changed in between (`git diff --name-only`) to catch a post-LGTM
+/// commit seal missed (seal bn-2ypz). See [`review_gate::approval_freshness`].
+pub(super) fn check_approval_freshness(
+    ctx: &ProtocolContext,
+    workspace: &str,
+    review_id: &str,
+) -> (
+    Option<adapters::ReviewDiffSummary>,
+    review_gate::FreshnessCheck,
+) {
+    let diff_summary = ctx.review_diff_summary(review_id, workspace).ok();
+    let head = ctx.workspace_head_commit(workspace).ok();
+    let check = review_gate::approval_freshness(
+        diff_summary.as_ref(),
+        head.as_deref(),
+        review_id,
+        |from, to| ctx.changed_paths_between(workspace, from, to).ok(),
+    );
+    (diff_summary, check)
 }
 
-/// Classify freshness from a `seal diff` summary, preferring seal's own answer.
+/// The diagnostic for an approval that no longer covers the workspace HEAD.
 ///
-/// seal >= 0.28 records the commit each approval applied to and reports
-/// `approval_stale` directly. That is the authoritative answer to the question
-/// this gate asks, and it is the same check `seal reviews mark-merged` enforces
-/// — so agreeing with it means edict blocks where seal would block, instead of
-/// sending an agent into a merge that exits 1.
-///
-/// Older seal reports no coverage. Fall back to comparing the review's target
-/// commit against the workspace HEAD, which is all edict could ever infer.
-fn freshness_from_summary(
-    summary: Option<&adapters::ReviewDiffSummary>,
-    workspace_head: Option<String>,
-) -> review_gate::CommitFreshness {
-    match summary.and_then(|s| s.approval_stale) {
-        Some(true) => review_gate::CommitFreshness::Stale,
-        Some(false) => review_gate::CommitFreshness::Fresh,
-        None => classify_commit_freshness(
-            summary.and_then(|s| s.target_commit.clone()),
-            workspace_head,
-        ),
-    }
+/// Names what is not covered: the paths edict found changed after the
+/// approved commit, or else the commits seal counted.
+pub(super) fn stale_approval_diagnostic(
+    review_id: &str,
+    workspace: &str,
+    diff_summary: Option<&adapters::ReviewDiffSummary>,
+    check: &review_gate::FreshnessCheck,
+) -> String {
+    let approved_short = |c: &str| c.chars().take(12).collect::<String>();
+    let seal_detects = check.uncovered_paths.is_empty();
+    let scope = if seal_detects {
+        diff_summary.map_or_else(String::new, |d| {
+            match (d.approved_commit.as_deref(), d.uncovered_commits) {
+                (Some(commit), Some(n)) => {
+                    format!(
+                        " Approved at {}, {n} commit(s) not covered.",
+                        approved_short(commit)
+                    )
+                }
+                _ => String::new(),
+            }
+        })
+    } else {
+        let at = diff_summary
+            .and_then(|d| d.approved_commit.as_deref())
+            .map_or_else(String::new, |c| format!(" at {}", approved_short(c)));
+        format!(
+            " Approved{at}; changed since, outside .seal/reviews/{review_id}/: {}.",
+            check.uncovered_paths.join(", ")
+        )
+    };
+    let seal_note = if seal_detects {
+        "`seal reviews mark-merged` refuses this until the approval covers the current code."
+    } else {
+        "seal reported approval_stale:false and its `mark-merged` would accept this, but \
+         the approval does not cover these changes. Do not merge until it does."
+    };
+    format!(
+        "Review {review_id} was approved for an earlier commit — new commits have \
+         landed on workspace {workspace} since (or the commit couldn't be \
+         confirmed).{scope} {seal_note}"
+    )
 }
+
+/// Advice for an approval that no longer covers the workspace HEAD.
+pub(super) const STALE_APPROVAL_ADVICE: &str = "Retarget the review to this commit, then \
+     re-request review and wait for a fresh LGTM. `seal reviews request` alone leaves the \
+     review's target commit pinned at the old, already-approved anchor — only `seal reviews \
+     retarget` moves it and requires fresh votes. Only pass --allow-stale-approval when the \
+     new commits are provably outside what was reviewed.";
 
 /// Check the review gate. Only called when review is enabled and not forced.
 /// Returns `Ok(true)` when the caller should stop (guidance was printed),
@@ -475,7 +515,14 @@ fn check_review_gate(
             format,
         );
     }
-    handle_missing_review(guidance, workspace, bone_id, required_reviewers, format)
+    handle_missing_review(
+        guidance,
+        workspace,
+        bone_id,
+        required_reviewers,
+        ctx.agent(),
+        format,
+    )
 }
 
 /// Evaluate a review that was found for this bone, including the
@@ -496,14 +543,13 @@ fn evaluate_found_review(
     // diff was last computed against to the workspace's actual current
     // HEAD; either subprocess failing, or the two disagreeing, fails
     // closed via `bind_to_commit` below rather than trusting stale votes.
-    let diff_summary = ctx.review_diff_summary(review_id, workspace).ok();
-    let commit_freshness = freshness_from_summary(
-        diff_summary.as_ref(),
-        ctx.workspace_head_commit(workspace).ok(),
-    );
+    let (diff_summary, freshness) = check_approval_freshness(ctx, workspace, review_id);
+    if let Some(note) = &freshness.note {
+        guidance.diagnostic(note.clone());
+    }
     let decision = review_gate::bind_to_commit(
         review_gate::evaluate_review_gate(review_detail, required_reviewers),
-        commit_freshness,
+        freshness.freshness,
     );
     guidance.review = Some(render::ReviewRef {
         review_id: review_id.to_string(),
@@ -535,31 +581,13 @@ fn evaluate_found_review(
         }
         ReviewGateStatus::NeedsReview if decision.stale_approval => {
             guidance.status = ProtocolStatus::NeedsReview;
-            // Name the uncovered commits when seal counted them, so the agent
-            // sees the same numbers `seal reviews mark-merged` would refuse on.
-            let scope = diff_summary.as_ref().map_or_else(String::new, |d| {
-                match (d.approved_commit.as_deref(), d.uncovered_commits) {
-                    (Some(commit), Some(n)) => {
-                        let short: String = commit.chars().take(12).collect();
-                        format!(" Approved at {short}, {n} commit(s) not covered.")
-                    }
-                    _ => String::new(),
-                }
-            });
-            guidance.diagnostic(format!(
-                "Review {review_id} was approved for an earlier commit — new commits have \
-                 landed on workspace {workspace} since (or the commit couldn't be \
-                 confirmed).{scope} `seal reviews mark-merged` refuses this until the \
-                 approval covers the current code."
+            guidance.diagnostic(stale_approval_diagnostic(
+                review_id,
+                workspace,
+                diff_summary.as_ref(),
+                &freshness,
             ));
-            guidance.advise(
-                "Retarget the review to this commit, then re-request review and wait for a \
-                 fresh LGTM. `seal reviews request` alone leaves the review's target commit \
-                 pinned at the old, already-approved anchor — only `seal reviews retarget` \
-                 moves it and requires fresh votes. Only pass --allow-stale-approval when the \
-                 new commits are provably outside what was reviewed."
-                    .to_string(),
-            );
+            guidance.advise(STALE_APPROVAL_ADVICE.to_string());
 
             let steps = stale_approval_steps(workspace, review_id, required_reviewers, ctx.agent());
             guidance.steps(steps);
@@ -593,7 +621,7 @@ fn evaluate_found_review(
 /// `seal reviews request` alone leaves the review's target commit pinned at
 /// the old, already-approved anchor (bn-w912) — only `seal reviews retarget`
 /// moves it and requires fresh votes.
-fn stale_approval_steps(
+pub(super) fn stale_approval_steps(
     workspace: &str,
     review_id: &str,
     required_reviewers: &[String],
@@ -613,6 +641,7 @@ fn handle_missing_review(
     workspace: &str,
     bone_id: Option<&str>,
     required_reviewers: &[String],
+    agent: &str,
     format: OutputFormat,
 ) -> anyhow::Result<bool> {
     guidance.status = ProtocolStatus::NeedsReview;
@@ -626,7 +655,7 @@ fn handle_missing_review(
         let mut steps = Vec::new();
         steps.push(shell::seal_create_cmd(
             workspace,
-            "agent",
+            agent,
             id,
             &format!("work from {workspace}"),
             &required_reviewers.join(","),
@@ -735,6 +764,8 @@ struct MergeStepsParams<'a> {
     bone_id: Option<&'a str>,
     review_id: Option<&'a str>,
     push_main: bool,
+    /// The resolved agent name the printed commands act as.
+    agent: &'a str,
 }
 
 /// Build the merge steps: record the review, merge, push, announce.
@@ -748,6 +779,7 @@ fn build_merge_steps(guidance: &mut ProtocolGuidance, params: &MergeStepsParams)
         bone_id,
         review_id,
         push_main,
+        agent,
     } = *params;
 
     let mut steps = Vec::new();
@@ -776,7 +808,7 @@ fn build_merge_steps(guidance: &mut ProtocolGuidance, params: &MergeStepsParams)
         |bid| format!("Merged workspace {workspace} ({bid})"),
     );
     steps.push(shell::rite_send_cmd(
-        "agent",
+        agent,
         project,
         &announce_msg,
         "task-done",
@@ -1089,6 +1121,7 @@ mod tests {
                 bone_id: Some("bd-abc"),
                 review_id: Some("cr-123"),
                 push_main: true,
+                agent: "edict-dev",
             },
         );
 
@@ -1172,6 +1205,7 @@ mod tests {
                 bone_id: Some("bd-abc"),
                 review_id: Some("cr-123"),
                 push_main: false,
+                agent: "edict-dev",
             },
         );
 
@@ -1216,6 +1250,7 @@ mod tests {
                 bone_id: None,
                 review_id: None,
                 push_main: false, // push_main = false
+                agent: "edict-dev",
             },
         );
 
@@ -1276,6 +1311,7 @@ mod tests {
                 bone_id: Some("bd-abc"),
                 review_id: None,
                 push_main: false,
+                agent: "edict-dev",
             },
         );
 
@@ -1486,102 +1522,83 @@ mod tests {
         assert!(!stop);
     }
 
-    // --- classify_commit_freshness ---
-
-    fn summary(target: Option<&str>, stale: Option<bool>) -> adapters::ReviewDiffSummary {
-        adapters::ReviewDiffSummary {
-            target_commit: target.map(ToString::to_string),
-            approval_stale: stale,
-            approved_commit: None,
-            uncovered_commits: None,
-        }
-    }
-
+    /// bn-25cq: merge's printed commands act as the real agent.
     #[test]
-    fn seals_own_verdict_wins_over_the_commit_comparison() {
-        // seal >= 0.28 knows which commit the approval applied to. Its answer is
-        // the one `mark-merged` enforces, so the gate must agree with it even
-        // when the target commit happens to match the workspace HEAD.
-        assert_eq!(
-            freshness_from_summary(
-                Some(&summary(Some("abc123"), Some(true))),
-                Some("abc123".into())
-            ),
-            review_gate::CommitFreshness::Stale
+    fn merge_output_uses_the_real_agent_name() {
+        let mut guidance = ProtocolGuidance::new("merge");
+        build_merge_steps(
+            &mut guidance,
+            &MergeStepsParams {
+                workspace: "frost-castle",
+                project: "myproject",
+                message: "feat: x",
+                merge_target: None,
+                bone_id: Some("bd-abc"),
+                review_id: Some("cr-123"),
+                push_main: false,
+                agent: "edict-dev",
+            },
         );
-        assert_eq!(
-            freshness_from_summary(
-                Some(&summary(Some("abc123"), Some(false))),
-                Some("def456".into())
-            ),
-            review_gate::CommitFreshness::Fresh
+        assert!(guidance.steps.iter().all(|s| !s.contains("--agent agent")));
+        assert!(
+            guidance
+                .steps
+                .iter()
+                .any(|s| s.starts_with("rite send --agent edict-dev"))
         );
-    }
 
-    #[test]
-    fn older_seal_falls_back_to_comparing_commits() {
-        // No coverage reported: compare target against workspace HEAD.
-        assert_eq!(
-            freshness_from_summary(Some(&summary(Some("abc123"), None)), Some("abc123".into())),
-            review_gate::CommitFreshness::Fresh
-        );
-        assert_eq!(
-            freshness_from_summary(Some(&summary(Some("abc123"), None)), Some("def456".into())),
-            review_gate::CommitFreshness::Stale
-        );
-    }
-
-    #[test]
-    fn a_failed_diff_still_fails_closed() {
-        assert_eq!(
-            freshness_from_summary(None, Some("abc123".into())),
-            review_gate::CommitFreshness::Unknown
-        );
-        assert_eq!(
-            freshness_from_summary(Some(&summary(None, None)), Some("abc123".into())),
-            review_gate::CommitFreshness::Unknown
+        let mut guidance = ProtocolGuidance::new("merge");
+        handle_missing_review(
+            &mut guidance,
+            "frost-castle",
+            Some("bd-abc"),
+            &["myproject-security".to_string()],
+            "edict-dev",
+            OutputFormat::Json,
+        )
+        .unwrap();
+        assert!(guidance.steps.iter().all(|s| !s.contains("--agent agent")));
+        assert!(
+            guidance
+                .steps
+                .iter()
+                .any(|s| s.contains("--agent edict-dev"))
         );
     }
 
+    /// bn-2cyu: the stale diagnostic names what seal missed, and keeps seal's
+    /// own counts when seal itself reported the approval stale.
     #[test]
-    fn commit_freshness_matching_commits_are_fresh() {
-        assert_eq!(
-            classify_commit_freshness(Some("abc123".into()), Some("abc123".into())),
-            review_gate::CommitFreshness::Fresh
-        );
-    }
+    fn stale_diagnostic_names_uncovered_paths_or_seal_counts() {
+        let summary = adapters::ReviewDiffSummary {
+            target_commit: Some("c658bbf939ffae9f".into()),
+            approval_stale: Some(false),
+            approved_commit: Some("c658bbf939ffae9f".into()),
+            uncovered_commits: Some(0),
+        };
+        let edict_found = review_gate::FreshnessCheck {
+            freshness: review_gate::CommitFreshness::Stale,
+            uncovered_paths: vec!["src/main.rs".into(), "src/shout.rs".into()],
+            note: None,
+        };
+        let d = stale_approval_diagnostic("cr-1", "ws1", Some(&summary), &edict_found);
+        assert!(d.contains("src/main.rs, src/shout.rs"), "{d}");
+        assert!(d.contains("c658bbf939ff"), "{d}");
+        assert!(!d.contains("0 commit(s)"), "{d}");
+        assert!(d.contains("approval_stale:false"), "{d}");
 
-    #[test]
-    fn commit_freshness_differing_commits_are_stale() {
-        assert_eq!(
-            classify_commit_freshness(Some("abc123".into()), Some("def456".into())),
-            review_gate::CommitFreshness::Stale
-        );
-    }
-
-    #[test]
-    fn commit_freshness_missing_approved_commit_is_unknown() {
-        // e.g. `seal diff` failed, or the review has no recorded target yet.
-        assert_eq!(
-            classify_commit_freshness(None, Some("def456".into())),
-            review_gate::CommitFreshness::Unknown
-        );
-    }
-
-    #[test]
-    fn commit_freshness_missing_workspace_head_is_unknown() {
-        // e.g. `git rev-parse HEAD` failed in the workspace.
-        assert_eq!(
-            classify_commit_freshness(Some("abc123".into()), None),
-            review_gate::CommitFreshness::Unknown
-        );
-    }
-
-    #[test]
-    fn commit_freshness_both_missing_is_unknown() {
-        assert_eq!(
-            classify_commit_freshness(None, None),
-            review_gate::CommitFreshness::Unknown
-        );
+        let seal_found = review_gate::FreshnessCheck {
+            freshness: review_gate::CommitFreshness::Stale,
+            uncovered_paths: Vec::new(),
+            note: None,
+        };
+        let stale = adapters::ReviewDiffSummary {
+            approval_stale: Some(true),
+            uncovered_commits: Some(2),
+            ..summary
+        };
+        let d = stale_approval_diagnostic("cr-1", "ws1", Some(&stale), &seal_found);
+        assert!(d.contains("2 commit(s) not covered"), "{d}");
+        assert!(d.contains("refuses this"), "{d}");
     }
 }

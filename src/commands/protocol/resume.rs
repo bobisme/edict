@@ -220,7 +220,7 @@ fn render_resume(
 fn build_bone_guidance(
     guidance: &mut ProtocolGuidance,
     assessment: &BoneResume,
-    _agent: &str,
+    agent: &str,
     project: &str,
 ) {
     let bead_id = &assessment.bone_id;
@@ -249,16 +249,12 @@ fn build_bone_guidance(
             guidance.step(format!(
                 "# Fix issues in ws/{ws_name}/, retarget to the fixed commits, then re-request review:"
             ));
-            guidance.step(shell::seal_retarget_cmd(
-                ws_name,
-                &review.review_id,
-                "agent",
-            ));
+            guidance.step(shell::seal_retarget_cmd(ws_name, &review.review_id, agent));
             guidance.step(shell::seal_request_cmd(
                 ws_name,
                 &review.review_id,
                 &format!("{project}-security"),
-                "agent",
+                agent,
             ));
         }
 
@@ -291,7 +287,7 @@ fn build_bone_guidance(
                 shell::WorkspaceSource::Main,
             ));
             guidance.step(shell::claims_stake_cmd(
-                "agent",
+                agent,
                 &format!("workspace://{project}/{bead_id}"),
                 bead_id,
             ));
@@ -412,6 +408,9 @@ mod tests {
             .position(|s| s.contains("seal reviews request cr-xyz"))
             .expect("request step present");
         assert!(retarget_pos < request_pos);
+        // bn-25cq: the steps act as the real agent.
+        assert!(guidance.steps.iter().all(|s| !s.contains("--agent agent")));
+        assert!(guidance.steps[retarget_pos].contains("--agent test-agent"));
     }
 
     #[test]

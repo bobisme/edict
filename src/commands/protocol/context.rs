@@ -339,6 +339,46 @@ impl ProtocolContext {
         Ok(output.trim().to_string())
     }
 
+    /// List the paths changed between two commits in `workspace`, via
+    /// `maw exec <ws> -- git diff --name-only <from> <to> --`.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if the workspace name or either commit id is invalid, or
+    /// the subprocess fails.
+    #[allow(
+        clippy::unused_self,
+        reason = "part of the ProtocolContext query interface, symmetric with its stateful methods"
+    )]
+    pub fn changed_paths_between(
+        &self,
+        workspace: &str,
+        from: &str,
+        to: &str,
+    ) -> Result<Vec<String>, ContextError> {
+        Self::validate_workspace_name(workspace)?;
+        Self::validate_commit_id(from)?;
+        Self::validate_commit_id(to)?;
+        let output = Self::run_subprocess(&[
+            "maw",
+            "exec",
+            workspace,
+            "--",
+            "git",
+            "diff",
+            "--name-only",
+            from,
+            to,
+            "--",
+        ])?;
+        Ok(output
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(ToString::to_string)
+            .collect())
+    }
+
     /// Check for claim conflicts by querying all claims.
     ///
     /// Returns the conflicting claim if another agent holds the bone.
@@ -399,6 +439,17 @@ impl ProtocolContext {
     }
 
     /// Validate that a review ID matches the expected pattern (cr-xxxx).
+    /// A git object id: 4-64 hex digits. Rejects anything git could read as an option.
+    fn validate_commit_id(id: &str) -> Result<(), ContextError> {
+        if (4..=64).contains(&id.len()) && id.chars().all(|c| c.is_ascii_hexdigit()) {
+            Ok(())
+        } else {
+            Err(ContextError::ParseFailed(format!(
+                "invalid commit id: {id}"
+            )))
+        }
+    }
+
     fn validate_review_id(id: &str) -> Result<(), ContextError> {
         if id.starts_with("cr-")
             && id.len() <= 20

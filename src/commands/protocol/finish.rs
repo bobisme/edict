@@ -153,6 +153,7 @@ pub fn execute(params: &ExecuteParams) -> anyhow::Result<()> {
             force,
             no_merge,
             execute,
+            agent,
         },
     );
 
@@ -173,6 +174,7 @@ struct FinishStepsParams<'a> {
     merge_target: Option<&'a str>,
     review_id: Option<&'a str>,
     no_merge: bool,
+    agent: &'a str,
 }
 
 /// Inputs for building the finish guidance decision tree.
@@ -189,6 +191,8 @@ struct GuidanceCtx<'a> {
     force: bool,
     no_merge: bool,
     execute: bool,
+    /// The resolved agent name the printed commands act as.
+    agent: &'a str,
 }
 
 /// Build the finish guidance based on review gate state.
@@ -201,73 +205,17 @@ fn build_finish_guidance(guidance: &mut ProtocolGuidance, gc: &mut GuidanceCtx) 
         if let Some((review_id, review_detail)) =
             gc.ctx.find_review_for_bone(gc.workspace, gc.bone_id)
         {
-            let decision = review_gate::evaluate_review_gate(&review_detail, gc.required_reviewers);
-            if gc.merge_target.is_none() {
-                gc.merge_target.clone_from(&review_detail.change_id);
-            }
-            guidance.review = Some(ReviewRef {
-                review_id: review_id.clone(),
-                status: decision.status_str().to_string(),
-            });
-
-            match decision.status {
-                ReviewGateStatus::Approved => {
-                    // Ready to finish
-                    guidance.status = ProtocolStatus::Ready;
-                    build_finish_steps(
-                        guidance,
-                        &FinishStepsParams {
-                            bone_id: gc.bone_id,
-                            bead_title: gc.bead_title,
-                            project: gc.project,
-                            workspace: gc.workspace,
-                            merge_target: gc.merge_target.as_deref(),
-                            review_id: Some(&review_id),
-                            no_merge: gc.no_merge,
-                        },
-                    );
-
-                    // Execute if --execute flag is set
-                    if gc.execute {
-                        return true;
-                    }
-
-                    guidance.advise(format!(
-                        "Review {review_id} approved. Run these commands to finish bone {}.",
-                        gc.bone_id
-                    ));
-                }
-                ReviewGateStatus::Blocked => {
-                    build_blocked_section(
-                        guidance,
-                        &decision,
-                        &review_detail,
-                        &review_id,
-                        gc.workspace,
-                        gc.project,
-                        gc.required_reviewers,
-                    );
-                }
-                ReviewGateStatus::NeedsReview => {
-                    build_needs_review_section(
-                        guidance,
-                        &decision,
-                        &review_id,
-                        gc.workspace,
-                        gc.project,
-                    );
-                }
-            }
-        } else {
-            build_no_review_section(
-                guidance,
-                gc.bone_id,
-                gc.bead_title,
-                gc.workspace,
-                gc.project,
-                gc.required_reviewers,
-            );
+            return build_review_found_guidance(guidance, gc, &review_id, &review_detail);
         }
+        build_no_review_section(
+            guidance,
+            gc.bone_id,
+            gc.bead_title,
+            gc.workspace,
+            gc.project,
+            gc.required_reviewers,
+            gc.agent,
+        );
     } else {
         // Review not enabled, or --force flag used
         guidance.status = ProtocolStatus::Ready;
@@ -286,6 +234,7 @@ fn build_finish_guidance(guidance: &mut ProtocolGuidance, gc: &mut GuidanceCtx) 
                 merge_target: gc.merge_target.as_deref(),
                 review_id: None,
                 no_merge: gc.no_merge,
+                agent: gc.agent,
             },
         );
 
@@ -307,6 +256,115 @@ fn build_finish_guidance(guidance: &mut ProtocolGuidance, gc: &mut GuidanceCtx) 
         }
     }
 
+    false
+}
+
+/// Build the finish guidance for a bone with a live review.
+///
+/// Returns `true` when the caller should execute the steps immediately.
+fn build_review_found_guidance(
+    guidance: &mut ProtocolGuidance,
+    gc: &mut GuidanceCtx,
+    review_id: &str,
+    review_detail: &super::adapters::ReviewDetail,
+) -> bool {
+    let votes = review_gate::evaluate_review_gate(review_detail, gc.required_reviewers);
+    // The finish steps merge the workspace, so the approval must cover
+    // its HEAD, not just some earlier commit (bn-2cyu). Only an
+    // approved review needs the (subprocess) freshness check.
+    let (decision, stale_context) = if votes.status == ReviewGateStatus::Approved {
+        let (summary, freshness) =
+            super::merge::check_approval_freshness(gc.ctx, gc.workspace, review_id);
+        if let Some(note) = &freshness.note {
+            guidance.diagnostic(note.clone());
+        }
+        (
+            review_gate::bind_to_commit(votes, freshness.freshness),
+            Some((summary, freshness)),
+        )
+    } else {
+        (votes, None)
+    };
+    if gc.merge_target.is_none() {
+        gc.merge_target.clone_from(&review_detail.change_id);
+    }
+    guidance.review = Some(ReviewRef {
+        review_id: review_id.to_string(),
+        status: decision.status_str().to_string(),
+    });
+
+    match decision.status {
+        ReviewGateStatus::Approved => {
+            // Ready to finish
+            guidance.status = ProtocolStatus::Ready;
+            build_finish_steps(
+                guidance,
+                &FinishStepsParams {
+                    bone_id: gc.bone_id,
+                    bead_title: gc.bead_title,
+                    project: gc.project,
+                    workspace: gc.workspace,
+                    merge_target: gc.merge_target.as_deref(),
+                    review_id: Some(review_id),
+                    no_merge: gc.no_merge,
+                    agent: gc.agent,
+                },
+            );
+
+            // Execute if --execute flag is set
+            if gc.execute {
+                return true;
+            }
+
+            guidance.advise(format!(
+                "Review {review_id} approved. Run these commands to finish bone {}.",
+                gc.bone_id
+            ));
+        }
+        ReviewGateStatus::Blocked => {
+            build_blocked_section(
+                guidance,
+                &decision,
+                review_detail,
+                review_id,
+                gc.workspace,
+                gc.project,
+                gc.required_reviewers,
+                gc.agent,
+            );
+        }
+        ReviewGateStatus::NeedsReview if decision.stale_approval => {
+            let (summary, freshness) = stale_context.unwrap_or_else(|| {
+                (
+                    None,
+                    review_gate::FreshnessCheck {
+                        freshness: review_gate::CommitFreshness::Unknown,
+                        uncovered_paths: Vec::new(),
+                        note: None,
+                    },
+                )
+            });
+            build_stale_approval_section(
+                guidance,
+                review_id,
+                gc.workspace,
+                gc.required_reviewers,
+                gc.agent,
+                summary.as_ref(),
+                &freshness,
+            );
+        }
+        ReviewGateStatus::NeedsReview => {
+            build_needs_review_section(
+                guidance,
+                &decision,
+                review_id,
+                gc.workspace,
+                gc.project,
+                gc.agent,
+            );
+        }
+    }
     false
 }
 
@@ -334,6 +392,7 @@ fn build_finish_steps(guidance: &mut ProtocolGuidance, params: &FinishStepsParam
         merge_target,
         review_id,
         no_merge,
+        agent,
     } = *params;
 
     let mut steps = Vec::new();
@@ -376,19 +435,23 @@ fn build_finish_steps(guidance: &mut ProtocolGuidance, params: &FinishStepsParam
 
     // 4. Announce completion on rite
     steps.push(shell::rite_send_cmd(
-        "agent",
+        agent,
         project,
         &format!("Finished {bone_id}: {bead_title}"),
         "task-done",
     ));
 
     // 5. Release all claims
-    steps.push(shell::claims_release_all_cmd("agent"));
+    steps.push(shell::claims_release_all_cmd(agent));
 
     guidance.steps(steps);
 }
 
 /// Build guidance for a review that is blocked by a reviewer.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "flat inputs keep the section builder testable without a ProtocolContext"
+)]
 fn build_blocked_section(
     guidance: &mut ProtocolGuidance,
     decision: &review_gate::ReviewGateDecision,
@@ -397,6 +460,7 @@ fn build_blocked_section(
     workspace: &str,
     project: &str,
     required_reviewers: &[String],
+    agent: &str,
 ) {
     // Blocked by reviewer
     guidance.status = ProtocolStatus::Blocked;
@@ -416,15 +480,15 @@ fn build_blocked_section(
     // commits, and re-request.
     let mut steps = Vec::new();
     steps.push(shell::seal_show_cmd(workspace, review_id));
-    steps.push(shell::seal_retarget_cmd(workspace, review_id, "agent"));
+    steps.push(shell::seal_retarget_cmd(workspace, review_id, agent));
     steps.push(shell::seal_request_cmd(
         workspace,
         review_id,
         &required_reviewers.join(","),
-        "agent",
+        agent,
     ));
     steps.push(shell::rite_send_cmd(
-        "agent",
+        agent,
         project,
         &format!("Review re-requested: {review_id}; dispatch its assigned reviewers explicitly"),
         "review-request",
@@ -442,6 +506,7 @@ fn build_needs_review_section(
     review_id: &str,
     workspace: &str,
     project: &str,
+    agent: &str,
 ) {
     // Review exists but not all reviewers have voted
     guidance.status = ProtocolStatus::NeedsReview;
@@ -461,10 +526,10 @@ fn build_needs_review_section(
             workspace,
             review_id,
             &decision.missing_approvals.join(","),
-            "agent",
+            agent,
         ));
         steps.push(shell::rite_send_cmd(
-            "agent",
+            agent,
             project,
             &format!("Review pending: {review_id}; dispatch missing reviewers explicitly"),
             "review-request",
@@ -476,6 +541,32 @@ fn build_needs_review_section(
     ));
 }
 
+/// Build guidance for an approval that no longer covers the workspace HEAD.
+///
+/// Same diagnostic, advice and recovery steps as `protocol merge`: retarget
+/// the review to the current commit, re-request, and wait for a fresh LGTM.
+fn build_stale_approval_section(
+    guidance: &mut ProtocolGuidance,
+    review_id: &str,
+    workspace: &str,
+    required_reviewers: &[String],
+    agent: &str,
+    summary: Option<&super::adapters::ReviewDiffSummary>,
+    freshness: &review_gate::FreshnessCheck,
+) {
+    guidance.status = ProtocolStatus::NeedsReview;
+    guidance.diagnostic(super::merge::stale_approval_diagnostic(
+        review_id, workspace, summary, freshness,
+    ));
+    guidance.advise(super::merge::STALE_APPROVAL_ADVICE.to_string());
+    guidance.steps(super::merge::stale_approval_steps(
+        workspace,
+        review_id,
+        required_reviewers,
+        agent,
+    ));
+}
+
 /// Build guidance for the case where no review exists yet for the bone.
 fn build_no_review_section(
     guidance: &mut ProtocolGuidance,
@@ -484,6 +575,7 @@ fn build_no_review_section(
     workspace: &str,
     project: &str,
     required_reviewers: &[String],
+    agent: &str,
 ) {
     // No review found — needs review creation
     guidance.status = ProtocolStatus::NeedsReview;
@@ -492,13 +584,13 @@ fn build_no_review_section(
     let steps = vec![
         shell::seal_create_cmd(
             workspace,
-            "agent",
+            agent,
             bone_id,
             bead_title,
             &required_reviewers.join(","),
         ),
         shell::rite_send_cmd(
-            "agent",
+            agent,
             project,
             "Review requested: <review-id>; dispatch assigned reviewers explicitly",
             "review-request",
@@ -571,6 +663,7 @@ mod tests {
                 merge_target: None,
                 review_id: Some("cr-123"),
                 no_merge: false,
+                agent: "edict-dev",
             },
         );
 
@@ -636,6 +729,7 @@ mod tests {
                 merge_target: None,
                 review_id: Some("cr-123"),
                 no_merge: true,
+                agent: "edict-dev",
             },
         );
 
@@ -671,6 +765,7 @@ mod tests {
                 merge_target: None,
                 review_id: None,
                 no_merge: true,
+                agent: "edict-dev",
             },
         );
 
@@ -699,6 +794,7 @@ mod tests {
                 merge_target: None,
                 review_id: None,
                 no_merge: false,
+                agent: "edict-dev",
             },
         );
 
@@ -757,6 +853,7 @@ mod tests {
             "frost-castle",
             "myproject",
             &["edict-security".to_string()],
+            "edict-dev",
         );
 
         let retarget_pos = guidance
@@ -774,5 +871,147 @@ mod tests {
             "retarget must come before re-request: {:?}",
             guidance.steps
         );
+    }
+
+    fn assert_real_agent(steps: &[String]) {
+        assert!(
+            steps.iter().all(|s| !s.contains("--agent agent")),
+            "placeholder agent leaked: {steps:?}"
+        );
+    }
+
+    /// bn-25cq: every printed command acts as the real agent, never `agent`.
+    #[test]
+    fn finish_output_uses_the_real_agent_name() {
+        for (review_id, no_merge) in [(Some("cr-123"), false), (None, false), (None, true)] {
+            let mut guidance = ProtocolGuidance::new("finish");
+            build_finish_steps(
+                &mut guidance,
+                &FinishStepsParams {
+                    bone_id: "bd-abc",
+                    bead_title: "test feature",
+                    project: "myproject",
+                    workspace: "frost-castle",
+                    merge_target: None,
+                    review_id,
+                    no_merge,
+                    agent: "edict-dev",
+                },
+            );
+            assert_real_agent(&guidance.steps);
+            assert!(
+                guidance
+                    .steps
+                    .iter()
+                    .any(|s| s.starts_with("rite send --agent edict-dev"))
+            );
+            assert!(
+                guidance
+                    .steps
+                    .iter()
+                    .any(|s| s.starts_with("rite claims release --agent edict-dev"))
+            );
+        }
+
+        let decision = review_gate::ReviewGateDecision {
+            status: ReviewGateStatus::NeedsReview,
+            approved_by: vec![],
+            blocked_by: vec!["edict-security".into()],
+            missing_approvals: vec!["edict-security".into()],
+            newer_block_after_lgtm: vec![],
+            total_required: 1,
+            stale_approval: false,
+        };
+        let review_detail = super::super::adapters::ReviewDetail {
+            review_id: "cr-123".into(),
+            title: None,
+            status: "open".into(),
+            status_changed_at: None,
+            status_changed_by: None,
+            change_id: None,
+            votes: vec![],
+            open_thread_count: 0,
+        };
+        let reviewers = ["edict-security".to_string()];
+
+        let mut g = ProtocolGuidance::new("finish");
+        build_blocked_section(
+            &mut g,
+            &decision,
+            &review_detail,
+            "cr-123",
+            "frost-castle",
+            "myproject",
+            &reviewers,
+            "edict-dev",
+        );
+        assert_real_agent(&g.steps);
+
+        let mut g = ProtocolGuidance::new("finish");
+        build_needs_review_section(
+            &mut g,
+            &decision,
+            "cr-123",
+            "frost-castle",
+            "myproject",
+            "edict-dev",
+        );
+        assert_real_agent(&g.steps);
+        assert!(g.steps.iter().any(|s| s.contains("--agent edict-dev")));
+
+        let mut g = ProtocolGuidance::new("finish");
+        build_no_review_section(
+            &mut g,
+            "bd-abc",
+            "t",
+            "frost-castle",
+            "myproject",
+            &reviewers,
+            "edict-dev",
+        );
+        assert_real_agent(&g.steps);
+        assert!(g.steps.iter().any(|s| s.contains("--agent edict-dev")));
+    }
+
+    /// bn-2cyu: an approval edict found stale (seal said fresh) emits the
+    /// retarget/re-request recovery, names the uncovered path, and no merge.
+    #[test]
+    fn stale_approval_section_retargets_and_names_uncovered_paths() {
+        let summary = super::super::adapters::ReviewDiffSummary {
+            target_commit: Some("c658bbf939ff".into()),
+            approval_stale: Some(false),
+            approved_commit: Some("c658bbf939ff".into()),
+            uncovered_commits: Some(0),
+        };
+        let freshness = review_gate::FreshnessCheck {
+            freshness: review_gate::CommitFreshness::Stale,
+            uncovered_paths: vec!["src/main.rs".into()],
+            note: None,
+        };
+        let mut g = ProtocolGuidance::new("finish");
+        build_stale_approval_section(
+            &mut g,
+            "cr-123",
+            "frost-castle",
+            &["edict-security".to_string()],
+            "edict-dev",
+            Some(&summary),
+            &freshness,
+        );
+        assert_eq!(g.status, ProtocolStatus::NeedsReview);
+        assert!(
+            g.steps
+                .iter()
+                .any(|s| s.contains("seal reviews retarget cr-123"))
+        );
+        assert!(
+            g.steps
+                .iter()
+                .all(|s| !s.contains("ws merge") && !s.contains("mark-merged"))
+        );
+        assert_real_agent(&g.steps);
+        let diag = g.diagnostics.join("\n");
+        assert!(diag.contains("src/main.rs"), "{diag}");
+        assert!(diag.contains("approval_stale:false"), "{diag}");
     }
 }
